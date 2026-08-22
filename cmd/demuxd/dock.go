@@ -12,10 +12,10 @@ import (
 
 // Docked mode: the herdr layout on tmux. The TUI spawns as a real 40-col
 // pane at the left edge of the client's current window; the main area is the
-// user's actual panes — live, focusable, typable. Scrubbing the list moves
-// the MAIN AREA for real, so what you see while scrolling is the window
-// itself, not a capture. M-s toggles the dock; Enter drops focus into the
-// main pane; q undocks and returns to the origin window.
+// user's actual panes — live, focusable, typable. Scrubbing the list shows
+// other windows as billboards (preview.go frames painted by the TUI); a
+// commit — Enter, or any mouse gesture on a billboard split — switches to
+// the real window. M-s toggles the dock; q undocks back to the origin.
 //
 // The TUI pane is per-dock: dockOpen splits it into the window, dockClose
 // kills it (its process dies with it, and it also exits itself when the
