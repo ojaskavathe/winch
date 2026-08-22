@@ -204,13 +204,19 @@ func (st *store) rows() []row {
 			if p.AgentState == "blocked" && p.AgentReason != "" {
 				text = p.AgentReason
 			}
-			// herdr's two-row agent entry: who/where, then what it's doing.
+			// herdr's two-row agent entry: WHERE on top (state dot, then
+			// bold `session · window`), WHO below (dim agent name, plus
+			// our reason/task suffix — herdr's optional title token).
+			who := p.Agent
+			if text != "" {
+				who += " · " + text
+			}
 			out = append(out, row{
-				label:  fmt.Sprintf("  %s · %s:%d", p.Agent, sess, win.Index),
+				label:  fmt.Sprintf("   %s · %s", sess, win.Name),
 				window: p.WindowID, pane: p.ID, agent: p.AgentState, arow: true,
 			})
 			out = append(out, row{
-				label:  "    " + text,
+				label:  "   " + who,
 				window: p.WindowID, pane: p.ID, arow: true, cont: true,
 			})
 		}
@@ -1249,6 +1255,9 @@ func paintList(rows []row, sel int) {
 				b.WriteString(cMuted + "\033[1m" + string(label) + pad + "\033[22;39m")
 			case rows[i].session:
 				b.WriteString("\033[1m" + string(label) + pad + "\033[22m")
+			case rows[i].arow && !rows[i].cont:
+				// Agent entry's WHERE row: bold names, like herdr's.
+				b.WriteString("\033[1m" + string(label) + pad + "\033[22m")
 			default:
 				b.WriteString("\033[2m" + string(label) + pad + "\033[22m")
 			}
@@ -1287,7 +1296,13 @@ func paintList(rows []row, sel int) {
 				if i == sel {
 					style = cFill + style
 				}
-				fmt.Fprintf(&b, "\033[%d;1H%s%s\033[0m", y+1, style, orn)
+				// Agent entries carry their dot at col 2 (herdr's ` ● name`
+				// inset); tree rows keep col 1.
+				ox := 1
+				if rows[i].arow {
+					ox = 2
+				}
+				fmt.Fprintf(&b, "\033[%d;%dH%s%s\033[0m", y+1, ox, style, orn)
 			}
 		}
 	}
