@@ -114,6 +114,8 @@ type row struct {
 	head    bool   // section heading (" sessions"); never selectable
 	cont    bool   // continuation line of a two-row entry (herdr's model)
 	agent   string // worst agent state (window rows) / the state (agent rows)
+	styled  string // optional pre-styled label (only fg/dim codes, self-closing);
+	// used when it fits — truncation falls back to the plain label
 }
 
 // inert rows are chrome or continuations: selection passes over them
@@ -197,26 +199,34 @@ func (st *store) rows() []row {
 		})
 		for _, p := range agents {
 			sess := st.sessions[p.SessionID].Name
-			win := st.windows[p.WindowID]
 			// A blocked pane's title is the stale pre-prompt task; the
 			// reason ("permission prompt") is what the row should say.
 			text := agentTaskTitle(p.Title)
 			if p.AgentState == "blocked" && p.AgentReason != "" {
 				text = p.AgentReason
 			}
-			// herdr's two-row agent entry: WHERE on top (state dot, then
-			// bold `session · window`), WHO below (dim agent name, plus
-			// our reason/task suffix — herdr's optional title token).
-			who := p.Agent
+			// herdr's two-row agent entry: state dot + the bold project
+			// (session) name — nothing else — then `state · agent` below
+			// with the state word in its own color, and our task/reason
+			// riding as a dim tail. A blank row breathes between entries.
+			tail := p.Agent
 			if text != "" {
-				who += " · " + text
+				tail += " · " + text
 			}
+			who, whoStyled := "   "+tail, ""
+			if p.AgentState != "" {
+				who = "   " + p.AgentState + " · " + tail
+				if _, c := agentGlyph(p.AgentState); c != "" {
+					whoStyled = "   " + c + p.AgentState + "\033[39;2m · " + tail + "\033[22m"
+				}
+			}
+			out = append(out, row{gap: true, arow: true})
 			out = append(out, row{
-				label:  fmt.Sprintf("   %s · %s", sess, win.Name),
+				label:  "   " + sess,
 				window: p.WindowID, pane: p.ID, agent: p.AgentState, arow: true,
 			})
 			out = append(out, row{
-				label:  "   " + who,
+				label:  who, styled: whoStyled,
 				window: p.WindowID, pane: p.ID, arow: true, cont: true,
 			})
 		}
@@ -1248,7 +1258,11 @@ func paintList(rows []row, sel int) {
 				if i == sel {
 					style += "\033[1m"
 				}
-				b.WriteString(style + string(label) + pad + "\033[22;49m")
+				if s := rows[i].styled; s != "" && len([]rune(rows[i].label)) <= lw {
+					b.WriteString(style + s + pad + "\033[22;49m")
+				} else {
+					b.WriteString(style + string(label) + pad + "\033[22;49m")
+				}
 			case rows[i].gap:
 				b.WriteString(string(label) + pad)
 			case rows[i].head:
@@ -1259,7 +1273,11 @@ func paintList(rows []row, sel int) {
 				// Agent entry's WHERE row: bold names, like herdr's.
 				b.WriteString("\033[1m" + string(label) + pad + "\033[22m")
 			default:
-				b.WriteString("\033[2m" + string(label) + pad + "\033[22m")
+				if s := rows[i].styled; s != "" && len([]rune(rows[i].label)) <= lw {
+					b.WriteString(s + pad)
+				} else {
+					b.WriteString("\033[2m" + string(label) + pad + "\033[22m")
+				}
 			}
 			if benchLog != nil {
 				cls := byte(' ')
