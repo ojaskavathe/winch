@@ -1,9 +1,9 @@
 name: ci
 
+# Manual-only while the repo is private (Actions minutes are metered):
+#   gh workflow run ci
 on:
-  push:
-    branches: [master]
-  pull_request:
+  workflow_dispatch:
 
 jobs:
   unit:
