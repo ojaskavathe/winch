@@ -34,7 +34,7 @@ func TestMain(m *testing.M) {
 	}
 	demuxdBin = filepath.Join(tmp, "demuxd")
 	cmd := exec.Command("go", "build", "-o", demuxdBin, ".")
-	cmd.Dir = "../demuxd"
+	cmd.Dir = "../cmd/demuxd"
 	if b, err := cmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "build demuxd: %v\n%s", err, b)
 		os.Exit(1)

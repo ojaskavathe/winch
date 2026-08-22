@@ -1,4 +1,4 @@
-module github.com/ojaskavathe/dots/modules/home/demux/demuxd
+module github.com/ojaskavathe/demux
 
 go 1.25.0
 
