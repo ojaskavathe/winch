@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"time"
 )
 
@@ -71,6 +72,8 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 		err = d.toggle(ctl, env.msg.Client)
 	case "browse":
 		err = d.browseOpen(ctl, env.msg.Client)
+	case "agents":
+		err = d.agentsOpen(ctl, env.msg.Client)
 	case "nav":
 		err = d.dockNav(ctl, env.msg.Dir)
 	case "preview":
@@ -209,4 +212,48 @@ func (d *daemon) browseOpen(ctl *control, client string) error {
 		return nil
 	}
 	return d.scrubStart(ctl, d.dock.win)
+}
+
+// agentsOpen (M-a): the agent switcher. Browse, but the selection pins to
+// an agent row — the highest-attention agent first (the same ordering the
+// TUI's agents section shows), and rapid re-invocations cycle down the
+// list. With no agents it says so instead of docking.
+func (d *daemon) agentsOpen(ctl *control, client string) error {
+	rank := map[string]int{"blocked": 4, "done": 3, "working": 2, "idle": 1}
+	var agents []pane
+	for _, p := range d.h.getWorld().Panes {
+		if p.Agent != "" {
+			agents = append(agents, p)
+		}
+	}
+	if len(agents) == 0 {
+		_, err := ctl.run("display-message -t " + q(client) + " " + q("demux: no agents"))
+		return err
+	}
+	sort.Slice(agents, func(i, j int) bool {
+		ri, rj := rank[agents[i].AgentState], rank[agents[j].AgentState]
+		if ri != rj {
+			return ri > rj
+		}
+		return agents[i].ID < agents[j].ID
+	})
+	next := 0
+	if d.agentCycle == nil {
+		d.agentCycle = map[string]agentCyclePos{}
+	}
+	if last, ok := d.agentCycle[client]; ok && time.Since(last.at) < 10*time.Second {
+		for i, p := range agents {
+			if p.ID == last.pane {
+				next = (i + 1) % len(agents)
+				break
+			}
+		}
+	}
+	pick := agents[next]
+	d.agentCycle[client] = agentCyclePos{pane: pick.ID, at: time.Now()}
+	if err := d.browseOpen(ctl, client); err != nil {
+		return err
+	}
+	d.h.sendRole("list", marshalLine(selectMsg{Type: "select", Window: pick.WindowID, Pane: pick.ID}))
+	return nil
 }

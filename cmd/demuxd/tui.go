@@ -111,8 +111,14 @@ type row struct {
 	session bool
 	arow    bool   // agents-section row (rendered in the pinned bottom region)
 	gap     bool   // blank spacer between session groups; never selectable
+	head    bool   // section heading (" sessions"); never selectable
+	cont    bool   // continuation line of a two-row entry (herdr's model)
 	agent   string // worst agent state (window rows) / the state (agent rows)
 }
+
+// inert rows are chrome or continuations: selection passes over them
+// (a continuation highlights with its owner instead).
+func (r row) inert() bool { return r.gap || r.head || r.cont }
 
 // The sidebar palette, ANSI-16 only: the chrome inherits the host
 // terminal's scheme instead of shipping its own (herdr's `terminal` theme
@@ -125,6 +131,7 @@ const (
 )
 
 func (st *store) rows() []row {
+	out := []row{{label: " sessions", head: true}}
 	sessions := make([]session, 0, len(st.sessions))
 	for _, s := range st.sessions {
 		sessions = append(sessions, s)
@@ -144,7 +151,6 @@ func (st *store) rows() []row {
 		}
 	}
 
-	var out []row
 	for _, s := range sessions {
 		wins := make([]window, 0, 8)
 		for _, w := range st.windows {
@@ -198,9 +204,14 @@ func (st *store) rows() []row {
 			if p.AgentState == "blocked" && p.AgentReason != "" {
 				text = p.AgentReason
 			}
+			// herdr's two-row agent entry: who/where, then what it's doing.
 			out = append(out, row{
-				label:  fmt.Sprintf("  %s · %s:%d · %s", p.Agent, sess, win.Index, text),
+				label:  fmt.Sprintf("  %s · %s:%d", p.Agent, sess, win.Index),
 				window: p.WindowID, pane: p.ID, agent: p.AgentState, arow: true,
+			})
+			out = append(out, row{
+				label:  "    " + text,
+				window: p.WindowID, pane: p.ID, arow: true, cont: true,
 			})
 		}
 	}
@@ -376,8 +387,11 @@ func cmdTui(tmuxSock, demuxSock string) {
 		if sel < 0 {
 			sel = 0
 		}
-		for sel < len(rows)-1 && rows[sel].gap {
-			sel++ // a rebuild can land the raw index on a spacer
+		for sel < len(rows)-1 && rows[sel].inert() {
+			sel++ // a rebuild can land the raw index on chrome
+		}
+		for sel > 0 && rows[sel].inert() {
+			sel-- // bottom edge was chrome: back up into the list
 		}
 		paintList(rows, sel)
 		paintedWin, paintedGen = "", -1 // size/world may have shifted regions
@@ -424,8 +438,8 @@ func cmdTui(tmuxSock, demuxSock string) {
 			step = -1
 		}
 		next := sel + delta
-		for next >= 0 && next < len(rows) && rows[next].gap {
-			next += step // roll over spacer rows in the travel direction
+		for next >= 0 && next < len(rows) && rows[next].inert() {
+			next += step // roll over chrome rows in the travel direction
 		}
 		if next < 0 {
 			next = 0
@@ -433,7 +447,10 @@ func cmdTui(tmuxSock, demuxSock string) {
 		if next >= len(rows) {
 			next = len(rows) - 1
 		}
-		if next == sel || rows[next].gap {
+		for next > 0 && rows[next].inert() {
+			next-- // clamped onto chrome at an edge: back into the list
+		}
+		if next == sel || rows[next].inert() {
 			return false
 		}
 		sel = next
@@ -452,7 +469,10 @@ func cmdTui(tmuxSock, demuxSock string) {
 		}
 		if x <= lw {
 			i := layoutList(rows, sel, height).rowAt(y-1, len(rows))
-			if i < 0 || i >= len(rows) || rows[i].gap {
+			for i > 0 && i < len(rows) && rows[i].cont {
+				i-- // a continuation line clicks as its owner
+			}
+			if i < 0 || i >= len(rows) || rows[i].inert() {
 				return false
 			}
 			if i == sel {
@@ -522,6 +542,14 @@ func cmdTui(tmuxSock, demuxSock string) {
 			case "select":
 				found := false
 				for i, r := range rows {
+					if m.Pane != "" {
+						if r.arow && !r.cont && r.pane == m.Pane {
+							sel = i
+							found = true
+							break
+						}
+						continue
+					}
 					if r.window == m.Window && !r.session {
 						sel = i
 						found = true
@@ -1171,6 +1199,12 @@ func paintList(rows []row, sel int) {
 		lw, border = cols, false
 	}
 	lay := layoutList(rows, sel, height)
+	// A two-row entry highlights as one: the fill spans the selected row
+	// plus its continuation lines.
+	selEnd := sel
+	for selEnd+1 < len(rows) && rows[selEnd+1].cont {
+		selEnd++
+	}
 	var cur []string
 	if benchLog != nil {
 		cur = make([]string, 0, height)
@@ -1199,13 +1233,20 @@ func paintList(rows []row, sel int) {
 			}
 			pad := strings.Repeat(" ", lw-len(label))
 			switch {
-			case i == sel:
+			case i >= sel && i <= selEnd:
 				// Row fill + bold, not reverse video: herdr's selection
 				// style, and it leaves reverse free to mean "cursor" on
-				// the billboard canvas.
-				b.WriteString(cFill + "\033[1m" + string(label) + pad + "\033[22;49m")
+				// the billboard canvas. Continuation lines share the fill
+				// but not the bold.
+				style := cFill
+				if i == sel {
+					style += "\033[1m"
+				}
+				b.WriteString(style + string(label) + pad + "\033[22;49m")
 			case rows[i].gap:
 				b.WriteString(string(label) + pad)
+			case rows[i].head:
+				b.WriteString(cMuted + "\033[1m" + string(label) + pad + "\033[22;39m")
 			case rows[i].session:
 				b.WriteString("\033[1m" + string(label) + pad + "\033[22m")
 			default:
@@ -1229,7 +1270,7 @@ func paintList(rows []row, sel int) {
 		if border {
 			b.WriteString(cMuted + "│\033[39m")
 		}
-		if i >= 0 && !rows[i].gap {
+		if i >= 0 && !rows[i].inert() {
 			// Col-1 ornament: the session's attached dot (accent) or the
 			// window/agent state dot. Painted AFTER the border write on
 			// purpose — this repositions the cursor, and the border relies

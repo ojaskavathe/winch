@@ -145,6 +145,11 @@ func cmdBrowse(tmuxSock, demuxSock, client string) {
 	sendCmd(tmuxSock, demuxSock, cmdMsg{Cmd: "browse", Client: client})
 }
 
+// cmdAgents is the M-a entrypoint: the agent switcher.
+func cmdAgents(tmuxSock, demuxSock, client string) {
+	sendCmd(tmuxSock, demuxSock, cmdMsg{Cmd: "agents", Client: client})
+}
+
 func cmdEvents(tmuxSock, demuxSock string) {
 	conn, err := dialEnsure(tmuxSock, demuxSock)
 	if err != nil {

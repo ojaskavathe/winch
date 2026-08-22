@@ -44,6 +44,8 @@ commands:
   toggle <client>        dock / undock the sidebar for a tmux client
   nav <next|prev> <cl>   window nav with the sidebar riding along (routed M-h/M-l)
   browse <client>        dock the sidebar and zoom straight into scrubbing
+  agents <client>        agent switcher: browse pinned on the top-attention agent;
+                         repeat invocations cycle through agents
   equalize [pane]        equalize panes, nvim splits weighted (no daemon needed)
   tui                    the sidebar TUI (spawned by the daemon)
   sock                   print the tmux and demux socket paths and exit
@@ -89,6 +91,12 @@ func main() {
 			client = args[1]
 		}
 		cmdBrowse(tmuxSock, demuxSock, client)
+	case "agents":
+		client := ""
+		if len(args) > 1 {
+			client = args[1]
+		}
+		cmdAgents(tmuxSock, demuxSock, client)
 	case "equalize":
 		pane := ""
 		if len(args) > 1 {

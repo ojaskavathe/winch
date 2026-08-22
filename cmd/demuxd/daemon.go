@@ -45,6 +45,16 @@ type daemon struct {
 	handoff  *handoffState
 	handoffT *time.Timer
 	handoffC <-chan time.Time
+
+	// agentCycle: per-client position in the agent switcher (M-a). Rapid
+	// re-invocations cycle down the attention-sorted list; after the tap
+	// window it restarts at the top-attention agent.
+	agentCycle map[string]agentCyclePos
+}
+
+type agentCyclePos struct {
+	pane string
+	at   time.Time
 }
 
 // clientView: the client's current session, window, and size, from

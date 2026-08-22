@@ -68,6 +68,7 @@ func TestAgent(t *testing.T) {
 		cap := r.Capture(s.Pane)
 		return strings.Contains(cap, "agents") && strings.Contains(cap, "Cooking again")
 	}))
+	r.Chk("sessions heading on top", strings.Contains(r.Capture(s.Pane), "sessions"))
 
 	// Drag the divider up 4 rows: the rule must follow and stick.
 	sepRow := func() int {
@@ -129,6 +130,35 @@ func TestAgent(t *testing.T) {
 	r.SendKeys(s.Pane, "q")
 	sleep(600)
 
+	// M-a: the agent switcher. First tap pins the top-attention agent
+	// (blocked outranks working); a quick second tap cycles onward. The
+	// selection fill spans both rows of the two-row entry, so the text on
+	// the continuation line must sit on a bg-filled line.
+	filled := func(sub string) bool {
+		raw, _ := r.TQ("capture-pane", "-p", "-e", "-t", r.Side().Pane)
+		for _, ln := range strings.Split(raw, "\n") {
+			if !strings.Contains(ln, sub) {
+				continue
+			}
+			if strings.Contains(ln, "[100m") || strings.Contains(ln, "48;5;8m") {
+				return true
+			}
+		}
+		return false
+	}
+	r.D("agents", r.CL)
+	sleep(900)
+	r.Chk("switcher pins the blocked agent", r.WaitUntil(600, func() bool {
+		return filled("permission prompt")
+	}))
+	r.D("agents", r.CL)
+	sleep(700)
+	r.Chk("second tap cycles to the working agent", r.WaitUntil(600, func() bool {
+		return filled("Cooking again")
+	}))
+	r.SendKeys(r.Side().Pane, "q")
+	sleep(600)
+
 	// Kill the agents: states must leave the world (glyphs gone).
 	r.D("toggle", r.CL)
 	sleep(600)
@@ -139,4 +169,9 @@ func TestAgent(t *testing.T) {
 	r.Chk("statusline cleared", r.WaitUntil(200, func() bool {
 		return r.ShowOpt("-gqv", "@demux_agents") == ""
 	}))
+
+	// No agents left: the switcher declines to dock and just says so.
+	r.D("agents", r.CL)
+	sleep(800)
+	r.Chk("no agents: switcher declines to dock", r.Side().Pane == "")
 }

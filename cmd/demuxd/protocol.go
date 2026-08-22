@@ -55,9 +55,12 @@ type diffMsg struct {
 }
 
 // selectMsg tells the list TUI to move its selection (daemon -> list).
+// With Pane set, the selection lands on that pane's agent row (the agent
+// switcher targets agents, not windows).
 type selectMsg struct {
 	Type   string `json:"type"`
 	Window string `json:"window"`
+	Pane   string `json:"pane,omitempty"`
 }
 
 // frameMsg carries a captured window for the preview region (daemon ->
@@ -103,6 +106,7 @@ type wireMsg struct {
 	Panes    []pane      `json:"panes"`
 	Ops      []wireOp    `json:"ops"`
 	Window   string      `json:"window"`
+	Pane     string      `json:"pane"`
 	Frame    []framePane `json:"frame"`
 	Gen      int         `json:"gen"`
 	Delta    bool        `json:"delta"`
