@@ -62,7 +62,13 @@ func (d *daemon) clientView(ctl *control, client string) (sid, wid string, cw, c
 			return p[1], p[2], cw, ch, nil
 		}
 	}
-	return "", "", 0, 0, errors.New("no client " + client)
+	names := make([]string, 0, len(lines))
+	for _, ln := range lines {
+		if p := strings.Split(ln, sep); len(p) == 5 {
+			names = append(names, p[0])
+		}
+	}
+	return "", "", 0, 0, fmt.Errorf("no client %s (server has: %s)", client, strings.Join(names, ", "))
 }
 
 // debounce for notification bursts: long enough to coalesce a storm (a
