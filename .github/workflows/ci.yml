@@ -27,7 +27,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: sudo apt-get update && sudo apt-get install -y tmux
+      # ubuntu's apt tmux is 3.4, which escapes control-mode output (demux
+      # needs >= 3.6) — take tmux from nixpkgs instead.
+      - uses: DeterminateSystems/nix-installer-action@v16
+      - run: nix build nixpkgs#tmux && echo "$PWD/result/bin" >> "$GITHUB_PATH"
       - run: tmux -V
       - working-directory: rigs
         run: go test -count=1 -short -parallel 2 -timeout 15m .

@@ -100,6 +100,15 @@ func runDaemon(tmuxSock, demuxSock string) {
 		if err != nil {
 			log.Fatalf("spawn tmux: %v", err)
 		}
+		// tmux <= 3.5 octal-escapes non-printable bytes in control-mode
+		// command replies: the \x1f field separator arrives as the text
+		// "\037" (and captured SGR as "\033[...]"), so every listing parses
+		// to an empty world. Fail loudly instead.
+		if lines, perr := ctl.run("display-message -p '" + sep + "'"); perr == nil &&
+			len(lines) == 1 && lines[0] == `\037` {
+			ctl.close()
+			log.Fatalf("tmux at %s escapes control-mode output; demux needs tmux >= 3.6", tmuxSock)
+		}
 		w, err := fetchWorld(ctl)
 		if err != nil {
 			// Attach failed (server gone, or no sessions left). First attempt
