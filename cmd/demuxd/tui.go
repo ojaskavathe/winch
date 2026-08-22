@@ -110,8 +110,19 @@ type row struct {
 	pane    string // agent rows: the agent's pane — commit focuses it
 	session bool
 	arow    bool   // agents-section row (rendered in the pinned bottom region)
+	gap     bool   // blank spacer between session groups; never selectable
 	agent   string // worst agent state (window rows) / the state (agent rows)
 }
+
+// The sidebar palette, ANSI-16 only: the chrome inherits the host
+// terminal's scheme instead of shipping its own (herdr's `terminal` theme
+// makes the same call). Semantic, not decorative — accent marks "you are
+// here", muted is structure, state hues are the attention ladder.
+const (
+	cAccent = "\033[34m"  // blue: attached dot, active cues
+	cMuted  = "\033[90m"  // bright black: border, rules
+	cFill   = "\033[100m" // selection row fill (bright-black bg)
+)
 
 func (st *store) rows() []row {
 	sessions := make([]session, 0, len(st.sessions))
@@ -152,6 +163,9 @@ func (st *store) rows() []row {
 		if s.Attached {
 			att = "●"
 		}
+		if len(out) > 0 {
+			out = append(out, row{gap: true}) // breathing room between groups
+		}
 		out = append(out, row{label: fmt.Sprintf("%s %s", att, s.Name), window: activeWin, session: true})
 		for _, w := range wins {
 			mark := " "
@@ -185,7 +199,7 @@ func (st *store) rows() []row {
 				text = p.AgentReason
 			}
 			out = append(out, row{
-				label:  fmt.Sprintf("  %s %s:%d %s", p.Agent, sess, win.Index, text),
+				label:  fmt.Sprintf("  %s · %s:%d · %s", p.Agent, sess, win.Index, text),
 				window: p.WindowID, pane: p.ID, agent: p.AgentState, arow: true,
 			})
 		}
@@ -362,6 +376,9 @@ func cmdTui(tmuxSock, demuxSock string) {
 		if sel < 0 {
 			sel = 0
 		}
+		for sel < len(rows)-1 && rows[sel].gap {
+			sel++ // a rebuild can land the raw index on a spacer
+		}
 		paintList(rows, sel)
 		paintedWin, paintedGen = "", -1 // size/world may have shifted regions
 		paintFrameFor(target())
@@ -402,14 +419,21 @@ func cmdTui(tmuxSock, demuxSock string) {
 		if len(rows) == 0 {
 			return false
 		}
+		step := 1
+		if delta < 0 {
+			step = -1
+		}
 		next := sel + delta
+		for next >= 0 && next < len(rows) && rows[next].gap {
+			next += step // roll over spacer rows in the travel direction
+		}
 		if next < 0 {
 			next = 0
 		}
 		if next >= len(rows) {
 			next = len(rows) - 1
 		}
-		if next == sel {
+		if next == sel || rows[next].gap {
 			return false
 		}
 		sel = next
@@ -428,7 +452,7 @@ func cmdTui(tmuxSock, demuxSock string) {
 		}
 		if x <= lw {
 			i := layoutList(rows, sel, height).rowAt(y-1, len(rows))
-			if i < 0 || i >= len(rows) {
+			if i < 0 || i >= len(rows) || rows[i].gap {
 				return false
 			}
 			if i == sel {
@@ -1159,12 +1183,12 @@ func paintList(rows []row, sel int) {
 		if y == lay.sepY {
 			// the pinned agents region's labeled rule
 			rule := []rune("─ agents " + strings.Repeat("─", lw))[:lw]
-			b.WriteString("\033[2m" + string(rule) + "\033[22m")
+			b.WriteString(cMuted + string(rule) + "\033[39m")
 			if benchLog != nil {
 				cur = append(cur, "=agents")
 			}
 			if border {
-				b.WriteString("\033[2m│\033[22m")
+				b.WriteString(cMuted + "│\033[39m")
 			}
 			continue
 		}
@@ -1176,7 +1200,12 @@ func paintList(rows []row, sel int) {
 			pad := strings.Repeat(" ", lw-len(label))
 			switch {
 			case i == sel:
-				b.WriteString("\033[7m" + string(label) + pad + "\033[27m")
+				// Row fill + bold, not reverse video: herdr's selection
+				// style, and it leaves reverse free to mean "cursor" on
+				// the billboard canvas.
+				b.WriteString(cFill + "\033[1m" + string(label) + pad + "\033[22;49m")
+			case rows[i].gap:
+				b.WriteString(string(label) + pad)
 			case rows[i].session:
 				b.WriteString("\033[1m" + string(label) + pad + "\033[22m")
 			default:
@@ -1198,18 +1227,26 @@ func paintList(rows []row, sel int) {
 			}
 		}
 		if border {
-			b.WriteString("\033[2m│\033[22m")
+			b.WriteString(cMuted + "│\033[39m")
 		}
-		if i >= 0 {
-			if g, style := agentGlyph(rows[i].agent); g != "" {
-				// Overwrite col 1 (the window rows' indent) with the state
-				// glyph; keep the selected row's inverse video intact.
-				// After the border write on purpose: this repositions the
-				// cursor, and the border relies on it sitting at col lw+1.
-				if i == sel {
-					style = "\033[7m" + style
+		if i >= 0 && !rows[i].gap {
+			// Col-1 ornament: the session's attached dot (accent) or the
+			// window/agent state dot. Painted AFTER the border write on
+			// purpose — this repositions the cursor, and the border relies
+			// on it sitting at col lw+1.
+			orn, style := "", ""
+			if rows[i].session {
+				if strings.HasPrefix(rows[i].label, "●") {
+					orn, style = "●", cAccent
 				}
-				fmt.Fprintf(&b, "\033[%d;1H%s%s\033[0m", y+1, style, g)
+			} else if g, s := agentGlyph(rows[i].agent); g != "" {
+				orn, style = g, s
+			}
+			if orn != "" {
+				if i == sel {
+					style = cFill + style
+				}
+				fmt.Fprintf(&b, "\033[%d;1H%s%s\033[0m", y+1, style, orn)
 			}
 		}
 	}
@@ -1240,19 +1277,20 @@ func paintList(rows []row, sel int) {
 	benchf("paint_list dur_us=%d bytes=%d", time.Since(start).Microseconds(), b.Len())
 }
 
-// agentGlyph maps a window's worst agent state to its list marker. Blocked
-// is the state that needs eyes — bold red; working is live but fine; idle
-// is barely-there.
+// agentGlyph maps a window's worst agent state to its list marker —
+// herdr's dot language: attention states share ● and differ by hue
+// (red needs you, yellow is live, teal finished unseen); confirmed idle
+// hollows out to a green ○.
 func agentGlyph(state string) (string, string) {
 	switch state {
 	case "blocked":
-		return "!", "\033[1;31m"
+		return "●", "\033[91m"
 	case "done":
-		return "✓", "\033[32m"
+		return "●", "\033[36m"
 	case "working":
-		return "✻", "\033[33m"
+		return "●", "\033[33m"
 	case "idle":
-		return "·", "\033[2m"
+		return "○", "\033[32m"
 	}
 	return "", ""
 }

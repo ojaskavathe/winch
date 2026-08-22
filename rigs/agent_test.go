@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -57,8 +58,11 @@ func TestAgent(t *testing.T) {
 	r.D("toggle", r.CL)
 	sleep(900)
 	s := r.Side()
+	// State dots differ by hue (herdr's language): working = yellow ●.
+	workingDot := regexp.MustCompile(`\x1b\[[0-9;]*33m(?:\x1b\[[0-9;]*m)*●`)
 	r.Chk("working glyph in list", r.WaitUntil(200, func() bool {
-		return strings.Contains(r.Capture(s.Pane), "✻")
+		raw, _ := r.TQ("capture-pane", "-p", "-e", "-t", s.Pane)
+		return workingDot.MatchString(raw)
 	}))
 	r.Chk("agents section listed", r.WaitUntil(200, func() bool {
 		cap := r.Capture(s.Pane)
@@ -94,8 +98,10 @@ func TestAgent(t *testing.T) {
 		return r.LogHas("agent claude pane=.* state=.*->blocked")
 	}))
 	r.Chk("blocked notification sent", r.LogHas("notify blocked"))
+	blockedDot := regexp.MustCompile(`\x1b\[[0-9;]*91m(?:\x1b\[[0-9;]*m)*●`)
 	r.Chk("blocked glyph outranks working", r.WaitUntil(200, func() bool {
-		return strings.Contains(r.Capture(s.Pane), "!")
+		raw, _ := r.TQ("capture-pane", "-p", "-e", "-t", s.Pane)
+		return blockedDot.MatchString(raw)
 	}))
 	r.Chk("blocked reason on agent row", r.WaitUntil(300, func() bool {
 		return strings.Contains(r.Capture(s.Pane), "permission prompt")
