@@ -102,6 +102,27 @@ func TestAgent(t *testing.T) {
 	}))
 	r.Chk("statusline counts blocked", strings.Contains(r.ShowOpt("-gqv", "@demux_agents"), "!"))
 
+	// Border continuity: in browse mode the list paints its own │ column;
+	// glyph rows once left the cursor at col 1 and dropped their border
+	// cell. Every surface row must carry │ at col 41.
+	r.D("browse", r.CL)
+	sleep(900)
+	r.Chk("separator unbroken on glyph rows", r.WaitUntil(400, func() bool {
+		lines := strings.Split(r.Capture(s.Pane), "\n")
+		if len(lines) < 10 {
+			return false
+		}
+		for _, l := range lines {
+			rs := []rune(l)
+			if len(rs) <= 40 || rs[40] != '│' {
+				return false
+			}
+		}
+		return true
+	}))
+	r.SendKeys(s.Pane, "q")
+	sleep(600)
+
 	// Kill the agents: states must leave the world (glyphs gone).
 	r.D("toggle", r.CL)
 	sleep(600)

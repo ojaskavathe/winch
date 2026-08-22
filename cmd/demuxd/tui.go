@@ -1182,14 +1182,6 @@ func paintList(rows []row, sel int) {
 			default:
 				b.WriteString("\033[2m" + string(label) + pad + "\033[22m")
 			}
-			if g, style := agentGlyph(rows[i].agent); g != "" {
-				// Overwrite col 1 (the window rows' indent) with the state
-				// glyph; keep the selected row's inverse video intact.
-				if i == sel {
-					style = "\033[7m" + style
-				}
-				fmt.Fprintf(&b, "\033[%d;1H%s%s\033[0m", y+1, style, g)
-			}
 			if benchLog != nil {
 				cls := byte(' ')
 				if i == sel {
@@ -1207,6 +1199,18 @@ func paintList(rows []row, sel int) {
 		}
 		if border {
 			b.WriteString("\033[2m│\033[22m")
+		}
+		if i >= 0 {
+			if g, style := agentGlyph(rows[i].agent); g != "" {
+				// Overwrite col 1 (the window rows' indent) with the state
+				// glyph; keep the selected row's inverse video intact.
+				// After the border write on purpose: this repositions the
+				// cursor, and the border relies on it sitting at col lw+1.
+				if i == sel {
+					style = "\033[7m" + style
+				}
+				fmt.Fprintf(&b, "\033[%d;1H%s%s\033[0m", y+1, style, g)
+			}
 		}
 	}
 	b.WriteString("\033[?2026l")
