@@ -46,13 +46,13 @@ func TestRecovery(t *testing.T) {
 
 	// S: daemon restart sweeps leaked spacers
 	r.T("split-window", "-d", "-hb", "-f", "-l", "40", "-t", r.W3, "sleep 100000001") // fake a leak
-	exec.Command("pkill", "-f", filepath.Base(demuxdBin)+" -S /private/tmp/tmux-501/"+r.L+" run").Run()
+	exec.Command("pkill", "-f", filepath.Base(demuxdBin)+" -S "+tmuxDir+"/"+r.L+" run").Run()
 	sleep(500)
 	r.D("ls")
 	sleep(2000)
 	r.Chk("leaked spacer swept", r.Spacers() == 0)
 	r.Chk("gamma layout intact", r.Layout(r.W3) == tail(r.LW3))
-	err := exec.Command("pgrep", "-f", filepath.Base(demuxdBin)+" -S /private/tmp/tmux-501/"+r.L+" run").Run()
+	err := exec.Command("pgrep", "-f", filepath.Base(demuxdBin)+" -S "+tmuxDir+"/"+r.L+" run").Run()
 	r.Chk("daemon alive", err == nil)
 
 	// T: daemon killed MID-DOCK leaks session state (@demux_docked routes
@@ -62,7 +62,7 @@ func TestRecovery(t *testing.T) {
 	r.D("toggle", r.CL)
 	sleep(800)
 	r.Chk("docked for the kill", r.ShowOpt("-t", "work", "-v", "@demux_docked") == "1")
-	exec.Command("pkill", "-f", filepath.Base(demuxdBin)+" -S /private/tmp/tmux-501/"+r.L+" run").Run()
+	exec.Command("pkill", "-f", filepath.Base(demuxdBin)+" -S "+tmuxDir+"/"+r.L+" run").Run()
 	sleep(500)
 	r.D("ls")
 	sleep(2000)

@@ -25,6 +25,23 @@ import (
 
 var demuxdBin string
 
+// tmuxDir is this uid's tmux socket directory with symlinks resolved (macOS
+// /tmp -> /private/tmp) — the same canonical form the daemon embeds in its
+// argv, so pkill/pgrep -f patterns built from it match.
+var tmuxDir = func() string {
+	d := os.Getenv("TMUX_TMPDIR")
+	if d == "" {
+		d = "/tmp"
+	}
+	if r, err := filepath.EvalSymlinks(d); err == nil {
+		d = r
+	}
+	return filepath.Join(d, fmt.Sprintf("tmux-%d", os.Getuid()))
+}()
+
+// demuxDir mirrors demuxSocketPath's directory.
+var demuxDir = fmt.Sprintf("/tmp/demux-%d", os.Getuid())
+
 func TestMain(m *testing.M) {
 	sweepStaleServers()
 	tmp, err := os.MkdirTemp("", "demux-rig-")
@@ -77,7 +94,7 @@ func (r *Rig) teardown() {
 	r.TQ("kill-server")
 	// By socket path, not binary name: catches the daemon, the TUI it
 	// spawned, and stragglers from a crashed earlier run of this test.
-	exec.Command("pkill", "-f", "/private/tmp/tmux-501/"+r.L).Run()
+	exec.Command("pkill", "-f", tmuxDir+"/"+r.L).Run()
 	if r.clientCmd != nil && r.clientCmd.Process != nil {
 		r.clientCmd.Process.Kill()
 	}
@@ -88,7 +105,7 @@ func (r *Rig) teardown() {
 		r.t.Logf("keeping daemon log: %s.log", r.Sock)
 		return
 	}
-	for _, f := range glob("/tmp/demux-501/" + r.L + "-*") {
+	for _, f := range glob(demuxDir + "/" + r.L + "-*") {
 		os.Remove(f)
 	}
 }
@@ -99,7 +116,7 @@ func glob(pat string) []string { m, _ := filepath.Glob(pat); return m }
 // runs. Sockets are named <testname><pid>; per-test teardown only knows its
 // OWN pid, so a killed `go test` leaves its servers running forever.
 func sweepStaleServers() {
-	for _, sock := range glob(fmt.Sprintf("/private/tmp/tmux-%d/test*", os.Getuid())) {
+	for _, sock := range glob(tmuxDir + "/test*") {
 		name := filepath.Base(sock)
 		i := len(name)
 		for i > 0 && name[i-1] >= '0' && name[i-1] <= '9' {
