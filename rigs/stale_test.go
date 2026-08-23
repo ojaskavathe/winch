@@ -39,7 +39,7 @@ func TestStaleBillboard(t *testing.T) {
 	r.D("toggle", r.CL)
 	sleep(800)
 	sp := r.Side().Pane
-	r.SendKeys(sp, "j") // p1 -> ptwo: zoom
+	r.SendKeys(sp, "l") // p1 -> ptwo: zoom
 	sleep(700)
 	r.Chk("zoomed on ptwo", r.Side().Width == 200)
 	r.SendKeys(sp, "j") // -> work header (w1): caches w1's OLDMARK frame

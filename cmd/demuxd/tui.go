@@ -108,6 +108,8 @@ type row struct {
 	label   string
 	window  string // preview target
 	pane    string // agent rows: the agent's pane — commit focuses it
+	sess    string // session rows: the session id (identity across rebuilds)
+	att     bool   // session rows: some client is attached
 	session bool
 	arow    bool   // agents-section row (rendered in the pinned bottom region)
 	gap     bool   // blank spacer between session groups; never selectable
@@ -165,7 +167,23 @@ func setTheme(name string) {
 	}
 }
 
-func (st *store) rows() []row {
+// winsOf returns a session's windows sorted by index.
+func (st *store) winsOf(sid string) []window {
+	wins := make([]window, 0, 8)
+	for _, w := range st.windows {
+		if w.SessionID == sid {
+			wins = append(wins, w)
+		}
+	}
+	sort.Slice(wins, func(i, j int) bool { return wins[i].Index < wins[j].Index })
+	return wins
+}
+
+// rows builds the list: sessions as herdr-style space cards (windows are
+// NOT listed — they're auto-named command noise; h/l pages the selected
+// session's windows through the billboard instead, winPick remembering the
+// choice), then the pinned agents section. winPick may be nil.
+func (st *store) rows(winPick map[string]string) []row {
 	out := []row{{label: " sessions", head: true}}
 	sessions := make([]session, 0, len(st.sessions))
 	for _, s := range st.sessions {
@@ -173,7 +191,7 @@ func (st *store) rows() []row {
 	}
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].Name < sessions[j].Name })
 
-	// Worst agent state per window: blocked > done > working > idle.
+	// Worst agent state per session: blocked > done > working > idle.
 	rank := map[string]int{"blocked": 4, "done": 3, "working": 2, "idle": 1}
 	agg := map[string]string{}
 	var agents []pane
@@ -181,40 +199,28 @@ func (st *store) rows() []row {
 		if p.Agent != "" {
 			agents = append(agents, p)
 		}
-		if p.AgentState != "" && rank[p.AgentState] > rank[agg[p.WindowID]] {
-			agg[p.WindowID] = p.AgentState
+		if p.AgentState != "" && rank[p.AgentState] > rank[agg[p.SessionID]] {
+			agg[p.SessionID] = p.AgentState
 		}
 	}
 
 	for _, s := range sessions {
-		wins := make([]window, 0, 8)
-		for _, w := range st.windows {
-			if w.SessionID == s.ID {
-				wins = append(wins, w)
-			}
-		}
-		sort.Slice(wins, func(i, j int) bool { return wins[i].Index < wins[j].Index })
-		activeWin := ""
-		for _, w := range wins {
+		target := ""
+		for _, w := range st.winsOf(s.ID) {
 			if w.Active {
-				activeWin = w.ID
+				target = w.ID
 			}
 		}
-		att := " "
-		if s.Attached {
-			att = "●"
-		}
-		if len(out) > 0 {
-			out = append(out, row{gap: true}) // breathing room between groups
-		}
-		out = append(out, row{label: fmt.Sprintf("%s %s", att, s.Name), window: activeWin, session: true})
-		for _, w := range wins {
-			mark := " "
-			if w.Active {
-				mark = "*"
+		if pick, ok := winPick[s.ID]; ok {
+			if w, live := st.windows[pick]; live && w.SessionID == s.ID {
+				target = pick
 			}
-			out = append(out, row{label: fmt.Sprintf("   %d%s %s", w.Index, mark, w.Name), window: w.ID, agent: agg[w.ID]})
 		}
+		out = append(out, row{gap: true})
+		out = append(out, row{
+			label: "   " + s.Name, window: target, sess: s.ID,
+			session: true, att: s.Attached, agent: agg[s.ID],
+		})
 	}
 	// The agents section: one row per agent pane, attention-sorted
 	// (blocked > done > working > idle), enter jumps to the pane. Labels
@@ -366,6 +372,9 @@ func cmdTui(tmuxSock, demuxSock string) {
 	var mbuf []byte   // SGR mouse params after \x1b[<
 	dragging := false // left button held on the agents divider
 	var rows []row
+	// winPick: per-session window choice (h/l pages the billboard through a
+	// session's windows; the pick survives rebuilds until the window dies).
+	winPick := map[string]string{}
 
 	// Per-window frame cache with generations, so "did I already paint
 	// exactly this?" is an integer compare, never a deep one. dgen is the
@@ -438,7 +447,7 @@ func cmdTui(tmuxSock, demuxSock string) {
 		paintedWin, paintedGen, paintedPanes, paintedCurPane = win, c.gen, scaled, cp
 	}
 	paintAll := func() {
-		rows = st.rows()
+		rows = st.rows(winPick)
 		if sel >= len(rows) {
 			sel = len(rows) - 1
 		}
@@ -478,7 +487,11 @@ func cmdTui(tmuxSock, demuxSock string) {
 			return
 		}
 		seen := map[string]bool{cur: true, "": true}
-		for _, i := range []int{sel - 1, sel + 1} {
+		for _, dir := range []int{-1, 1} {
+			i := sel + dir
+			for i >= 0 && i < len(rows) && rows[i].inert() {
+				i += dir // neighbors sit past chrome rows (gaps, headings)
+			}
 			if i >= 0 && i < len(rows) && !seen[rows[i].window] {
 				seen[rows[i].window] = true
 				send(cmdMsg{Cmd: "preview", Window: rows[i].window, Prefetch: true})
@@ -512,6 +525,28 @@ func cmdTui(tmuxSock, demuxSock string) {
 			return false
 		}
 		sel = next
+		return true
+	}
+	// cycleWin (h/l, arrows): pages the selected session's windows through
+	// the billboard — the tab-bar gesture, without listing windows.
+	cycleWin := func(delta int) bool {
+		if sel < 0 || sel >= len(rows) || !rows[sel].session {
+			return false
+		}
+		wins := st.winsOf(rows[sel].sess)
+		if len(wins) < 2 {
+			return false
+		}
+		cur := 0
+		for i, w := range wins {
+			if w.ID == rows[sel].window {
+				cur = i
+				break
+			}
+		}
+		pick := wins[(cur+delta+len(wins))%len(wins)].ID
+		winPick[rows[sel].sess] = pick
+		rows[sel].window = pick
 		return true
 	}
 	// click handles a left press at 1-based pane coordinates. List column:
@@ -582,19 +617,21 @@ func cmdTui(tmuxSock, demuxSock string) {
 				// world churn (a window or session appearing/dying — agents
 				// do this constantly) rebuilds rows, and an index-anchored
 				// highlight visibly jumps to whatever slid into its slot.
-				prevWin, prevSession, prevArow := "", false, false
+				var prev row
 				if sel >= 0 && sel < len(rows) {
-					prevWin, prevSession, prevArow = rows[sel].window, rows[sel].session, rows[sel].arow
+					prev = rows[sel]
 				}
 				st.apply(m)
-				rows = st.rows()
-				if prevWin != "" {
-					for i, r := range rows {
-						if r.window == prevWin && r.session == prevSession && r.arow == prevArow {
-							sel = i
-							break
-						}
+				rows = st.rows(winPick)
+				for i, r := range rows {
+					switch {
+					case prev.session && r.session && r.sess == prev.sess:
+					case prev.arow && r.arow && !r.cont && prev.pane != "" && r.pane == prev.pane:
+					default:
+						continue
 					}
+					sel = i
+					break
 				}
 				if sel >= len(rows) {
 					sel = len(rows) - 1
@@ -611,7 +648,12 @@ func cmdTui(tmuxSock, demuxSock string) {
 						}
 						continue
 					}
-					if r.window == m.Window && !r.session {
+					// Windows aren't listed: a window select lands on its
+					// session's row, with the pick remembering WHICH window
+					// (daemon nav keeps the billboard on the real window).
+					if r.session && r.sess == st.windows[m.Window].SessionID {
+						winPick[r.sess] = m.Window
+						rows[i].window = m.Window
 						sel = i
 						found = true
 						break
@@ -790,10 +832,15 @@ func cmdTui(tmuxSock, demuxSock string) {
 					}
 				case esc == 2:
 					esc = 0
-					if b == 'A' {
+					switch b {
+					case 'A':
 						moved = moveSel(-1) || moved
-					} else if b == 'B' {
+					case 'B':
 						moved = moveSel(1) || moved
+					case 'C':
+						moved = cycleWin(1) || moved
+					case 'D':
+						moved = cycleWin(-1) || moved
 					}
 				case b == 0x1b:
 					esc = 1
@@ -808,6 +855,10 @@ func cmdTui(tmuxSock, demuxSock string) {
 					moved = moveSel(1) || moved
 				case b == 'k', b == 0x0b: // k, ctrl-k
 					moved = moveSel(-1) || moved
+				case b == 'h':
+					moved = cycleWin(-1) || moved
+				case b == 'l':
+					moved = cycleWin(1) || moved
 				case b == '\r': // enter
 					shrinkExpected = !narrowMode()
 					send(cmdMsg{Cmd: "commit", Window: target(), Pane: targetPane()})
@@ -1344,29 +1395,19 @@ func paintList(rows []row, sel int) {
 			b.WriteString(pal.muted + "│\033[39m")
 		}
 		if i >= 0 && !rows[i].inert() {
-			// Col-1 ornament: the session's attached dot (accent) or the
-			// window/agent state dot. Painted AFTER the border write on
-			// purpose — this repositions the cursor, and the border relies
-			// on it sitting at col lw+1.
-			orn, style := "", ""
-			if rows[i].session {
-				if strings.HasPrefix(rows[i].label, "●") {
-					orn, style = "●", pal.accent
-				}
-			} else if g, s := agentGlyph(rows[i].agent); g != "" {
-				orn, style = g, s
+			// Col-2 dot (herdr's ` ● name` inset): the entry's agent state;
+			// an attached session with no agents shows the accent dot.
+			// Painted AFTER the border write on purpose — this repositions
+			// the cursor, and the border relies on it sitting at col lw+1.
+			orn, style := agentGlyph(rows[i].agent)
+			if orn == "" && rows[i].session && rows[i].att {
+				orn, style = "●", pal.accent
 			}
 			if orn != "" {
 				if i == sel {
 					style = pal.fill + style
 				}
-				// Agent entries carry their dot at col 2 (herdr's ` ● name`
-				// inset); tree rows keep col 1.
-				ox := 1
-				if rows[i].arow {
-					ox = 2
-				}
-				fmt.Fprintf(&b, "\033[%d;%dH%s%s\033[0m", y+1, ox, style, orn)
+				fmt.Fprintf(&b, "\033[%d;2H%s%s\033[0m", y+1, style, orn)
 			}
 		}
 	}

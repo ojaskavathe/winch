@@ -30,7 +30,7 @@ func TestClientResize(t *testing.T) {
 	// visit w1 so beta holds a spacer carved at the OLD size
 	sp := r.Side().Pane
 	r.T("select-pane", "-t", sp)
-	r.SendKeys(sp, "k")
+	r.SendKeys(sp, "h")
 	sleep(500)
 	r.SendKeys(sp, "Enter")
 	r.WaitUntil(100, func() bool { return r.ClientWin() == r.W1 })
@@ -51,12 +51,12 @@ func TestClientResize(t *testing.T) {
 	// pane — re-fetch after the landing above)
 	sp = r.Side().Pane
 	r.T("select-pane", "-t", sp)
-	r.SendKeys(sp, "j")
+	r.SendKeys(sp, "l")
 	sleep(600)
 	r.Chk("scrub zooms at new size", r.Side().Width == 120)
 	found := false
 	for _, ln := range strings.Split(r.Capture(sp), "\n") {
-		if strings.Contains(ln, "beta") {
+		if strings.Contains(ln, "sessions") {
 			found = true
 			break
 		}

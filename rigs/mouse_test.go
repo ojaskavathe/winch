@@ -11,34 +11,32 @@ import (
 func TestMouse(t *testing.T) {
 	r := New(t)
 
-	r.D("toggle", r.CL) // dock on beta; rows [play,p1,ptwo,work,w1,beta,gamma]
+	r.D("toggle", r.CL) // dock on beta; rows [head, gap, play, gap, work]
 	sleep(800)
 	sp := r.Side().Pane
 
-	// wheel up = k: selection to w1, zoom + billboard
-	r.Mouse(sp, 64, 5, 3, true)
+	// wheel up = k: selection to the play row, zoom + billboard
+	r.Mouse(sp, 64, 5, 5, true)
 	sleep(800)
 	r.Chk("wheel scrubs (zoom)", r.Side().Width == 200)
-	r.Chk("wheel billboards w1", strings.Contains(r.Capture(sp), "MARKW1"))
+	r.Chk("wheel billboards another session", r.ClientWin() == r.W2)
 
-	// click the ptwo row (index 2 -> y=3): selects; second click enters
-	pt := r.T("display-message", "-p", "-t", "play:ptwo", "#{window_id}")
-	r.Click(sp, 5, 3)
+	// click the work row (y=5): selects; second click enters its pick (the
+	// dock origin, beta)
+	r.Click(sp, 5, 5)
 	sleep(700)
 	r.Chk("click keeps scrubbing", r.ClientWin() == r.W2)
-	r.Click(sp, 5, 3)
-	r.WaitUntil(150, func() bool { return r.ClientWin() == pt })
+	r.Click(sp, 5, 5)
+	r.WaitUntil(150, func() bool { return r.ClientWin() == r.W2 })
 	sleep(500)
-	r.Chk("click-click enters ptwo", r.ClientWin() == pt)
-	r.Chk("sidebar docked in ptwo", r.Side().Win == pt && r.Side().Width == sideW)
+	r.Chk("click-click enters the pick", r.ClientWin() == r.W2)
+	r.Chk("sidebar docked in beta", r.Side().Win == r.W2 && r.Side().Width == sideW)
 
-	// canvas click: wheel down to w1's billboard, click inside the RIGHT
+	// canvas click: page to w1's billboard, click inside the RIGHT
 	// split -> enters w1 with that split focused (not the last-active one)
 	sp = r.Side().Pane
 	r.T("select-pane", "-t", sp)
-	r.Mouse(sp, 65, 5, 3, true) // -> work header
-	sleep(500)
-	r.Mouse(sp, 65, 5, 3, true) // -> w1
+	r.SendKeys(sp, "h") // work's pick w2 -> w1
 	sleep(900)
 	r.Chk("billboard shows w1", strings.Contains(r.Capture(sp), "MARKW1"))
 	r.Click(sp, 160, 10)

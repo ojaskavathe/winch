@@ -48,16 +48,17 @@ func TestFlicker(t *testing.T) {
 	r.Chk("docked on p1", s.Win == r.P1 && s.Width == sideW)
 	sp := s.Pane
 
-	// first j zooms (origin content legitimately on screen until then)
-	r.SendKeys(sp, "j")
+	// first l zooms (origin content legitimately on screen until then):
+	// p1 -> ptwo within play
+	r.SendKeys(sp, "l")
 	sleep(700)
 	r.Chk("zoomed", r.Side().Width == 200)
 
-	// rows: [play, p1, ptwo, work, w1, beta, gamma, hv] — five more j's to
-	// hv, none of which billboards the origin
+	// j hops to the work row (billboards w1, its current window), then l
+	// pages w1 -> w2 -> w3 -> hv; none of it billboards the origin
 	r.StartRecord()
-	for i := 0; i < 5; i++ {
-		r.SendKeys(sp, "j")
+	for _, k := range []string{"j", "l", "l", "l"} {
+		r.SendKeys(sp, k)
 		sleep(350)
 	}
 	sleep(800) // hv billboard (scaled approximation — no pre-carve)

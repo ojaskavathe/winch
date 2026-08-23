@@ -47,8 +47,12 @@ func TestGestureCommits(t *testing.T) {
 		r.D("browse", r.CL)
 		sleep(1000)
 		s := r.Side()
-		r.SendKeys(s.Pane, "k")
-		sleep(900)
+		// Round 1 browses from beta (page back one window); round 2 from
+		// w1 itself, where the billboard already shows the target.
+		if !strings.Contains(r.Capture(s.Pane), "MARKW1") {
+			r.SendKeys(s.Pane, "h")
+			sleep(900)
+		}
 		r.Chk("billboard shows w1", strings.Contains(r.Capture(s.Pane), "MARKW1"))
 		return s.Pane
 	}

@@ -24,7 +24,7 @@ func TestBrowse(t *testing.T) {
 	r.Chk("wide mode has border", strings.Contains(r.Capture(s.Pane), "│"))
 
 	// scrub to w1; Enter commits for real and stays docked
-	r.SendKeys(s.Pane, "k")
+	r.SendKeys(s.Pane, "h")
 	sleep(700)
 	r.Chk("billboard shows w1 content", strings.Contains(r.Capture(s.Pane), "MARKW1"))
 	r.SendKeys(s.Pane, "Enter")

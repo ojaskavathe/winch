@@ -13,7 +13,7 @@ func TestStickySelection(t *testing.T) {
 	r.D("toggle", r.CL) // dock on beta
 	sleep(800)
 	sp := r.Side().Pane
-	r.SendKeys(sp, "j") // scrub to gamma
+	r.SendKeys(sp, "l") // scrub to gamma
 	sleep(700)
 	r.Chk("zoomed", r.Side().Width == 200)
 

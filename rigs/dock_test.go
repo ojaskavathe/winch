@@ -46,7 +46,7 @@ func TestDockScrub(t *testing.T) {
 
 	// B: scrub k -> billboard (zoom, nothing real moves)
 	t0 = time.Now()
-	r.SendKeys(sp, "k")
+	r.SendKeys(sp, "h")
 	lat := -1
 	for i := 0; i < 200; i++ {
 		if strings.Contains(r.Capture(sp), "MARKW1") {
@@ -112,7 +112,7 @@ func TestDockScrub(t *testing.T) {
 	// origin's spacer) — re-fetch the sidebar after every landing.
 	sp = r.Side().Pane
 	r.T("select-pane", "-t", sp)
-	r.SendKeys(sp, "j")
+	r.SendKeys(sp, "l")
 	sleep(500)
 	r.Chk("scrub zoomed", r.Zoomed(r.W1))
 	main := ""
@@ -127,7 +127,7 @@ func TestDockScrub(t *testing.T) {
 	r.Chk("escape unzoomed (tmux)", !r.Zoomed(r.W1))
 	r.Chk("daemon ended scrub", r.LogHas("scrub unzoomed externally"))
 	r.T("select-pane", "-t", sp)
-	r.SendKeys(sp, "j")
+	r.SendKeys(sp, "l")
 	sleep(500)
 	r.Chk("j scrubs again after escape", r.Zoomed(r.W1))
 	r.SendKeys(sp, "q")
@@ -162,7 +162,7 @@ func TestDockScrub(t *testing.T) {
 	// demuxd, so tmux hands C-l to the TUI, which commits to the billboard
 	// you're looking at instead of unzooming back to the docked window.
 	r.T("select-pane", "-t", sp)
-	r.SendKeys(sp, "j") // billboard beta
+	r.SendKeys(sp, "l") // billboard beta (q reset the pick to w1)
 	sleep(500)
 	r.SendKeys(sp, "C-l")
 	r.WaitUntil(100, func() bool { return r.ClientWin() == r.W2 })
@@ -171,7 +171,7 @@ func TestDockScrub(t *testing.T) {
 	r.Chk("C-l keeps sidebar docked", r.Side().Win == r.W2 && r.Side().Width == sideW)
 	sp = r.Side().Pane
 	r.T("select-pane", "-t", sp)
-	r.SendKeys(sp, "k") // back to w1 for the storm section
+	r.SendKeys(sp, "h") // back to w1 for the storm section
 	sleep(500)
 	r.SendKeys(sp, "Enter")
 	r.WaitUntil(100, func() bool { return r.ClientWin() == r.W1 })

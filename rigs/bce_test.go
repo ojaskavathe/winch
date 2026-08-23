@@ -35,7 +35,7 @@ func TestBCEBillboard(t *testing.T) {
 	r.D("toggle", r.CL) // dock on beta
 	sleep(800)
 	sp := r.Side().Pane
-	r.SendKeys(sp, "k") // billboard w1
+	r.SendKeys(sp, "h") // billboard w1
 	sleep(900)
 
 	// poll: under full-suite CPU load the billboard paint can land seconds

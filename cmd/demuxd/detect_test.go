@@ -270,7 +270,7 @@ func TestBlockedRowShowsReason(t *testing.T) {
 			Agent: "claude", AgentState: "blocked", AgentReason: "permission prompt",
 		}},
 	}
-	rows := st.rows()
+	rows := st.rows(nil)
 	last := rows[len(rows)-1]
 	// At sidebar width the reason tail gets token-dropped (the billboard
 	// carries the detail); the state word must survive, the stale title
