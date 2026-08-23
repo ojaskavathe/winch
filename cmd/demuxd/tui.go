@@ -135,6 +135,7 @@ type palette struct {
 	muted   string // fg: chrome — border, rules, headers, tails
 	accent  string // fg: attached dot, active cues
 	mauve   string // fg: git branch
+	bg      string // bg: the sidebar's own ground, a step darker than the terminal
 	fill    string // bg: selection row fill
 	actFill string // bg: the client's current session card
 	red     string // blocked
@@ -150,14 +151,14 @@ var themes = map[string]palette{
 	"catppuccin": {
 		text: rgb(205, 214, 244), subtext: rgb(166, 173, 200), muted: rgb(108, 112, 134),
 		accent: rgb(137, 180, 250), mauve: rgb(203, 166, 247),
-		fill: rgbBG(49, 50, 68), actFill: rgbBG(30, 30, 46),
+		bg: rgbBG(24, 24, 37), fill: rgbBG(49, 50, 68), actFill: rgbBG(30, 30, 46),
 		red: rgb(243, 139, 168), yellow: rgb(249, 226, 175),
 		teal: rgb(148, 226, 213), green: rgb(166, 227, 161),
 	},
 	"terminal": {
 		text: "", subtext: "\033[37m", muted: "\033[90m",
 		accent: "\033[34m", mauve: "\033[35m",
-		fill: "\033[100m", actFill: "\033[100m",
+		bg: "", fill: "\033[100m", actFill: "\033[100m",
 		red: "\033[91m", yellow: "\033[33m", teal: "\033[36m", green: "\033[32m",
 	},
 }
@@ -174,6 +175,10 @@ var listW = listWidth
 // selects: dock, commit, nav all send one). Its card carries the active
 // fill — herdr's active_row_bg, distinct from the selection cursor.
 var curSess string
+
+// renSess/renBuf: inline rename state (`r` on a session row). While set,
+// paintList renders the row as an edit line: buffer + accent █ cursor.
+var renSess, renBuf string
 
 func setTheme(name string) {
 	if p, ok := themes[name]; ok {
@@ -898,6 +903,29 @@ func cmdTui(tmuxSock, demuxSock string) {
 					}
 				case b == 0x1b:
 					esc = 1
+					if renSess != "" {
+						renSess, renBuf = "", "" // esc cancels the rename
+						relayout = true
+					}
+				case renSess != "":
+					// Inline rename owns the keyboard until enter/esc.
+					switch {
+					case b == '\r':
+						name := strings.TrimSpace(renBuf)
+						if name != "" && name != st.sessions[renSess].Name {
+							send(cmdMsg{Cmd: "rename", Sess: renSess, Name: name})
+						}
+						renSess, renBuf = "", ""
+					case b == 0x7f, b == 0x08: // backspace
+						if r := []rune(renBuf); len(r) > 0 {
+							renBuf = string(r[:len(r)-1])
+						}
+					case b == 0x15: // ctrl-u
+						renBuf = ""
+					case b >= 0x20 && b != 0x7f:
+						renBuf += string([]byte{b}) // raw byte: utf-8 rides through
+					}
+					relayout = true
 				// vim-tmux-navigator hands its keys to this pane (the
 				// @vim_navigator_pattern includes demuxd), so the sidebar
 				// behaves like a vim split: C-l goes INTO what you're looking
@@ -913,6 +941,13 @@ func cmdTui(tmuxSock, demuxSock string) {
 					moved = cycleWin(-1) || moved
 				case b == 'l':
 					moved = cycleWin(1) || moved
+				case b == 'r':
+					// Rename the selected session inline, prefilled.
+					if sel >= 0 && sel < len(rows) && rows[sel].session {
+						renSess = rows[sel].sess
+						renBuf = st.sessions[renSess].Name
+						relayout = true
+					}
 				case b == '\r': // enter
 					shrinkExpected = !narrowMode()
 					send(cmdMsg{Cmd: "commit", Window: target(), Pane: targetPane()})
@@ -1387,14 +1422,25 @@ func paintList(rows []row, sel int) {
 		if y == lay.sepY {
 			// the pinned agents region's labeled rule
 			rule := []rune("─ agents " + strings.Repeat("─", lw))[:lw]
-			b.WriteString(pal.muted + string(rule) + "\033[39m")
+			b.WriteString(pal.bg + pal.muted + string(rule) + "\033[49;39m")
 			if benchLog != nil {
 				cur = append(cur, "=agents")
 			}
 			if border {
-				b.WriteString(pal.muted + "│\033[39m")
+				b.WriteString(pal.bg + pal.muted + "│\033[49;39m")
 			}
 			continue
+		}
+		// Every row sits on the sidebar's own ground (pal.bg, a step darker
+		// than the terminal); selection and the active card override it.
+		rowBG := pal.bg
+		if i >= 0 {
+			switch {
+			case i >= sel && i <= selEnd:
+				rowBG = pal.fill
+			case rows[i].sess != "" && rows[i].sess == curSess:
+				rowBG = pal.actFill
+			}
 		}
 		if i >= 0 {
 			label := []rune(rows[i].label)
@@ -1403,12 +1449,24 @@ func paintList(rows []row, sel int) {
 			}
 			pad := strings.Repeat(" ", lw-len(label))
 			switch {
+			case rows[i].session && rows[i].sess != "" && rows[i].sess == renSess:
+				// Inline rename: the row IS the input field.
+				edit := []rune("   " + renBuf)
+				if len(edit) > lw-1 {
+					edit = edit[len(edit)-(lw-1):]
+				}
+				epad := ""
+				if n := lw - len(edit) - 1; n > 0 {
+					epad = strings.Repeat(" ", n)
+				}
+				b.WriteString(pal.fill + pal.text + "\033[1m" + string(edit) +
+					pal.accent + "█" + epad + "\033[22;49;39m")
 			case i >= sel && i <= selEnd:
 				// Row fill + bold, not reverse video: herdr's selection
 				// style, and it leaves reverse free to mean "cursor" on
 				// the billboard canvas. Continuation lines share the fill
 				// but not the bold.
-				style := pal.fill + pal.text
+				style := rowBG + pal.text
 				if i == sel {
 					style += "\033[1m"
 				}
@@ -1418,13 +1476,13 @@ func paintList(rows []row, sel int) {
 					b.WriteString(style + string(label) + pad + "\033[22;49;39m")
 				}
 			case rows[i].gap:
-				b.WriteString(string(label) + pad)
+				b.WriteString(rowBG + string(label) + pad + "\033[49m")
 			case rows[i].head:
-				b.WriteString(pal.muted + "\033[1m" + string(label) + pad + "\033[22;39m")
+				b.WriteString(rowBG + pal.muted + "\033[1m" + string(label) + pad + "\033[22;49;39m")
 			case rows[i].sess != "" && rows[i].sess == curSess:
 				// The client's real session: herdr's active_row_bg fill
 				// across the whole card, name in full text + bold.
-				style := pal.actFill
+				style := rowBG
 				if rows[i].session {
 					style += pal.text + "\033[1m"
 				}
@@ -1434,16 +1492,16 @@ func paintList(rows []row, sel int) {
 					b.WriteString(style + string(label) + pad + "\033[22;49;39m")
 				}
 			case rows[i].session:
-				b.WriteString(pal.subtext + string(label) + pad + "\033[39m")
+				b.WriteString(rowBG + pal.subtext + string(label) + pad + "\033[49;39m")
 			case rows[i].arow && !rows[i].cont:
 				// Agent entry's WHERE row: bold subtext names, like herdr's
 				// unfocused entries.
-				b.WriteString(pal.subtext + "\033[1m" + string(label) + pad + "\033[22;39m")
+				b.WriteString(rowBG + pal.subtext + "\033[1m" + string(label) + pad + "\033[22;49;39m")
 			default:
 				if s := rows[i].styled; s != "" && len([]rune(rows[i].label)) <= lw {
-					b.WriteString(s + pad)
+					b.WriteString(rowBG + s + pad + "\033[49m")
 				} else {
-					b.WriteString(pal.subtext + "\033[2m" + string(label) + pad + "\033[22;39m")
+					b.WriteString(rowBG + pal.subtext + "\033[2m" + string(label) + pad + "\033[22;49;39m")
 				}
 			}
 			if benchLog != nil {
@@ -1456,13 +1514,13 @@ func paintList(rows []row, sel int) {
 				cur = append(cur, string(cls)+string(label))
 			}
 		} else {
-			b.WriteString(strings.Repeat(" ", lw))
+			b.WriteString(pal.bg + strings.Repeat(" ", lw) + "\033[49m")
 			if benchLog != nil {
 				cur = append(cur, "")
 			}
 		}
 		if border {
-			b.WriteString(pal.muted + "│\033[39m")
+			b.WriteString(pal.bg + pal.muted + "│\033[49;39m")
 		}
 		if i >= 0 && !rows[i].inert() {
 			// Col-2 dot (herdr's ` ● name` inset): the entry's agent state;
@@ -1474,12 +1532,7 @@ func paintList(rows []row, sel int) {
 				orn, style = "●", pal.accent
 			}
 			if orn != "" {
-				if i >= sel && i <= selEnd {
-					style = pal.fill + style
-				} else if rows[i].sess != "" && rows[i].sess == curSess {
-					style = pal.actFill + style
-				}
-				fmt.Fprintf(&b, "\033[%d;2H%s%s\033[0m", y+1, style, orn)
+				fmt.Fprintf(&b, "\033[%d;2H%s%s\033[0m", y+1, rowBG+style, orn)
 			}
 		}
 	}

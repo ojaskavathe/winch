@@ -119,6 +119,15 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 		// Border drag in the browse canvas: the TUI already repainted at
 		// the new width; make it the sidebar's width everywhere.
 		d.setWidth(ctl, env.msg.Width, true)
+	case "rename":
+		// Inline rename from the sidebar (`r` on a session row). The
+		// %session-renamed notification re-lists and the new name flows
+		// back as a normal diff.
+		if env.msg.Sess == "" || env.msg.Name == "" {
+			err = errors.New("rename needs a session and a name")
+		} else {
+			_, err = ctl.run("rename-session -t " + q(env.msg.Sess) + " " + q(env.msg.Name))
+		}
 	case "focus":
 		// C-l from the docked idle sidebar: select the pane geometrically
 		// right of it — vim-tmux-navigator semantics, no origin reset.

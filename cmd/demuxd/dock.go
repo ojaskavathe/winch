@@ -1146,7 +1146,11 @@ func dockSessionCmds(sid string, width int) []string {
 	// sidebar, not statusline. (bg=default would NOT work: inside the
 	// status line "default" means inherit status-style, i.e. the themed
 	// statusline background — a no-op.)
-	pad := "#[bg=terminal,fg=terminal]" + strings.Repeat(" ", width+1) + "#[default]"
+	padBG := "terminal"
+	if uiTheme != "terminal" {
+		padBG = "#181825" // the sidebar's own ground (tui.go pal.bg, catppuccin)
+	}
+	pad := fmt.Sprintf("#[bg=%s,fg=%s]", padBG, padBG) + strings.Repeat(" ", width+1) + "#[default]"
 	return []string{
 		"set-option -t " + q(sid) + " @demux_docked 1",
 		"set-option -t " + q(sid) + " status-left " + q(pad),

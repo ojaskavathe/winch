@@ -29,6 +29,8 @@ type cmdMsg struct {
 	Dir      string `json:"dir,omitempty"`   // nav: "next" | "prev"
 	Width    int    `json:"width,omitempty"` // winch: the TUI's new cols
 	Pane     string `json:"pane,omitempty"`  // commit: focus this pane (billboard click)
+	Sess     string `json:"sess,omitempty"`  // rename: target session
+	Name     string `json:"name,omitempty"`  // rename: new session name
 	Prefetch bool   `json:"prefetch,omitempty"`
 }
 
