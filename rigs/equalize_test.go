@@ -61,7 +61,7 @@ func TestEqualize(t *testing.T) {
 	equalize(m0)
 	sleep(500)
 	s := r.Side()
-	r.Chk("sidebar untouched at 40", s.Left == 0 && s.Width == 40)
+	r.Chk("sidebar untouched at 40", s.Left == 0 && s.Width == sideW)
 	r.Chk("mains equalized", abs(width(m0)-width(m1)) <= 1)
 	r.Chk("pane order preserved", left(m0) < left(m1))
 	r.Chk("dirty marker set", r.ShowOpt("-wv", "-t", r.W1, "@demux_layout_dirty") == "1")

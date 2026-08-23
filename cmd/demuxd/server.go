@@ -83,7 +83,7 @@ func (h *hub) setWorld(w world, ops []op, resync bool, tmuxSock string) {
 	h.world = w
 	var payload []byte
 	if resync {
-		payload = marshalLine(snapshotMsg{V: 1, Type: "snapshot", Tmux: tmuxSock, world: w})
+		payload = marshalLine(snapshotMsg{V: 1, Type: "snapshot", Tmux: tmuxSock, Theme: uiTheme, world: w})
 	} else {
 		if len(ops) == 0 {
 			return
@@ -105,7 +105,7 @@ func (h *hub) setWorld(w world, ops []op, resync bool, tmuxSock string) {
 func (h *hub) add(conn net.Conn, tmuxSock string) *subscriber {
 	s := &subscriber{conn: conn, ch: make(chan []byte, 256)}
 	h.mu.Lock()
-	s.ch <- marshalLine(snapshotMsg{V: 1, Type: "snapshot", Tmux: tmuxSock, world: h.world})
+	s.ch <- marshalLine(snapshotMsg{V: 1, Type: "snapshot", Tmux: tmuxSock, Theme: uiTheme, world: h.world})
 	h.subs[s] = struct{}{}
 	h.mu.Unlock()
 	return s

@@ -58,15 +58,16 @@ func TestAgent(t *testing.T) {
 	r.D("toggle", r.CL)
 	sleep(900)
 	s := r.Side()
-	// State dots differ by hue (herdr's language): working = yellow ●.
-	workingDot := regexp.MustCompile(`\x1b\[[0-9;]*33m(?:\x1b\[[0-9;]*m)*●`)
+	// State dots differ by hue (herdr's language): working = yellow ●
+	// (catppuccin RGB; tmux may re-serialize with : separators).
+	workingDot := regexp.MustCompile(`249[;:]226[;:]175m(?:\x1b\[[0-9;:]*m)*●`)
 	r.Chk("working glyph in list", r.WaitUntil(200, func() bool {
 		raw, _ := r.TQ("capture-pane", "-p", "-e", "-t", s.Pane)
 		return workingDot.MatchString(raw)
 	}))
 	r.Chk("agents section listed", r.WaitUntil(200, func() bool {
 		cap := r.Capture(s.Pane)
-		return strings.Contains(cap, "agents") && strings.Contains(cap, "Cooking again")
+		return strings.Contains(cap, "agents") && strings.Contains(cap, "working · claude")
 	}))
 	r.Chk("sessions heading on top", strings.Contains(r.Capture(s.Pane), "sessions"))
 
@@ -99,13 +100,13 @@ func TestAgent(t *testing.T) {
 		return r.LogHas("agent claude pane=.* state=.*->blocked")
 	}))
 	r.Chk("blocked notification sent", r.LogHas("notify blocked"))
-	blockedDot := regexp.MustCompile(`\x1b\[[0-9;]*91m(?:\x1b\[[0-9;]*m)*●`)
+	blockedDot := regexp.MustCompile(`243[;:]139[;:]168m(?:\x1b\[[0-9;:]*m)*●`)
 	r.Chk("blocked glyph outranks working", r.WaitUntil(200, func() bool {
 		raw, _ := r.TQ("capture-pane", "-p", "-e", "-t", s.Pane)
 		return blockedDot.MatchString(raw)
 	}))
-	r.Chk("blocked reason on agent row", r.WaitUntil(300, func() bool {
-		return strings.Contains(r.Capture(s.Pane), "permission prompt")
+	r.Chk("blocked state on agent row", r.WaitUntil(300, func() bool {
+		return strings.Contains(r.Capture(s.Pane), "blocked · claude")
 	}))
 	r.Chk("statusline counts blocked", strings.Contains(r.ShowOpt("-gqv", "@demux_agents"), "!"))
 
@@ -121,7 +122,7 @@ func TestAgent(t *testing.T) {
 		}
 		for _, l := range lines {
 			rs := []rune(l)
-			if len(rs) <= 40 || rs[40] != '│' {
+			if len(rs) <= sideW || rs[sideW] != '│' {
 				return false
 			}
 		}
@@ -134,13 +135,16 @@ func TestAgent(t *testing.T) {
 	// (blocked outranks working); a quick second tap cycles onward. The
 	// selection fill spans both rows of the two-row entry, so the text on
 	// the continuation line must sit on a bg-filled line.
+	esc := regexp.MustCompile("\x1b\\[[0-9;:]*m")
 	filled := func(sub string) bool {
 		raw, _ := r.TQ("capture-pane", "-p", "-e", "-t", r.Side().Pane)
 		for _, ln := range strings.Split(raw, "\n") {
-			if !strings.Contains(ln, sub) {
+			// SGR codes interleave the text in -e captures: match the
+			// substring on a stripped copy, the fill bg on the raw line.
+			if !strings.Contains(esc.ReplaceAllString(ln, ""), sub) {
 				continue
 			}
-			if strings.Contains(ln, "[100m") || strings.Contains(ln, "48;5;8m") {
+			if strings.Contains(ln, "49;50;68") || strings.Contains(ln, "49:50:68") {
 				return true
 			}
 		}
@@ -149,12 +153,12 @@ func TestAgent(t *testing.T) {
 	r.D("agents", r.CL)
 	sleep(900)
 	r.Chk("switcher pins the blocked agent", r.WaitUntil(600, func() bool {
-		return filled("permission prompt")
+		return filled("blocked · claude")
 	}))
 	r.D("agents", r.CL)
 	sleep(700)
 	r.Chk("second tap cycles to the working agent", r.WaitUntil(600, func() bool {
-		return filled("Cooking again")
+		return filled("working · claude")
 	}))
 	r.SendKeys(r.Side().Pane, "q")
 	sleep(600)

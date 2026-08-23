@@ -25,7 +25,7 @@ func TestClientResize(t *testing.T) {
 
 	r.D("toggle", r.CL) // dock on beta
 	sleep(800)
-	r.Chk("docked at 40 pre-resize", r.Side().Width == 40)
+	r.Chk("docked at 40 pre-resize", r.Side().Width == sideW)
 
 	// visit w1 so beta holds a spacer carved at the OLD size
 	sp := r.Side().Pane
@@ -44,7 +44,7 @@ func TestClientResize(t *testing.T) {
 	t.Logf("post-resize w1 width: %s", r.T("display-message", "-p", "-t", r.W1, "#{window_width}"))
 	t.Logf("post-resize sidebar: %+v", r.Side())
 	s := r.Side()
-	r.Chk("sidebar back at 40 after resize", s.Width == 40)
+	r.Chk("sidebar back at 40 after resize", s.Width == sideW)
 	r.Chk("sidebar still at left edge", s.Left == 0)
 
 	// scrub still works at the new size (commits hand off to a fresh TUI
@@ -66,7 +66,7 @@ func TestClientResize(t *testing.T) {
 	r.WaitUntil(100, func() bool { return r.ClientWin() == r.W2 })
 	sleep(400)
 	r.Chk("commit works after resize", r.ClientWin() == r.W2)
-	r.Chk("sidebar 40 in beta", r.Side().Width == 40)
+	r.Chk("sidebar 40 in beta", r.Side().Width == sideW)
 
 	// undock: no spacers, no dead panes, options clean
 	r.D("toggle", r.CL)

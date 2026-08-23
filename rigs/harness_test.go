@@ -25,6 +25,9 @@ import (
 
 var demuxdBin string
 
+// sideW mirrors the daemon's listWidth — the sidebar's fixed column width.
+const sideW = 26
+
 // tmuxDir is this uid's tmux socket directory with symlinks resolved (macOS
 // /tmp -> /private/tmp) — the same canonical form the daemon embeds in its
 // argv, so pkill/pgrep -f patterns built from it match.

@@ -1,6 +1,7 @@
 package rigs
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -33,7 +34,7 @@ func TestNavFollow(t *testing.T) {
 	r.SendKeys(sp, "Enter")
 	sleep(600)
 	s = r.Side()
-	r.Chk("enter docks at 40", s.Width == 40)
+	r.Chk("enter docks at 40", s.Width == sideW)
 	r.Chk("enter focuses main", s.Active == 0)
 
 	// F: unrouted switch -> follow
@@ -65,7 +66,7 @@ func TestNavFollow(t *testing.T) {
 	sleep(500)
 	s = r.Side()
 	r.Chk("q never moved the client", r.ClientWin() == r.W3)
-	r.Chk("q unzoomed, still docked", s.Win == r.W3 && s.Width == 40)
+	r.Chk("q unzoomed, still docked", s.Win == r.W3 && s.Width == sideW)
 	r.Chk("gamma unzoomed", !r.Zoomed(r.W3))
 	r.Chk("home unzoom went through respawn", r.LogHas("unzoom=respawn"))
 	r.Chk("fresh TUI repainted the list", strings.Contains(r.Capture(s.Pane), "work"))
@@ -79,7 +80,7 @@ func TestNavFollow(t *testing.T) {
 		if len(f) != 3 || strings.Contains(f[2], "demux") {
 			continue
 		}
-		if f[1] == "0" || f[1] == "41" {
+		if f[1] == "0" || f[1] == strconv.Itoa(sideW+1) {
 			leftMain = f[0]
 		} else {
 			rightMain = f[0]

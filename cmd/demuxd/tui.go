@@ -122,15 +122,48 @@ type row struct {
 // (a continuation highlights with its owner instead).
 func (r row) inert() bool { return r.gap || r.head || r.cont }
 
-// The sidebar palette, ANSI-16 only: the chrome inherits the host
-// terminal's scheme instead of shipping its own (herdr's `terminal` theme
-// makes the same call). Semantic, not decorative — accent marks "you are
-// here", muted is structure, state hues are the attention ladder.
-const (
-	cAccent = "\033[34m"  // blue: attached dot, active cues
-	cMuted  = "\033[90m"  // bright black: border, rules
-	cFill   = "\033[100m" // selection row fill (bright-black bg)
-)
+// palette: the sidebar's theme as raw SGR fragments. The look lives on a
+// brightness ladder (text > subtext > muted, plus bold/dim) — that ladder
+// is what reads as "font sizes" in a terminal. Default is catppuccin mocha
+// (herdr's default); `@demux-theme terminal` keeps an ANSI-16 mapping that
+// inherits the host scheme instead.
+type palette struct {
+	text    string // fg: selected/active names
+	subtext string // fg: inactive names
+	muted   string // fg: chrome — border, rules, headers, tails
+	accent  string // fg: attached dot, active cues
+	fill    string // bg: selection row fill
+	red     string // blocked
+	yellow  string // working
+	teal    string // done (finished unseen)
+	green   string // idle
+}
+
+func rgb(r, g, b int) string   { return fmt.Sprintf("\033[38;2;%d;%d;%dm", r, g, b) }
+func rgbBG(r, g, b int) string { return fmt.Sprintf("\033[48;2;%d;%d;%dm", r, g, b) }
+
+var themes = map[string]palette{
+	"catppuccin": {
+		text: rgb(205, 214, 244), subtext: rgb(166, 173, 200), muted: rgb(108, 112, 134),
+		accent: rgb(137, 180, 250), fill: rgbBG(49, 50, 68),
+		red: rgb(243, 139, 168), yellow: rgb(249, 226, 175),
+		teal: rgb(148, 226, 213), green: rgb(166, 227, 161),
+	},
+	"terminal": {
+		text: "", subtext: "\033[37m", muted: "\033[90m",
+		accent: "\033[34m", fill: "\033[100m",
+		red: "\033[91m", yellow: "\033[33m", teal: "\033[36m", green: "\033[32m",
+	},
+}
+
+// pal is set from the snapshot's theme before the first paint.
+var pal = themes["catppuccin"]
+
+func setTheme(name string) {
+	if p, ok := themes[name]; ok {
+		pal = p
+	}
+}
 
 func (st *store) rows() []row {
 	out := []row{{label: " sessions", head: true}}
@@ -209,15 +242,24 @@ func (st *store) rows() []row {
 			// (session) name — nothing else — then `state · agent` below
 			// with the state word in its own color, and our task/reason
 			// riding as a dim tail. A blank row breathes between entries.
+			// Fit like herdr's token solver: drop the rightmost token
+			// until the row fits — mid-word truncation reads broken, and
+			// the billboard is where the full task lives anyway.
+			avail := listWidth - 3
 			tail := p.Agent
-			if text != "" {
+			if text != "" && len([]rune(p.AgentState+" · "+p.Agent+" · "+text)) <= avail {
 				tail += " · " + text
 			}
 			who, whoStyled := "   "+tail, ""
 			if p.AgentState != "" {
-				who = "   " + p.AgentState + " · " + tail
-				if _, c := agentGlyph(p.AgentState); c != "" {
-					whoStyled = "   " + c + p.AgentState + "\033[39;2m · " + tail + "\033[22m"
+				if len([]rune(p.AgentState+" · "+tail)) <= avail {
+					who = "   " + p.AgentState + " · " + tail
+					if _, c := agentGlyph(p.AgentState); c != "" {
+						// herdr's weighting: the icon stays bright, the
+						// text line sits a step back (dim), state word in
+						// its hue, tail in chrome gray.
+						whoStyled = "   \033[2m" + c + p.AgentState + pal.muted + " · " + tail + "\033[22;39m"
+					}
 				}
 			}
 			out = append(out, row{gap: true, arow: true})
@@ -533,6 +575,9 @@ func cmdTui(tmuxSock, demuxSock string) {
 					paintFrameFor(target())
 				}
 			case "snapshot", "diff":
+				if m.Type == "snapshot" && m.Theme != "" {
+					setTheme(m.Theme)
+				}
 				// Selection is sticky to the ROW IDENTITY, not the index:
 				// world churn (a window or session appearing/dying — agents
 				// do this constantly) rebuilds rows, and an index-anchored
@@ -1233,12 +1278,12 @@ func paintList(rows []row, sel int) {
 		if y == lay.sepY {
 			// the pinned agents region's labeled rule
 			rule := []rune("─ agents " + strings.Repeat("─", lw))[:lw]
-			b.WriteString(cMuted + string(rule) + "\033[39m")
+			b.WriteString(pal.muted + string(rule) + "\033[39m")
 			if benchLog != nil {
 				cur = append(cur, "=agents")
 			}
 			if border {
-				b.WriteString(cMuted + "│\033[39m")
+				b.WriteString(pal.muted + "│\033[39m")
 			}
 			continue
 		}
@@ -1254,29 +1299,30 @@ func paintList(rows []row, sel int) {
 				// style, and it leaves reverse free to mean "cursor" on
 				// the billboard canvas. Continuation lines share the fill
 				// but not the bold.
-				style := cFill
+				style := pal.fill + pal.text
 				if i == sel {
 					style += "\033[1m"
 				}
 				if s := rows[i].styled; s != "" && len([]rune(rows[i].label)) <= lw {
-					b.WriteString(style + s + pad + "\033[22;49m")
+					b.WriteString(style + s + pad + "\033[22;49;39m")
 				} else {
-					b.WriteString(style + string(label) + pad + "\033[22;49m")
+					b.WriteString(style + string(label) + pad + "\033[22;49;39m")
 				}
 			case rows[i].gap:
 				b.WriteString(string(label) + pad)
 			case rows[i].head:
-				b.WriteString(cMuted + "\033[1m" + string(label) + pad + "\033[22;39m")
+				b.WriteString(pal.muted + "\033[1m" + string(label) + pad + "\033[22;39m")
 			case rows[i].session:
-				b.WriteString("\033[1m" + string(label) + pad + "\033[22m")
+				b.WriteString(pal.text + "\033[1m" + string(label) + pad + "\033[22;39m")
 			case rows[i].arow && !rows[i].cont:
-				// Agent entry's WHERE row: bold names, like herdr's.
-				b.WriteString("\033[1m" + string(label) + pad + "\033[22m")
+				// Agent entry's WHERE row: bold subtext names, like herdr's
+				// unfocused entries.
+				b.WriteString(pal.subtext + "\033[1m" + string(label) + pad + "\033[22;39m")
 			default:
 				if s := rows[i].styled; s != "" && len([]rune(rows[i].label)) <= lw {
 					b.WriteString(s + pad)
 				} else {
-					b.WriteString("\033[2m" + string(label) + pad + "\033[22m")
+					b.WriteString(pal.subtext + "\033[2m" + string(label) + pad + "\033[22;39m")
 				}
 			}
 			if benchLog != nil {
@@ -1295,7 +1341,7 @@ func paintList(rows []row, sel int) {
 			}
 		}
 		if border {
-			b.WriteString(cMuted + "│\033[39m")
+			b.WriteString(pal.muted + "│\033[39m")
 		}
 		if i >= 0 && !rows[i].inert() {
 			// Col-1 ornament: the session's attached dot (accent) or the
@@ -1305,14 +1351,14 @@ func paintList(rows []row, sel int) {
 			orn, style := "", ""
 			if rows[i].session {
 				if strings.HasPrefix(rows[i].label, "●") {
-					orn, style = "●", cAccent
+					orn, style = "●", pal.accent
 				}
 			} else if g, s := agentGlyph(rows[i].agent); g != "" {
 				orn, style = g, s
 			}
 			if orn != "" {
 				if i == sel {
-					style = cFill + style
+					style = pal.fill + style
 				}
 				// Agent entries carry their dot at col 2 (herdr's ` ● name`
 				// inset); tree rows keep col 1.
@@ -1358,13 +1404,13 @@ func paintList(rows []row, sel int) {
 func agentGlyph(state string) (string, string) {
 	switch state {
 	case "blocked":
-		return "●", "\033[91m"
+		return "●", pal.red
 	case "done":
-		return "●", "\033[36m"
+		return "●", pal.teal
 	case "working":
-		return "●", "\033[33m"
+		return "●", pal.yellow
 	case "idle":
-		return "○", "\033[32m"
+		return "○", pal.green
 	}
 	return "", ""
 }

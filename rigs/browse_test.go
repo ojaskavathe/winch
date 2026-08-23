@@ -32,7 +32,7 @@ func TestBrowse(t *testing.T) {
 	sleep(400)
 	s = r.Side()
 	r.Chk("enter commits for real", r.ClientWin() == r.W1)
-	r.Chk("sidebar stays docked at 40", s.Win == r.W1 && s.Width == 40)
+	r.Chk("sidebar stays docked at 40", s.Win == r.W1 && s.Width == sideW)
 
 	// L: browse while already docked just zooms in place
 	r.D("browse", r.CL)
@@ -42,7 +42,7 @@ func TestBrowse(t *testing.T) {
 	r.SendKeys(s.Pane, "q")
 	sleep(500)
 	s = r.Side()
-	r.Chk("q unzooms, still docked", s.Win == r.W1 && s.Width == 40)
+	r.Chk("q unzooms, still docked", s.Win == r.W1 && s.Width == sideW)
 
 	// undock: the TUI pane dies, everything restores
 	r.D("toggle", r.CL)

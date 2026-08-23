@@ -24,7 +24,7 @@ func TestRedockAdoption(t *testing.T) {
 	sleep(600)
 	s := r.Side()
 	sp = s.Pane // the TUI pane is per-dock: the redock spawned a fresh one
-	r.Chk("re-docked", s.Win == r.ClientWin() && s.Width == 40)
+	r.Chk("re-docked", s.Win == r.ClientWin() && s.Width == sideW)
 	r.Chk("beta carve adopted, not released", countLeftSpacer(r.T("list-panes", "-t", r.W2, "-F", "#{pane_left} #{pane_width}")) == 1)
 
 	// the adopted carve still works: entering beta is a swap

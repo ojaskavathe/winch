@@ -45,7 +45,7 @@ func TestFlicker(t *testing.T) {
 	r.D("toggle", r.CL)
 	sleep(800)
 	s := r.Side()
-	r.Chk("docked on p1", s.Win == r.P1 && s.Width == 40)
+	r.Chk("docked on p1", s.Win == r.P1 && s.Width == sideW)
 	sp := s.Pane
 
 	// first j zooms (origin content legitimately on screen until then)
@@ -67,7 +67,7 @@ func TestFlicker(t *testing.T) {
 	rec := r.StopRecord()
 
 	r.Chk("entered hv", r.ClientWin() == hv)
-	r.Chk("sidebar docked 40 in hv", r.Side().Win == hv && r.Side().Width == 40)
+	r.Chk("sidebar docked 40 in hv", r.Side().Win == hv && r.Side().Width == sideW)
 	r.Chk("hv was never pre-carved", !r.LogHas("bench carve win="+regexp.QuoteMeta(hv)))
 
 	t.Logf("recorded %d bytes; ORIGMARK=%d HEAVYMARK=%d clears=%d",

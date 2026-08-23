@@ -81,6 +81,10 @@ func (d *daemon) clientView(ctl *control, client string) (sid, wid string, cw, c
 	return "", "", 0, 0, fmt.Errorf("no client %s (server has: %s)", client, strings.Join(names, ", "))
 }
 
+// uiTheme is the @demux-theme option read once at attach; rides every
+// snapshot so the TUI paints in the right palette from its first frame.
+var uiTheme string
+
 // debounce for notification bursts: long enough to coalesce a storm (a
 // session teardown emits dozens), short enough to be imperceptible.
 const debounce = 15 * time.Millisecond
@@ -118,6 +122,9 @@ func runDaemon(tmuxSock, demuxSock string) {
 			len(lines) == 1 && lines[0] == `\037` {
 			ctl.close()
 			log.Fatalf("tmux at %s escapes control-mode output; demux needs tmux >= 3.6", tmuxSock)
+		}
+		if lines, terr := ctl.run("show-options -gqv @demux-theme"); terr == nil && len(lines) == 1 {
+			uiTheme = strings.TrimSpace(lines[0])
 		}
 		w, err := fetchWorld(ctl)
 		if err != nil {

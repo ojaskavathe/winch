@@ -22,7 +22,7 @@ func TestTreeModeDock(t *testing.T) {
 	_, err := r.TQ("list-sessions")
 	r.Chk("server survived the dock", err == nil)
 	s := r.Side()
-	r.Chk("sidebar docked", s.Win == r.W2 && s.Width == 40)
+	r.Chk("sidebar docked", s.Win == r.W2 && s.Width == sideW)
 	r.Chk("tree survives the dock", r.T("display-message", "-p", "-t", bp, "#{pane_mode}") == "tree-mode")
 	r.Chk("no stray spacers", r.Spacers() == 0)
 	r.SendKeys(bp, "q") // close the tree before the undock choreography
@@ -37,5 +37,5 @@ func TestTreeModeDock(t *testing.T) {
 	r.D("toggle", r.CL) // re-dock with copy-mode open
 	sleep(800)
 	r.Chk("copy-mode untouched", r.T("display-message", "-p", "-t", bp, "#{pane_mode}") == "copy-mode")
-	r.Chk("re-dock fine", r.Side().Width == 40)
+	r.Chk("re-dock fine", r.Side().Width == sideW)
 }

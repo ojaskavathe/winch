@@ -272,7 +272,10 @@ func TestBlockedRowShowsReason(t *testing.T) {
 	}
 	rows := st.rows()
 	last := rows[len(rows)-1]
-	if !last.arow || !strings.Contains(last.label, "permission prompt") || strings.Contains(last.label, "Old task") {
+	// At sidebar width the reason tail gets token-dropped (the billboard
+	// carries the detail); the state word must survive, the stale title
+	// must not.
+	if !last.arow || !strings.Contains(last.label, "blocked · claude") || strings.Contains(last.label, "Old task") {
 		t.Fatalf("blocked row label = %q", last.label)
 	}
 }

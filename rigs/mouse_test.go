@@ -30,7 +30,7 @@ func TestMouse(t *testing.T) {
 	r.WaitUntil(150, func() bool { return r.ClientWin() == pt })
 	sleep(500)
 	r.Chk("click-click enters ptwo", r.ClientWin() == pt)
-	r.Chk("sidebar docked in ptwo", r.Side().Win == pt && r.Side().Width == 40)
+	r.Chk("sidebar docked in ptwo", r.Side().Win == pt && r.Side().Width == sideW)
 
 	// canvas click: wheel down to w1's billboard, click inside the RIGHT
 	// split -> enters w1 with that split focused (not the last-active one)

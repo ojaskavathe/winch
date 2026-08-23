@@ -112,7 +112,7 @@ type carveState struct {
 }
 
 // listWidth is the sidebar's fixed column width.
-const listWidth = 40
+const listWidth = 26
 
 // spacerCmd runs inside spacer panes — distinctive so a startup sweep can
 // identify spacers leaked by a crashed daemon exactly.

@@ -23,7 +23,7 @@ func TestRecovery(t *testing.T) {
 	r.D("toggle", r.CL)
 	sleep(800)
 	s := r.Side()
-	r.Chk("sidebar re-docked", s.Left == 0 && s.Width == 40)
+	r.Chk("sidebar re-docked", s.Left == 0 && s.Width == sideW)
 	r.D("toggle", r.CL)
 	sleep(400)
 

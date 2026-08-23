@@ -70,7 +70,7 @@ func TestGestureCommits(t *testing.T) {
 	r.Mouse(sp, 64, mx, my, true) // wheel up over the split
 	sleep(1200)
 	r.Chk("wheel committed into w1", r.Side().Win == r.W1)
-	r.Chk("sidebar docked after commit", r.Side().Width == 40)
+	r.Chk("sidebar docked after commit", r.Side().Width == sideW)
 	r.Chk("wheeled split has focus", activePane() == mark)
 	r.D("toggle", r.CL)
 	sleep(1000)

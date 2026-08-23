@@ -42,9 +42,10 @@ type replyMsg struct {
 // snapshotMsg is the full world, pushed on connect and after control-mode
 // reconnects (diffs across a gap could lie).
 type snapshotMsg struct {
-	V    int    `json:"v"`
-	Type string `json:"type"` // snapshot
-	Tmux string `json:"tmux"` // tmux server socket path
+	V     int    `json:"v"`
+	Type  string `json:"type"`            // snapshot
+	Tmux  string `json:"tmux"`            // tmux server socket path
+	Theme string `json:"theme,omitempty"` // @demux-theme at attach; "" = default
 	world
 }
 
@@ -107,6 +108,7 @@ type wireMsg struct {
 	Ops      []wireOp    `json:"ops"`
 	Window   string      `json:"window"`
 	Pane     string      `json:"pane"`
+	Theme    string      `json:"theme"`
 	Frame    []framePane `json:"frame"`
 	Gen      int         `json:"gen"`
 	Delta    bool        `json:"delta"`

@@ -32,10 +32,10 @@ func TestDockScrub(t *testing.T) {
 	r.Chk("sidebar pane exists", s.Pane != "")
 	r.Chk("sidebar in beta", s.Win == r.W2)
 	r.Chk("sidebar at left edge", s.Left == 0)
-	r.Chk("sidebar 40 cols", s.Width == 40)
+	r.Chk("sidebar 40 cols", s.Width == sideW)
 	r.Chk("sidebar focused", s.Active == 1)
 	r.Chk("@demux_docked on work", r.ShowOpt("-t", "work", "-v", "@demux_docked") == "1")
-	r.Chk("status-left padded 41", len(r.ShowOpt("-t", "work", "status-left")) >= 45)
+	r.Chk("status-left padded 41", len(r.ShowOpt("-t", "work", "status-left")) >= sideW+5)
 	_, err := r.TQ("has-session", "-t", "_demux")
 	r.Chk("no _demux session", err != nil)
 	cap := r.Capture(s.Pane)
@@ -79,7 +79,7 @@ func TestDockScrub(t *testing.T) {
 	sleep(400)
 	s = r.Side()
 	r.Chk("client now on w1", r.ClientWin() == r.W1)
-	r.Chk("sidebar docked in w1", s.Win == r.W1 && s.Width == 40)
+	r.Chk("sidebar docked in w1", s.Win == r.W1 && s.Width == sideW)
 	r.Chk("zoom cleared", !r.Zoomed(r.W1) && !r.Zoomed(r.W2))
 	// leaving is geometry-free: beta keeps its docked shape, a spacer
 	// holding the sidebar's slot (byte-exact restore at release, checked
@@ -90,7 +90,7 @@ func TestDockScrub(t *testing.T) {
 	// marker pane's real on-screen column after entering (pane_left 0-based)
 	mreal := 0
 	for _, ln := range strings.Split(r.T("list-panes", "-t", r.W1, "-F", "#{pane_left}"), "\n") {
-		if n, _ := strconv.Atoi(ln); n > 41 {
+		if n, _ := strconv.Atoi(ln); n > sideW+1 {
 			mreal = n + 1
 			break
 		}
@@ -143,9 +143,9 @@ func TestDockScrub(t *testing.T) {
 		if len(f) != 2 {
 			continue
 		}
-		if f[1] == "41" {
+		if f[1] == strconv.Itoa(sideW+1) {
 			leftMain = f[0]
-		} else if n, _ := strconv.Atoi(f[1]); n > 41 {
+		} else if n, _ := strconv.Atoi(f[1]); n > sideW+1 {
 			rightMain = f[0]
 		}
 	}
@@ -168,7 +168,7 @@ func TestDockScrub(t *testing.T) {
 	r.WaitUntil(100, func() bool { return r.ClientWin() == r.W2 })
 	sleep(300)
 	r.Chk("C-l commits to billboard", r.ClientWin() == r.W2)
-	r.Chk("C-l keeps sidebar docked", r.Side().Win == r.W2 && r.Side().Width == 40)
+	r.Chk("C-l keeps sidebar docked", r.Side().Win == r.W2 && r.Side().Width == sideW)
 	sp = r.Side().Pane
 	r.T("select-pane", "-t", sp)
 	r.SendKeys(sp, "k") // back to w1 for the storm section
@@ -237,7 +237,7 @@ func sansLine(list, pane string) string {
 func countLeftSpacer(list string) int {
 	n := 0
 	for _, ln := range strings.Split(list, "\n") {
-		if f := strings.Fields(ln); len(f) == 2 && f[0] == "0" && f[1] == "40" {
+		if f := strings.Fields(ln); len(f) == 2 && f[0] == "0" && f[1] == strconv.Itoa(sideW) {
 			n++
 		}
 	}
