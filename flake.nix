@@ -1,5 +1,5 @@
 {
-  description = "demux — tmux-native agent dashboard";
+  description = "demux — a sidebar for tmux: sessions, agents, live previews";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 

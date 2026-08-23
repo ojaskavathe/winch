@@ -1,10 +1,10 @@
 # demux architecture
 
-demux is a tmux-native agent dashboard: a daemon that mirrors a tmux server's
-entire state, detects coding agents (claude, codex, gemini, grok, opencode)
-and their working/blocked/idle/done states in every pane, and serves a
-dockable sidebar with live previews of every window. One Go binary, three
-hats:
+demux is a sidebar for tmux — one dockable view converging the server's two
+worlds: sessions/windows, and the coding agents (claude, codex, gemini,
+grok, opencode) running inside them with their working/blocked/idle/done
+states. A daemon mirrors the tmux server's entire state and serves the
+sidebar with live previews of every window. One Go binary, three hats:
 
 - `demuxd run` — the daemon. One per tmux server, keyed by the server socket.
 - `demuxd tui` — the sidebar, spawned by the daemon into a real tmux pane.

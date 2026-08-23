@@ -132,3 +132,73 @@ system that's missing.
   mp3 playback with per-agent overrides — heavy).
 - Their 16ms render loop: our painting is event/tick-driven with delta
   frames; different architecture, same observed smoothness.
+
+## sidebar anatomy, from source (2026-08-23)
+
+What herdr's sidebar is actually made of (`src/ui/sidebar.rs`,
+`src/ui/status.rs`, `src/app/state.rs`). Terminals have no font sizes — the
+"size" impression is a four-tier foreground ladder plus bold:
+
+**The type ladder** (catppuccin values): `text` #cdd6f4 + BOLD for the
+active/selected name -> `subtext0` #a6adc8 for inactive names -> `overlay0`
+#6c7086 for chrome (headers, prefixes, agent labels, separators, "new"/
+"menu") -> DIM stacked on a state color for state words. Four brightness
+steps read like three font sizes. ANSI-16 gives us at most default/dim/90 —
+the flatness we have left is exactly the missing ladder, and the fix is an
+RGB theme (default catppuccin like herdr, `terminal` = ANSI fallback).
+
+**Spacing** (the part that makes it breathe):
+- spaces section: 2 header rows (` spaces` overlay0+BOLD, then a blank).
+- agents section: 3 header rows (blank + ` agents` + blank), header carries
+  a right-aligned sort toggle (`grouped`/`priority`, accent when filtered).
+- entries are 2-row cards; `row_gap` between cards (0 in config default,
+  1 in the shipped look; suppressed before indented worktree children).
+- prefixes: 1 space before the icon row, 3 spaces on continuation rows;
+  worktree children get `   ├─ `/`   └─ ` (overlay0) and `   │    `.
+- token separator ` · `; a single space after the state icon.
+- sidebar width 26 default, clamped 18-36, drag-resizable — a third
+  narrower than our 40; tight width + 2-row cards is half the aesthetic.
+- footer row: ` new` left, `menu` right, both overlay0.
+
+**Backgrounds** (cell-level fills across the whole card):
+- selected (navigate cursor): `selection_bg` #313244 — falls back to
+  `active_row_bg` when the theme leaves selection transparent.
+- active-but-not-selected: `active_row_bg` #1e1e2e. TWO fills exist so the
+  cursor stays visible on the active row; we only have selection.
+- dragged: `surface1`. Drag drop-target: full-width accent `─`.
+
+**State encoding**: icon full-strength state color (● red/yellow/teal,
+○ green, · overlay0), state WORD same color + DIM. We ship the word at full
+color and no icon dimming — inverted; icon bright + word dim is theirs.
+Branch token: mauve when active else overlay0; git `↑n` green `↓n` red.
+
+**Still missing in demux after the restyle**: the RGB ladder + themes,
+active-vs-selected dual fills, branch/git second row for sessions (needs
+daemon git awareness), narrower default width + drag resize, scrollbar
+(`▕` track / `▐` thumb), footer actions, collapsed 4-col dot strip,
+right-aligned header tokens, drag reorder.
+
+## what is a "space" for demux
+
+herdr's hierarchy maps 1:1 onto tmux's, shifted one level up:
+
+| herdr | tmux | note |
+|---|---|---|
+| session (server ns) | server / socket | both are the daemon boundary |
+| workspace ("space") | **session** | project unit: name, cwd, git identity |
+| tab | **window** | layout of panes |
+| pane | pane | |
+
+A space is a session, not a window. Sessions carry the project identity
+(name, cwd, git); windows are auto-named command noise (`.claude-wrapped`).
+The agents panel already uses the session name in the workspace slot for
+exactly that reason. Worktree-as-workspace maps to session-per-worktree;
+herdr's grouped/indented worktree children are the model for a future
+"group sessions by repo" tree.
+
+One consequence to hold onto: herdr's sidebar lists ONLY workspaces — tabs
+live in the tab bar (tmux's own status-line window list is our tab bar).
+demux deliberately deviates by nesting windows under sessions, because
+window rows are what billboard scrubbing scrubs. The herdr-faithful styling
+for that deviation is the worktree-child treatment: windows as indented,
+subordinate one-line rows under two-row session cards.

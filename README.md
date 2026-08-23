@@ -1,10 +1,12 @@
 # demux
 
-tmux-native agent dashboard. Needs tmux >= 3.6 (older tmux octal-escapes
-control-mode output). A Go daemon (`demuxd`) rides tmux control mode,
-detects agent state in every pane (claude, codex, gemini, grok, opencode — via
-TOML manifests in `~/.config/demux/agents`), and serves a dockable sidebar TUI
-with live, faithful billboard previews of every window.
+a sidebar for tmux. One dockable pane that converges both views of the
+world: your sessions and windows, and the coding agents running inside
+them — with live, faithful billboard previews of every window. A Go daemon
+(`demuxd`) rides tmux control mode, mirrors the whole server, and detects
+agent state in every pane (claude, codex, gemini, grok, opencode — TOML
+manifests, overridable in `~/.config/demux/agents`). Needs tmux >= 3.6
+(older tmux octal-escapes control-mode output).
 
 - `cmd/demuxd` — daemon + sidebar TUI (one binary; deps: `x/term`, `BurntSushi/toml`)
 - `rigs/` — integration rigs; need a real tmux server and ptys, so a separate
