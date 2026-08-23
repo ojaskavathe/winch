@@ -174,7 +174,7 @@ func (r *Rig) TQ(args ...string) (string, error) {
 func (r *Rig) D(args ...string) string {
 	r.t.Helper()
 	cmd := exec.Command(demuxdBin, append([]string{"-L", r.L}, args...)...)
-	cmd.Env = append(envSansTmux(), "DEMUX_BENCH=1")
+	cmd.Env = append(envSansTmux(), "DEMUX_BENCH=1", "DEMUX_TEST_FAST=1")
 	b, err := cmd.CombinedOutput()
 	if err != nil {
 		r.t.Fatalf("demuxd %v: %v\n%s", args, err, b)
@@ -185,7 +185,11 @@ func (r *Rig) D(args ...string) string {
 func (r *Rig) setup() {
 	r.t.Helper()
 	r.teardown()
-	sleep(300)
+	// A server from a crashed earlier run may still be dying; wait it out.
+	r.await(3000, "old server gone", func() bool {
+		_, err := r.TQ("has-session")
+		return err != nil
+	})
 	r.T("-f", "/dev/null", "new-session", "-d", "-s", "work", "-x", "200", "-y", "50")
 	r.W1 = r.T("display-message", "-p", "-t", "work:", "#{window_id}")
 	r.T("split-window", "-h", "-t", r.W1, "while :; do echo MARKW1; sleep 2; done")
@@ -207,33 +211,28 @@ func (r *Rig) setup() {
 	r.P1 = r.T("display-message", "-p", "-t", "play:", "#{window_id}")
 	r.T("new-window", "-t", "play:", "-n", "ptwo")
 	r.T("select-window", "-t", r.W2)
-	sleep(300)
 	r.attachFakeClient()
-	sleep(1000)
+	// Attach is done when the client's status line has squeezed the current
+	// window to 49 rows and the client shows up in list-clients.
+	r.await(5000, "client attached", func() bool {
+		return r.winH(r.W2) == 49 && r.realClient() != ""
+	})
+	r.CL = r.realClient()
 	// Baselines AFTER attach, each while ITS window is current — the
 	// client's status line resizes only the current window (window-size
 	// latest).
 	r.T("select-window", "-t", r.W1)
-	sleep(200)
+	r.await(3000, "w1 sized", func() bool { return r.winH(r.W1) == 49 })
 	r.LW1 = r.T("display-message", "-p", "-t", r.W1, "#{window_layout}")
 	r.T("select-window", "-t", r.W3)
-	sleep(200)
+	r.await(3000, "w3 sized", func() bool { return r.winH(r.W3) == 49 })
 	r.LW3 = r.T("display-message", "-p", "-t", r.W3, "#{window_layout}")
 	r.T("select-window", "-t", r.W2)
-	sleep(200)
+	r.await(3000, "w2 sized", func() bool { return r.winH(r.W2) == 49 })
 	r.LW2 = r.T("display-message", "-p", "-t", r.W2, "#{window_layout}")
-	for _, ln := range strings.Split(r.T("list-clients", "-F", "#{client_name} #{client_control_mode}"), "\n") {
-		f := strings.Fields(ln)
-		if len(f) == 2 && f[1] == "0" {
-			r.CL = f[0]
-			break
-		}
-	}
-	if r.CL == "" {
-		r.t.Fatal("no fake client attached")
-	}
+	// ls starts the daemon and round-trips one world snapshot — its success
+	// is the ready signal.
 	r.D("ls")
-	sleep(500)
 	for _, ln := range strings.Split(r.D("sock"), "\n") {
 		if strings.HasPrefix(strings.TrimSpace(ln), "demux:") {
 			r.Sock = strings.Fields(ln)[1]
@@ -304,6 +303,41 @@ func (r *Rig) Chk(name string, cond bool) {
 	} else {
 		r.t.Errorf("FAIL - %s", name)
 	}
+}
+
+// await polls f every 15ms until true; fatal after ms elapse. Generous
+// ceilings cost nothing when the condition is already met.
+func (r *Rig) await(ms int, what string, f func() bool) {
+	r.t.Helper()
+	deadline := time.Now().Add(time.Duration(ms) * time.Millisecond)
+	for {
+		if f() {
+			return
+		}
+		if time.Now().After(deadline) {
+			r.t.Fatalf("await %s: not true after %dms", what, ms)
+		}
+		sleep(15)
+	}
+}
+
+// winH is a window's height ("" or unparsable -> 0).
+func (r *Rig) winH(win string) int {
+	out, _ := r.TQ("display-message", "-p", "-t", win, "#{window_height}")
+	n, _ := strconv.Atoi(strings.TrimSpace(out))
+	return n
+}
+
+// realClient returns the first non-control-mode client's name.
+func (r *Rig) realClient() string {
+	out, _ := r.TQ("list-clients", "-F", "#{client_name} #{client_control_mode}")
+	for _, ln := range strings.Split(out, "\n") {
+		f := strings.Fields(ln)
+		if len(f) == 2 && f[1] == "0" {
+			return f[0]
+		}
+	}
+	return ""
 }
 
 // WaitUntil polls f at 10ms up to tries times.

@@ -366,8 +366,15 @@ func (d *daemon) tuiCommand() (string, error) {
 		return "", err
 	}
 	cmd := self + " -S " + d.tmuxSock + " tui"
+	env := ""
 	if bench {
-		cmd = "env DEMUX_BENCH=1 " + cmd
+		env += " DEMUX_BENCH=1"
+	}
+	if testFast {
+		env += " DEMUX_TEST_FAST=1"
+	}
+	if env != "" {
+		cmd = "env" + env + " " + cmd
 	}
 	return cmd, nil
 }

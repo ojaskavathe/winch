@@ -30,16 +30,16 @@ func TestHeavyHistory(t *testing.T) {
 	r.T("send-keys", "-t", "work:heavy",
 		`seq 700000 | awk '{print $0, $0*3, "pad pad pad pad pad"}'`, "Enter")
 	r.T("split-window", "-h", "-t", "work:heavy")
-	sleep(12000)
-	hist := 0
-	for _, ln := range strings.Split(r.T("list-panes", "-t", "work:heavy", "-F", "#{history_size}"), "\n") {
-		if h, _ := strconv.Atoi(ln); h > hist {
-			hist = h
+	hist := func() int {
+		h := 0
+		for _, ln := range strings.Split(r.T("list-panes", "-t", "work:heavy", "-F", "#{history_size}"), "\n") {
+			if n, _ := strconv.Atoi(ln); n > h {
+				h = n
+			}
 		}
+		return h
 	}
-	if hist < 500_000 {
-		t.Fatalf("heavy window not heavy: history_size=%d", hist)
-	}
+	r.await(30000, "700k lines of scrollback", func() bool { return hist() >= 690_000 })
 	r.T("select-window", "-t", r.W2)
 	sleep(300)
 
@@ -67,7 +67,9 @@ func TestHeavyHistory(t *testing.T) {
 	sleep(800)
 	r.Chk("re-entered heavy", r.ClientWin() == heavy)
 	r.D("toggle", r.CL) // undock on heavy; releases drain deferred
-	sleep(2500)
+	r.await(6000, "deferred releases drained", func() bool {
+		return r.Spacers() == 0 && r.DemuxPanes("-a") == 0
+	})
 
 	// M-s dismiss INTO the (again uncarved) heavy window lands directly —
 	// the target is already full width; no carve, no reflow
@@ -81,9 +83,10 @@ func TestHeavyHistory(t *testing.T) {
 	r.SendKeys(sp, "l")
 	sleep(600)
 	r.D("toggle", r.CL)
-	sleep(1000)
-	r.Chk("dismiss landed on heavy", r.ClientWin() == heavy)
-	sleep(1500)
+	r.Chk("dismiss landed on heavy", r.WaitUntil(200, func() bool { return r.ClientWin() == heavy }))
+	r.await(6000, "post-dismiss releases drained", func() bool {
+		return r.Spacers() == 0 && r.DemuxPanes("-a") == 0
+	})
 
 	b, err := os.ReadFile(r.Sock + ".log")
 	if err != nil {

@@ -16,6 +16,11 @@ import (
 
 var bench = os.Getenv("DEMUX_BENCH") != ""
 
+// testFast, set only by the rig harness, compresses pure wall-clock
+// constants (discovery tick, startup grace, frame TTL) so tests don't
+// sleep through them. It never changes behavior, only timing.
+var testFast = os.Getenv("DEMUX_TEST_FAST") != ""
+
 // daemon is the single-threaded core: every field is touched only from the
 // consume loop, so none of it needs locking.
 type daemon struct {

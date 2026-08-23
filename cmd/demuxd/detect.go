@@ -39,11 +39,19 @@ import (
 const (
 	detectTick     = 300 * time.Millisecond
 	detectFastTick = 100 * time.Millisecond // while a pending-idle hold is confirming
-	detectIdleTick = 2 * time.Second        // no agent panes known: discovery only
 	idleConfirms   = 3
 	idleCap        = 700 * time.Millisecond
-	startupGrace   = 3 * time.Second
 )
+
+// Discovery cadence and startup grace are wall-clock costs every rig would
+// otherwise sleep through; testFast (rig harness only) compresses them.
+// Live values: 2s discovery-only tick, 3s grace.
+var detectIdleTick, startupGrace = func() (time.Duration, time.Duration) {
+	if testFast {
+		return 300 * time.Millisecond, 750 * time.Millisecond
+	}
+	return 2 * time.Second, 3 * time.Second
+}()
 
 type agentInfo struct {
 	kind         string // manifest id: claude | codex | grok | ...

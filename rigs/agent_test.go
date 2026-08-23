@@ -33,7 +33,7 @@ func TestAgent(t *testing.T) {
 	// detection tick's own discovery finds this pane (up to 2s) before its
 	// 3s startup grace even starts.
 	ap := r.T("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", r.W3, fake+" 100000")
-	sleep(5600) // discovery + startup grace + a tick
+	sleep(1700) // discovery + startup grace + a tick (DEMUX_TEST_FAST scale)
 	r.T("select-pane", "-T", "⠧ Cooking up a thing", "-t", ap)
 	r.Chk("spinner title -> working", r.WaitUntil(300, func() bool {
 		return r.LogHas("agent claude pane=.* state=.*->working")
@@ -54,9 +54,8 @@ func TestAgent(t *testing.T) {
 
 	// Sidebar: working glyph on gamma's row plus the agents section.
 	r.T("select-pane", "-T", "⠧ Cooking again", "-t", ap)
-	sleep(500)
 	r.D("toggle", r.CL)
-	sleep(900)
+	r.await(5000, "docked", func() bool { return r.Side().Pane != "" })
 	s := r.Side()
 	// State dots differ by hue (herdr's language): working = yellow ●
 	// (catppuccin RGB; tmux may re-serialize with : separators).
@@ -85,10 +84,11 @@ func TestAgent(t *testing.T) {
 	if sep > 4 {
 		r.Mouse(s.Pane, 0, 2, sep+1, true)   // grab the rule
 		r.Mouse(s.Pane, 32, 2, sep-3, true)  // drag (motion, button held)
-		r.Mouse(s.Pane, 0, 2, sep-3, false)  // release
-		sleep(400)
-		moved := sepRow()
-		r.Chk("divider dragged up", moved != sep && moved >= sep-5 && moved <= sep-2)
+		r.Mouse(s.Pane, 0, 2, sep-3, false) // release
+		r.Chk("divider dragged up", r.WaitUntil(200, func() bool {
+			moved := sepRow()
+			return moved != sep && moved >= sep-5 && moved <= sep-2
+		}))
 	}
 
 	// A second agent pane showing a permission prompt: screen tier says
@@ -114,7 +114,6 @@ func TestAgent(t *testing.T) {
 	// glyph rows once left the cursor at col 1 and dropped their border
 	// cell. Every surface row must carry │ at col 41.
 	r.D("browse", r.CL)
-	sleep(900)
 	r.Chk("separator unbroken on glyph rows", r.WaitUntil(400, func() bool {
 		lines := strings.Split(r.Capture(s.Pane), "\n")
 		if len(lines) < 10 {
@@ -129,7 +128,7 @@ func TestAgent(t *testing.T) {
 		return true
 	}))
 	r.SendKeys(s.Pane, "q")
-	sleep(600)
+	r.await(5000, "scrub ended", func() bool { return !r.Zoomed(r.Side().Win) })
 
 	// M-a: the agent switcher. First tap pins the top-attention agent
 	// (blocked outranks working); a quick second tap cycles onward. The
@@ -151,25 +150,24 @@ func TestAgent(t *testing.T) {
 		return false
 	}
 	r.D("agents", r.CL)
-	sleep(900)
 	r.Chk("switcher pins the blocked agent", r.WaitUntil(600, func() bool {
 		return filled("blocked · claude")
 	}))
 	r.D("agents", r.CL)
-	sleep(700)
 	r.Chk("second tap cycles to the working agent", r.WaitUntil(600, func() bool {
 		return filled("working · claude")
 	}))
 	r.SendKeys(r.Side().Pane, "q")
-	sleep(600)
+	r.await(5000, "scrub ended", func() bool { return !r.Zoomed(r.Side().Win) })
 
 	// Kill the agents: states must leave the world (glyphs gone).
 	r.D("toggle", r.CL)
-	sleep(600)
+	r.await(5000, "undocked", func() bool { return r.DemuxPanes("-a") == 0 })
 	r.TQ("kill-pane", "-t", ap)
 	r.TQ("kill-pane", "-t", bp)
-	sleep(800)
-	r.Chk("gamma layout intact", r.Layout(r.W3) == tail(r.LW3))
+	r.Chk("gamma layout intact", r.WaitUntil(300, func() bool {
+		return r.Layout(r.W3) == tail(r.LW3)
+	}))
 	r.Chk("statusline cleared", r.WaitUntil(200, func() bool {
 		return r.ShowOpt("-gqv", "@demux_agents") == ""
 	}))

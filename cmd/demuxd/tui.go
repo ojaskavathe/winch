@@ -428,7 +428,10 @@ func cmdTui(tmuxSock, demuxSock string) {
 	// billboarded minutes ago is ancient content — painting it flashes the
 	// old screen for the ~50ms until the fresh capture lands, which reads
 	// as random flicker. Better to leave the canvas and wait.
-	const frameTTL = 3 * time.Second
+	frameTTL := 3 * time.Second
+	if testFast {
+		frameTTL = 1 * time.Second
+	}
 	frames := map[string]cached{}
 	gen := 0
 	paintedWin, paintedGen := "", -1

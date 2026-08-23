@@ -33,7 +33,7 @@ jobs:
       - run: nix build nixpkgs#tmux && echo "$PWD/result/bin" >> "$GITHUB_PATH"
       - run: tmux -V
       - working-directory: rigs
-        run: go test -count=1 -short -parallel 2 -timeout 15m .
+        run: go test -count=1 -short -parallel 4 -timeout 10m .
       - name: daemon logs
         if: failure()
         run: for f in /tmp/demux-*/*.log; do echo "===== $f"; cat "$f"; done

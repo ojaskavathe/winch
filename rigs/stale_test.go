@@ -37,11 +37,10 @@ func TestStaleBillboard(t *testing.T) {
 	r.T("switch-client", "-c", r.CL, "-t", "play", ";", "select-window", "-t", r.P1)
 	sleep(400)
 	r.D("toggle", r.CL)
-	sleep(800)
+	r.await(5000, "docked", func() bool { return r.Side().Pane != "" })
 	sp := r.Side().Pane
 	r.SendKeys(sp, "l") // p1 -> ptwo: zoom
-	sleep(700)
-	r.Chk("zoomed on ptwo", r.Side().Width == 200)
+	r.Chk("zoomed on ptwo", r.WaitUntil(300, func() bool { return r.Side().Width == 200 }))
 	r.SendKeys(sp, "j") // -> work header (w1): caches w1's OLDMARK frame
 	sleep(600)
 	r.SendKeys(sp, "k") // back to ptwo
@@ -51,13 +50,14 @@ func TestStaleBillboard(t *testing.T) {
 	// has actually turned over — under full-suite load the rig shell can
 	// lag seconds behind send-keys, and scrubbing onto a live screen that
 	// still shows OLDMARK is correct behavior, not the stale-cache bug.
-	// Then sit past frameTTL (3s) so the OLDMARK cache is properly stale.
+	// Then sit past frameTTL (1s under DEMUX_TEST_FAST) so the OLDMARK
+	// cache is properly stale.
 	r.SendKeys(shell, "clear; while :; do echo FRESHMARK; sleep 2; done", "Enter")
 	r.Chk("w1 live screen turned fresh", r.WaitUntil(1000, func() bool {
 		c := r.Capture(shell)
 		return strings.Contains(c, "FRESHMARK") && !strings.Contains(c, "OLDMARK")
 	}))
-	sleep(5000)
+	sleep(1800)
 
 	r.StartRecord()
 	r.SendKeys(sp, "j") // -> work header row, target w1: stale cache moment
