@@ -15,6 +15,11 @@ type session struct {
 	Name     string `json:"name"`
 	Attached bool   `json:"attached"` // real clients only; control clients excluded
 	Created  int64  `json:"created"`
+
+	// Daemon-computed git identity (git.go), injected after every fetch.
+	Branch string `json:"branch,omitempty"`
+	Ahead  int    `json:"ahead,omitempty"`
+	Behind int    `json:"behind,omitempty"`
 }
 
 type window struct {

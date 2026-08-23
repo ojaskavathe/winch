@@ -50,6 +50,12 @@ type daemon struct {
 	// re-invocations cycle down the attention-sorted list; after the tap
 	// window it restarts at the top-attention agent.
 	agentCycle map[string]agentCyclePos
+
+	// git: per-session repo identity cache; gitC ticks the slow repoll
+	// (git.go). The ticker lives for the daemon's lifetime, across
+	// control-mode reconnects.
+	git  map[string]gitInfo
+	gitC <-chan time.Time
 }
 
 type agentCyclePos struct {
@@ -109,6 +115,10 @@ func runDaemon(tmuxSock, demuxSock string) {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 
+	gitT := time.NewTicker(gitTick)
+	defer gitT.Stop()
+	d.gitC = gitT.C
+
 	for attempt := 0; ; attempt++ {
 		ctl, err := dialControl(tmuxSock)
 		if err != nil {
@@ -140,6 +150,8 @@ func runDaemon(tmuxSock, demuxSock string) {
 		}
 		// Snapshot, not diff: after a reconnect gap, diffs against the old
 		// world could be stale mid-gap; a snapshot is always truthful.
+		d.gitScan(&w) // synchronous once: the first snapshot carries branches
+		d.injectGit(&w)
 		h.setWorld(w, nil, true, tmuxSock)
 		d.armDetect(w)
 		d.sweepSpacers(ctl)
@@ -210,6 +222,7 @@ func consume(d *daemon, ctl *control, w world, sig chan os.Signal) bool {
 			}
 			d.checkSeen(&next) // client moved onto a done pane's window?
 			d.injectAgents(&next)
+			d.injectGit(&next)
 			ops := diffWorlds(w, next)
 			w = next
 			d.h.setWorld(w, ops, false, d.tmuxSock)
@@ -241,6 +254,19 @@ func consume(d *daemon, ctl *control, w world, sig chan os.Signal) bool {
 			// just means the next one classifies, 300ms later.
 			if d.handoff == nil && len(d.h.cmds) == 0 {
 				d.detectTickRun(ctl, &w)
+			}
+		case <-d.gitC:
+			// Slow git repoll (branch / ahead-behind per session). Only a
+			// change publishes; the diff is a couple of session puts.
+			if d.handoff == nil && len(d.h.cmds) == 0 && d.gitScan(&w) {
+				next := w
+				next.Sessions = append([]session(nil), w.Sessions...)
+				d.injectGit(&next)
+				ops := diffWorlds(w, next)
+				w = next
+				if len(ops) > 0 {
+					d.h.setWorld(w, ops, false, d.tmuxSock)
+				}
 			}
 		case <-d.handoffC:
 			d.handoffC = nil

@@ -328,6 +328,7 @@ func (d *daemon) publishAgents(ctl *control, w *world) {
 		}
 	}
 	d.injectAgents(&w2)
+	d.injectGit(&w2)
 	ops := diffWorlds(*w, w2)
 	*w = w2
 	if len(ops) > 0 {

@@ -134,7 +134,9 @@ type palette struct {
 	subtext string // fg: inactive names
 	muted   string // fg: chrome — border, rules, headers, tails
 	accent  string // fg: attached dot, active cues
+	mauve   string // fg: git branch
 	fill    string // bg: selection row fill
+	actFill string // bg: the client's current session card
 	red     string // blocked
 	yellow  string // working
 	teal    string // done (finished unseen)
@@ -147,19 +149,26 @@ func rgbBG(r, g, b int) string { return fmt.Sprintf("\033[48;2;%d;%d;%dm", r, g,
 var themes = map[string]palette{
 	"catppuccin": {
 		text: rgb(205, 214, 244), subtext: rgb(166, 173, 200), muted: rgb(108, 112, 134),
-		accent: rgb(137, 180, 250), fill: rgbBG(49, 50, 68),
+		accent: rgb(137, 180, 250), mauve: rgb(203, 166, 247),
+		fill: rgbBG(49, 50, 68), actFill: rgbBG(30, 30, 46),
 		red: rgb(243, 139, 168), yellow: rgb(249, 226, 175),
 		teal: rgb(148, 226, 213), green: rgb(166, 227, 161),
 	},
 	"terminal": {
 		text: "", subtext: "\033[37m", muted: "\033[90m",
-		accent: "\033[34m", fill: "\033[100m",
+		accent: "\033[34m", mauve: "\033[35m",
+		fill: "\033[100m", actFill: "\033[100m",
 		red: "\033[91m", yellow: "\033[33m", teal: "\033[36m", green: "\033[32m",
 	},
 }
 
 // pal is set from the snapshot's theme before the first paint.
 var pal = themes["catppuccin"]
+
+// curSess is the session the client is REALLY on (tracked from daemon
+// selects: dock, commit, nav all send one). Its card carries the active
+// fill — herdr's active_row_bg, distinct from the selection cursor.
+var curSess string
 
 func setTheme(name string) {
 	if p, ok := themes[name]; ok {
@@ -221,6 +230,23 @@ func (st *store) rows(winPick map[string]string) []row {
 			label: "   " + s.Name, window: target, sess: s.ID,
 			session: true, att: s.Attached, agent: agg[s.ID],
 		})
+		// Row two of the card: git identity (branch, ↑ahead ↓behind) —
+		// herdr's spaces layout. No repo, no row.
+		if s.Branch != "" {
+			git, styled := s.Branch, pal.mauve+s.Branch
+			if s.Ahead > 0 {
+				git += fmt.Sprintf(" ↑%d", s.Ahead)
+				styled += fmt.Sprintf("%s ↑%d", pal.green, s.Ahead)
+			}
+			if s.Behind > 0 {
+				git += fmt.Sprintf(" ↓%d", s.Behind)
+				styled += fmt.Sprintf("%s ↓%d", pal.red, s.Behind)
+			}
+			out = append(out, row{
+				label: "   " + git, styled: "   " + styled + "\033[39m",
+				window: target, sess: s.ID, cont: true,
+			})
+		}
 	}
 	// The agents section: one row per agent pane, attention-sorted
 	// (blocked > done > working > idle), enter jumps to the pane. Labels
@@ -658,6 +684,9 @@ func cmdTui(tmuxSock, demuxSock string) {
 						found = true
 						break
 					}
+				}
+				if w, ok := st.windows[m.Window]; ok {
+					curSess = w.SessionID
 				}
 				tlogf("select win=%s found=%v sel=%d rows=%d", m.Window, found, sel, len(rows))
 				paintList(rows, sel)
@@ -1363,8 +1392,20 @@ func paintList(rows []row, sel int) {
 				b.WriteString(string(label) + pad)
 			case rows[i].head:
 				b.WriteString(pal.muted + "\033[1m" + string(label) + pad + "\033[22;39m")
+			case rows[i].sess != "" && rows[i].sess == curSess:
+				// The client's real session: herdr's active_row_bg fill
+				// across the whole card, name in full text + bold.
+				style := pal.actFill
+				if rows[i].session {
+					style += pal.text + "\033[1m"
+				}
+				if s := rows[i].styled; s != "" && len([]rune(rows[i].label)) <= lw {
+					b.WriteString(style + s + pad + "\033[22;49;39m")
+				} else {
+					b.WriteString(style + string(label) + pad + "\033[22;49;39m")
+				}
 			case rows[i].session:
-				b.WriteString(pal.text + "\033[1m" + string(label) + pad + "\033[22;39m")
+				b.WriteString(pal.subtext + string(label) + pad + "\033[39m")
 			case rows[i].arow && !rows[i].cont:
 				// Agent entry's WHERE row: bold subtext names, like herdr's
 				// unfocused entries.
@@ -1404,8 +1445,10 @@ func paintList(rows []row, sel int) {
 				orn, style = "●", pal.accent
 			}
 			if orn != "" {
-				if i == sel {
+				if i >= sel && i <= selEnd {
 					style = pal.fill + style
+				} else if rows[i].sess != "" && rows[i].sess == curSess {
+					style = pal.actFill + style
 				}
 				fmt.Fprintf(&b, "\033[%d;2H%s%s\033[0m", y+1, style, orn)
 			}

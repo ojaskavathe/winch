@@ -15,18 +15,36 @@ func TestMouse(t *testing.T) {
 	sleep(800)
 	sp := r.Side().Pane
 
+	// rowY finds a list row by its label text (list column only — the
+	// canvas can echo session names in prompts). Git rows shift positions
+	// depending on the checkout, so coordinates are discovered, not fixed.
+	rowY := func(sub string) int {
+		for i, l := range strings.Split(r.Capture(sp), "\n") {
+			rs := []rune(l)
+			if len(rs) > sideW {
+				rs = rs[:sideW]
+			}
+			if strings.Contains(string(rs), sub) {
+				return i + 1
+			}
+		}
+		return -1
+	}
+
 	// wheel up = k: selection to the play row, zoom + billboard
 	r.Mouse(sp, 64, 5, 5, true)
 	sleep(800)
 	r.Chk("wheel scrubs (zoom)", r.Side().Width == 200)
 	r.Chk("wheel billboards another session", r.ClientWin() == r.W2)
 
-	// click the work row (y=5): selects; second click enters its pick (the
-	// dock origin, beta)
-	r.Click(sp, 5, 5)
+	// click the work row: selects; second click enters its pick (the dock
+	// origin, beta)
+	wy := rowY("work")
+	r.Chk("work row located", wy > 0)
+	r.Click(sp, 5, wy)
 	sleep(700)
 	r.Chk("click keeps scrubbing", r.ClientWin() == r.W2)
-	r.Click(sp, 5, 5)
+	r.Click(sp, 5, wy)
 	r.WaitUntil(150, func() bool { return r.ClientWin() == r.W2 })
 	sleep(500)
 	r.Chk("click-click enters the pick", r.ClientWin() == r.W2)

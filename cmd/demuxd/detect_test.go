@@ -280,6 +280,29 @@ func TestBlockedRowShowsReason(t *testing.T) {
 	}
 }
 
+// The session card's second row: git branch + ahead/behind; absent when
+// the session isn't in a repo.
+func TestSessionGitRow(t *testing.T) {
+	st := &store{
+		sessions: map[string]session{
+			"$1": {ID: "$1", Name: "dots", Branch: "demux", Ahead: 2, Behind: 1},
+			"$2": {ID: "$2", Name: "scratch"},
+		},
+		windows: map[string]window{"@1": {ID: "@1", SessionID: "$1", Active: true}},
+		panes:   map[string]pane{},
+	}
+	rows := st.rows(nil)
+	var git []string
+	for _, r := range rows {
+		if r.cont && r.sess != "" {
+			git = append(git, r.label)
+		}
+	}
+	if len(git) != 1 || !strings.Contains(git[0], "demux ↑2 ↓1") {
+		t.Fatalf("git rows = %q", git)
+	}
+}
+
 func TestAgentTaskTitle(t *testing.T) {
 	for in, want := range map[string]string{
 		"⠂ Build herdr-like tool": "Build herdr-like tool",
