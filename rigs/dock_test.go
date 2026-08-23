@@ -42,6 +42,17 @@ func TestDockScrub(t *testing.T) {
 	r.Chk("narrow list shows sessions", strings.Contains(cap, "work") && strings.Contains(cap, "play"))
 	r.Chk("narrow list has no border", !strings.Contains(cap, "│"))
 	sp := s.Pane
+
+	// Width drag: resizing the sidebar pane while the window width is
+	// unchanged reads as a border drag — the daemon adopts it instead of
+	// snapping back. Then drag back to the default for the rest.
+	r.T("resize-pane", "-t", sp, "-x", "34")
+	sleep(900)
+	r.Chk("border drag adopted", r.Side().Width == 34)
+	r.T("resize-pane", "-t", sp, "-x", strconv.Itoa(sideW))
+	sleep(900)
+	r.Chk("drag-back adopted", r.Side().Width == sideW)
+
 	betaMain := r.T("list-panes", "-t", r.W2, "-F", "#{pane_id} #{pane_width}")
 
 	// B: scrub k -> billboard (zoom, nothing real moves)

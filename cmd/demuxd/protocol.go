@@ -64,6 +64,14 @@ type selectMsg struct {
 	Pane   string `json:"pane,omitempty"`
 }
 
+// widthMsg tells the list TUI the sidebar's current width (daemon ->
+// list): pushed on hello when non-default and whenever the user retunes
+// it by dragging.
+type widthMsg struct {
+	Type  string `json:"type"`
+	Width int    `json:"width"`
+}
+
 // frameMsg carries a captured window for the preview region (daemon ->
 // list TUI). Pane lines are raw capture-pane -e output (SGR included).
 // Full frames carry every pane's whole grid plus a generation; stream
@@ -109,6 +117,7 @@ type wireMsg struct {
 	Window   string      `json:"window"`
 	Pane     string      `json:"pane"`
 	Theme    string      `json:"theme"`
+	Width    int         `json:"width"`
 	Frame    []framePane `json:"frame"`
 	Gen      int         `json:"gen"`
 	Delta    bool        `json:"delta"`

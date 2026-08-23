@@ -91,6 +91,11 @@ type dockState struct {
 	fmtSaved bool
 	fmtLines []string
 
+	// hostW: the docked window's width at the last check. Tells a border
+	// drag (window width unchanged -> adopt the new pane width) apart from
+	// a client resize (window width changed -> re-assert the chosen width).
+	hostW int
+
 	// carved: every window that holds the dock geometry while docked. A
 	// 40-col spacer pane occupies the sidebar's slot whenever the sidebar
 	// itself is elsewhere, so a window's mains NEVER resize between visits:
@@ -111,8 +116,38 @@ type carveState struct {
 	autoRename string // effective automatic-rename, frozen at carve, restored at release
 }
 
-// listWidth is the sidebar's fixed column width.
+// listWidth is the sidebar's DEFAULT column width; the live width is
+// d.width() — the user can retune it by dragging (the pane border when
+// docked, the painted │ when browsing) and the daemon adopts it.
 const listWidth = 26
+
+// width is the sidebar's current column width.
+func (d *daemon) width() int {
+	if d.dockW == 0 {
+		return listWidth
+	}
+	return d.dockW
+}
+
+// layoutWidth parses the window width out of a #{window_layout} string
+// ("c5d4,200x50,0,0,..."): the cheap window-geometry source that rides
+// every re-list, no extra round trip.
+func layoutWidth(layout string) int {
+	i := strings.Index(layout, ",")
+	if i < 0 {
+		return 0
+	}
+	rest := layout[i+1:]
+	j := strings.Index(rest, "x")
+	if j <= 0 {
+		return 0
+	}
+	n, err := strconv.Atoi(rest[:j])
+	if err != nil {
+		return 0
+	}
+	return n
+}
 
 // spacerCmd runs inside spacer panes — distinctive so a startup sweep can
 // identify spacers leaked by a crashed daemon exactly.
@@ -229,9 +264,8 @@ func (d *daemon) sweepSpacers(ctl *control) {
 	}
 }
 
-// statusPad shifts the status line's content past the sidebar column:
-// 40 cols of pane + 1 col of pane border.
-const statusPad = listWidth + 1
+// The status pad (dockSessionCmds) shifts the status line's content past
+// the sidebar column: width cols of pane + 1 col of pane border.
 
 func snapQuery(wid string) string {
 	return "display-message -p -t " + q(wid) + " -F " +
@@ -383,7 +417,7 @@ func (d *daemon) dockOpen(ctl *control, client string) error {
 		return err
 	}
 	p := &dockState{client: client, win: wid, sess: sid, originSess: sid, originWin: wid, snap: snap,
-		carved: adopted, openedAt: time.Now()}
+		carved: adopted, openedAt: time.Now(), hostW: layoutWidth(snap.layout)}
 	p.status = d.savedStatus(ctl, sid)
 	// Freeze rename BEFORE the split: the sidebar takes focus, and an
 	// automatic-rename window would flip its name to "demuxd" (the sh-era
@@ -392,10 +426,10 @@ func (d *daemon) dockOpen(ctl *control, client string) error {
 	seq := []string{
 		"set-option -w -t " + q(wid) + " automatic-rename off",
 		fmt.Sprintf("split-window -hb -f -l %d -P -F '#{pane_id}' -t %s %s",
-			listWidth, q(wid), q(tuiCmd)),
+			d.width(), q(wid), q(tuiCmd)),
 		"set-option -p -t " + q(wid+".{top-left}") + " @demux_sidebar 1",
 	}
-	seq = append(seq, dockSessionCmds(sid)...)
+	seq = append(seq, dockSessionCmds(sid, d.width())...)
 	lines, err := ctl.runSeq(seq...)
 	if err != nil {
 		return err
@@ -529,14 +563,18 @@ func (d *daemon) scrubEnd(ctl *control, unzoom bool) {
 		if tuiCmd, err := d.tuiCommand(); err == nil {
 			seq := append(fmtRestore,
 				"respawn-pane -k -t "+q(p.pane)+" "+q(tuiCmd),
-				"resize-pane -Z -t "+q(p.pane))
+				"resize-pane -Z -t "+q(p.pane),
+				// unzoom lands at the SPLIT width; if the width was
+				// retuned mid-scrub, assert the current one
+				fmt.Sprintf("resize-pane -t %s -x %d", q(p.pane), d.width()))
 			if _, err := ctl.runSeq(seq...); err == nil {
 				log.Printf("scrub end win=%s unzoom=respawn", p.win)
 				return
 			}
 			log.Printf("scrub end: respawn failed, plain unzoom")
 		}
-		_, _ = ctl.run("resize-pane -Z -t " + q(p.pane))
+		_, _ = ctl.runSeq("resize-pane -Z -t "+q(p.pane),
+			fmt.Sprintf("resize-pane -t %s -x %d", q(p.pane), d.width()))
 	} else if len(fmtRestore) > 0 {
 		_, _ = ctl.runSeq(fmtRestore...)
 	}
@@ -616,7 +654,7 @@ func (d *daemon) dockMove(ctl *control, wid string, focusMain bool) error {
 		critical = append(critical,
 			"set-option -w -t "+q(wid)+" automatic-rename off",
 			fmt.Sprintf("split-window -d -hb -f -l %d -P -F '#{pane_id}' -t %s %s",
-				listWidth, q(wid), q(spacerCmd)),
+				d.width(), q(wid), q(spacerCmd)),
 			"swap-pane -d -s "+q(p.pane)+" -t "+q(wid+".{top-left}"))
 	}
 	critical = append(critical, "select-window -t "+q(wid))
@@ -627,7 +665,7 @@ func (d *daemon) dockMove(ctl *control, wid string, focusMain bool) error {
 		critical = append(critical, "set-option -w -t "+q(wid)+" window-size latest")
 	}
 	if sidN != p.sess {
-		critical = append(critical, dockSessionCmds(sidN)...)
+		critical = append(critical, dockSessionCmds(sidN, d.width())...)
 		critical = append(critical, "switch-client -c "+q(p.client)+" -t "+q(sidN))
 	}
 	if focusMain {
@@ -795,7 +833,7 @@ func (d *daemon) dockMoveStart(ctl *control, wid string, focusPane string) error
 		seq = append(seq,
 			"set-option -w -t "+q(wid)+" automatic-rename off",
 			fmt.Sprintf("split-window -d -hb -f -l %d -P -F '#{pane_id}' -t %s %s",
-				listWidth, q(wid), q(tuiCmd)))
+				d.width(), q(wid), q(tuiCmd)))
 		outs, err := ctl.runSeq(seq...)
 		if err != nil {
 			return err
@@ -823,7 +861,7 @@ func (d *daemon) dockMoveStart(ctl *control, wid string, focusPane string) error
 		critical = append(critical, "set-option -w -t "+q(wid)+" window-size latest")
 	}
 	if sidN != p.sess {
-		critical = append(critical, dockSessionCmds(sidN)...)
+		critical = append(critical, dockSessionCmds(sidN, d.width())...)
 		critical = append(critical, "switch-client -c "+q(p.client)+" -t "+q(sidN))
 	}
 	critical = append(critical, "select-pane -t "+q(focus))
@@ -1102,17 +1140,17 @@ func (d *daemon) leaveLayout(wid string, exact string, dockedLayout string, dirt
 
 // dockSessionCmds marks a session as docked: the bind-routing flag M-h/M-l
 // check, plus the status pad that shifts the status line past the sidebar.
-func dockSessionCmds(sid string) []string {
+func dockSessionCmds(sid string, width int) []string {
 	// bg=terminal (tmux >= 3.4) is the TERMINAL's default background — what
 	// the sidebar paints on — so the strip above the sidebar reads as
 	// sidebar, not statusline. (bg=default would NOT work: inside the
 	// status line "default" means inherit status-style, i.e. the themed
 	// statusline background — a no-op.)
-	pad := "#[bg=terminal,fg=terminal]" + strings.Repeat(" ", statusPad) + "#[default]"
+	pad := "#[bg=terminal,fg=terminal]" + strings.Repeat(" ", width+1) + "#[default]"
 	return []string{
 		"set-option -t " + q(sid) + " @demux_docked 1",
 		"set-option -t " + q(sid) + " status-left " + q(pad),
-		fmt.Sprintf("set-option -t %s status-left-length %d", q(sid), statusPad),
+		fmt.Sprintf("set-option -t %s status-left-length %d", q(sid), width+1),
 	}
 }
 
@@ -1197,7 +1235,7 @@ func (d *daemon) checkDock(ctl *control, w world) {
 	}
 	if p.scrubbing {
 		for _, pn := range w.Panes {
-			if pn.ID == p.pane && pn.WindowID == p.win && pn.Width == listWidth {
+			if pn.ID == p.pane && pn.WindowID == p.win && pn.Width == d.width() {
 				// The zoom broke externally: selecting any other pane
 				// (vim-navigator C-h/C-l out of the billboard) auto-unzooms.
 				// Reality is the docked window again — end the scrub state
@@ -1227,14 +1265,69 @@ func (d *daemon) checkDock(ctl *control, w world) {
 		return
 	}
 	if p.scrubbing {
-		return // zoomed: full-width by design; enforcing 40 would unzoom it
+		return // zoomed: full-width by design; enforcing width would unzoom it
 	}
-	for _, pn := range w.Panes {
-		if pn.ID == p.pane && pn.WindowID == p.win && pn.Width != listWidth {
-			_, _ = ctl.run(fmt.Sprintf("resize-pane -t %s -x %d", q(p.pane), listWidth))
+	// Width: a border drag leaves the WINDOW width alone — adopt the new
+	// pane width as the user's choice (and resize the spacers to match). A
+	// client/window resize can drift the pane too; there the chosen width
+	// gets re-asserted instead.
+	winW := p.hostW
+	for _, win := range w.Windows {
+		if win.ID == p.win {
+			if lw := layoutWidth(win.Layout); lw > 0 {
+				winW = lw
+			}
 			break
 		}
 	}
+	for _, pn := range w.Panes {
+		if pn.ID != p.pane || pn.WindowID != p.win {
+			continue
+		}
+		switch {
+		case winW != p.hostW:
+			p.hostW = winW
+			if pn.Width != d.width() {
+				_, _ = ctl.run(fmt.Sprintf("resize-pane -t %s -x %d", q(p.pane), d.width()))
+			}
+		case pn.Width != d.width() && pn.Width >= 18 && pn.Width <= 80:
+			log.Printf("dock: adopted width %d (border drag)", pn.Width)
+			d.setWidth(ctl, pn.Width, false)
+		case pn.Width != d.width():
+			_, _ = ctl.run(fmt.Sprintf("resize-pane -t %s -x %d", q(p.pane), d.width()))
+		}
+		break
+	}
+}
+
+// setWidth applies a new sidebar width: spacers and (unless the change
+// came from the pane itself) the sidebar pane resize to match, the status
+// pad re-shifts, and the TUI is told so its layout math follows.
+func (d *daemon) setWidth(ctl *control, wpx int, resizePane bool) {
+	if wpx < 18 {
+		wpx = 18
+	}
+	if wpx > 80 {
+		wpx = 80
+	}
+	if wpx == d.width() {
+		return
+	}
+	d.dockW = wpx
+	if p := d.dock; p != nil {
+		for _, t := range p.carved {
+			if t.spacer != "" {
+				_, _ = ctl.run(fmt.Sprintf("resize-pane -t %s -x %d", q(t.spacer), wpx))
+			}
+		}
+		if resizePane && !p.scrubbing {
+			_, _ = ctl.run(fmt.Sprintf("resize-pane -t %s -x %d", q(p.pane), wpx))
+		}
+		for _, c := range dockSessionCmds(p.sess, wpx) {
+			_, _ = ctl.run(c)
+		}
+	}
+	d.h.sendRole("list", marshalLine(widthMsg{Type: "width", Width: wpx}))
 }
 
 func paneAlive(w world, pid string) bool {

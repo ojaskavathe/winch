@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -96,9 +98,27 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 		// resize (monitor switch) rescaled the sidebar off its fixed width;
 		// nothing else will tell us — geometry events don't cross sessions.
 		// Zoomed (scrubbing) the sidebar is full-width by design: skip.
-		if d.dock != nil && !d.dock.scrubbing && env.msg.Width != listWidth {
-			_, err = ctl.run(fmt.Sprintf("resize-pane -t %s -x %d", q(d.dock.pane), listWidth))
+		if d.dock != nil && !d.dock.scrubbing && env.msg.Width != d.width() {
+			// Drag or client resize? The window width tells: unchanged
+			// means the user dragged the pane border — adopt it.
+			winW := 0
+			if lines, e := ctl.run("display-message -p -t " + q(d.dock.win) + " '#{window_width}'"); e == nil && len(lines) == 1 {
+				winW, _ = strconv.Atoi(strings.TrimSpace(lines[0]))
+			}
+			if winW == d.dock.hostW && env.msg.Width >= 18 && env.msg.Width <= 80 {
+				log.Printf("dock: adopted width %d (border drag)", env.msg.Width)
+				d.setWidth(ctl, env.msg.Width, false)
+			} else {
+				if winW > 0 {
+					d.dock.hostW = winW
+				}
+				_, err = ctl.run(fmt.Sprintf("resize-pane -t %s -x %d", q(d.dock.pane), d.width()))
+			}
 		}
+	case "width":
+		// Border drag in the browse canvas: the TUI already repainted at
+		// the new width; make it the sidebar's width everywhere.
+		d.setWidth(ctl, env.msg.Width, true)
 	case "focus":
 		// C-l from the docked idle sidebar: select the pane geometrically
 		// right of it — vim-tmux-navigator semantics, no origin reset.
@@ -127,6 +147,11 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 		// A fresh TUI connected. Mid-handoff this IS the go signal: it has
 		// the world, gets the target selection, paints, and the client
 		// switches onto an already-painted sidebar.
+		if d.dockW != 0 {
+			// Non-default width: the fresh TUI's layout math must match
+			// before its first wide paint.
+			d.h.send(env.sub, marshalLine(widthMsg{Type: "width", Width: d.dockW}))
+		}
 		if d.handoff != nil {
 			d.h.send(env.sub, marshalLine(selectMsg{Type: "select", Window: d.handoff.wid}))
 			d.handoffFinish(ctl)

@@ -56,6 +56,10 @@ type daemon struct {
 	// control-mode reconnects.
 	git  map[string]gitInfo
 	gitC <-chan time.Time
+
+	// dockW: user-tuned sidebar width (0 = listWidth default). Survives
+	// undocks; runtime-only for now.
+	dockW int
 }
 
 type agentCyclePos struct {

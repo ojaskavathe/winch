@@ -356,7 +356,7 @@ func (d *daemon) preview(ctl *control, wid string, prefetch, stream bool) error 
 				"display-message -p -t "+q(wid)+" -F "+f("#{window_layout}", "#{automatic-rename}"),
 				"set-option -w -t "+q(wid)+" automatic-rename off",
 				fmt.Sprintf("split-window -d -hb -f -l %d -P -F '#{pane_id}' -t %s %s",
-					listWidth, q(wid), q(spacerCmd)))
+					d.width(), q(wid), q(spacerCmd)))
 			if sizeStale {
 				seq = append(seq, "set-option -w -t "+q(wid)+" window-size latest")
 			}

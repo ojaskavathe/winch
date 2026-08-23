@@ -165,6 +165,11 @@ var themes = map[string]palette{
 // pal is set from the snapshot's theme before the first paint.
 var pal = themes["catppuccin"]
 
+// listW is the list column's width. The daemon owns the real value (width
+// msgs update it); dragging the │ border in browse mode changes it here
+// first and reports back on release.
+var listW = listWidth
+
 // curSess is the session the client is REALLY on (tracked from daemon
 // selects: dock, commit, nav all send one). Its card carries the active
 // fill — herdr's active_row_bg, distinct from the selection cursor.
@@ -277,7 +282,7 @@ func (st *store) rows(winPick map[string]string) []row {
 			// Fit like herdr's token solver: drop the rightmost token
 			// until the row fits — mid-word truncation reads broken, and
 			// the billboard is where the full task lives anyway.
-			avail := listWidth - 3
+			avail := listW - 3
 			tail := p.Agent
 			if text != "" && len([]rune(p.AgentState+" · "+p.Agent+" · "+text)) <= avail {
 				tail += " · " + text
@@ -396,7 +401,8 @@ func cmdTui(tmuxSock, demuxSock string) {
 	sel := 0
 	esc := 0          // escape-sequence state: arrows + SGR mouse
 	var mbuf []byte   // SGR mouse params after \x1b[<
-	dragging := false // left button held on the agents divider
+	dragging := false  // left button held on the agents divider
+	widthDrag := false // left button held on the │ width border (wide mode)
 	var rows []row
 	// winPick: per-session window choice (h/l pages the billboard through a
 	// session's windows; the pick survives rebuilds until the window dies).
@@ -458,7 +464,7 @@ func cmdTui(tmuxSock, demuxSock string) {
 			return // stale: the fresh frame is already on its way
 		}
 		cols, _ := surfaceSize()
-		avail := cols - (listWidth + 1)
+		avail := cols - (listW + 1)
 		if avail <= 0 {
 			return // narrow (docked): no canvas; keep the cache unmarked
 		}
@@ -582,8 +588,8 @@ func cmdTui(tmuxSock, demuxSock string) {
 	// caller paints).
 	click := func(x, y int, setShrink func()) bool {
 		cols, height := surfaceSize()
-		lw := listWidth
-		if cols <= listWidth+2 {
+		lw := listW
+		if cols <= listW+2 {
 			lw = cols
 		}
 		if x <= lw {
@@ -602,10 +608,10 @@ func cmdTui(tmuxSock, demuxSock string) {
 			sel = i
 			return true
 		}
-		if x < listWidth+2 || paintedWin == "" || paintedWin != target() {
+		if x < listW+2 || paintedWin == "" || paintedWin != target() {
 			return false
 		}
-		cx, cy := x-(listWidth+1)-1, y-1
+		cx, cy := x-(listW+1)-1, y-1
 		for _, p := range paintedPanes {
 			if p.ID != "" && cx >= p.Left && cx < p.Left+p.Width &&
 				cy >= p.Top && cy < p.Top+p.Height {
@@ -663,6 +669,11 @@ func cmdTui(tmuxSock, demuxSock string) {
 					sel = len(rows) - 1
 				}
 				paintList(rows, sel)
+			case "width":
+				if m.Width >= 18 && m.Width != listW {
+					listW = m.Width
+					paintAll()
+				}
 			case "select":
 				found := false
 				for i, r := range rows {
@@ -759,6 +770,7 @@ func cmdTui(tmuxSock, demuxSock string) {
 			// finds the queue empty and paints immediately.
 			moved := false
 			relayout := false // divider drag: repaint the list, nothing else
+			resized := false  // width drag: repaint everything, canvas included
 			wheeled := false  // one gesture-commit per batch, drop the rest
 			setShrink := func() { shrinkExpected = !narrowMode() }
 			// commitAt: enter the billboard split under 1-based pane coords.
@@ -770,7 +782,7 @@ func cmdTui(tmuxSock, demuxSock string) {
 				if paintedWin == "" || paintedWin != target() {
 					return false
 				}
-				cx, cy := mx-(listWidth+1)-1, my-1
+				cx, cy := mx-(listW+1)-1, my-1
 				for _, p := range paintedPanes {
 					if p.ID != "" && cx >= p.Left && cx < p.Left+p.Width &&
 						cy >= p.Top && cy < p.Top+p.Height {
@@ -796,13 +808,18 @@ func cmdTui(tmuxSock, demuxSock string) {
 									dragging = false
 									saveSplit()
 								}
+								if widthDrag {
+									// the daemon owns the width from here
+									widthDrag = false
+									send(cmdMsg{Cmd: "width", Width: listW})
+								}
 								break
 							}
 							switch {
 							case btn&64 != 0: // wheel
 								cols, _ := surfaceSize()
-								lw := listWidth
-								if cols <= listWidth+2 {
+								lw := listW
+								if cols <= listW+2 {
 									lw = cols
 								}
 								if mx <= lw {
@@ -828,14 +845,22 @@ func cmdTui(tmuxSock, demuxSock string) {
 								}
 							case btn&3 == 0 && btn&32 == 0: // left press
 								cols, height := surfaceSize()
-								lw := listWidth
-								if cols <= listWidth+2 {
+								lw := listW
+								if cols <= listW+2 {
 									lw = cols
 								}
 								if mx <= lw && my-1 == layoutList(rows, sel, height).sepY {
 									dragging = true // grab the agents divider
+								} else if cols > listW+2 && mx == listW+1 {
+									widthDrag = true // grab the │ width border
 								} else {
 									moved = click(mx, my, setShrink) || moved
+								}
+							case btn&3 == 0 && btn&32 != 0 && widthDrag: // width drag
+								cols, _ := surfaceSize()
+								if nw := mx - 1; nw >= 18 && nw <= 80 && nw <= cols-40 && nw != listW {
+									listW = nw
+									resized = true
 								}
 							case btn&3 == 0 && btn&32 != 0 && dragging: // divider drag
 								_, height := surfaceSize()
@@ -922,7 +947,11 @@ func cmdTui(tmuxSock, demuxSock string) {
 					break
 				}
 			}
-			if moved || relayout {
+			if resized {
+				// Width changed: everything relayouts — rows refit their
+				// tokens, the canvas rescales to the new offset.
+				paintAll()
+			} else if moved || relayout {
 				benchf("key sel=%d target=%s cached=%v", sel, target(), frames[target()].panes != nil)
 				paintList(rows, sel)
 				if moved && !shrinkExpected {
@@ -948,7 +977,7 @@ func cmdTui(tmuxSock, demuxSock string) {
 			winchC = winchT.C
 		case <-winchC:
 			winchC = nil
-			if cols, _ := surfaceSize(); cols != listWidth {
+			if cols, _ := surfaceSize(); cols != listW {
 				send(cmdMsg{Cmd: "winch", Width: cols})
 			}
 		}
@@ -1221,7 +1250,7 @@ func surfaceSize() (int, int) {
 // separator) and the preview region simply doesn't exist.
 func narrowMode() bool {
 	cols, _ := surfaceSize()
-	return cols <= listWidth+2
+	return cols <= listW+2
 }
 
 // listTop is the scroll offset paintList uses; click mapping shares it so
@@ -1335,8 +1364,8 @@ var benchListPrev []string
 func paintList(rows []row, sel int) {
 	start := time.Now()
 	cols, height := surfaceSize()
-	lw, border := listWidth, true
-	if cols <= listWidth+2 {
+	lw, border := listW, true
+	if cols <= listW+2 {
 		lw, border = cols, false
 	}
 	lay := layoutList(rows, sel, height)
@@ -1630,7 +1659,7 @@ func paintFrame(frame, prev []framePane, curPane, prevCurPane string) {
 		pci = cursorIdx(prev, prevCurPane)
 	}
 	cols, height := surfaceSize()
-	const offX = listWidth + 1 // frame region starts right of the border
+	offX := listW + 1 // frame region starts right of the border
 	avail := cols - offX
 	if avail <= 0 {
 		return
