@@ -31,6 +31,7 @@ const (
 	optTheme = "@winch-theme"
 	optWidth = "@winch-width"
 	optSplit = "@winch-agents-split"
+	optSeam  = "@winch-seam-style"
 )
 
 // Bounds are enforced on BOTH read and write: a hand-edited tmux.conf is as
@@ -47,6 +48,10 @@ const (
 func (d *daemon) loadConfig(ctl *control) {
 	uiTheme = strings.TrimSpace(optStr(ctl, optTheme))
 	uiBorderLines = borderLines(ctl)
+	uiSeamStyle = strings.TrimSpace(optStr(ctl, optSeam))
+	if uiSeamStyle == "" {
+		uiSeamStyle = resolveStyle(ctl, "pane-active-border-style")
+	}
 
 	if s := optStr(ctl, optWidth); s != "" {
 		if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
@@ -105,6 +110,24 @@ func borderGlyph(lines string) string {
 	default:
 		return "│"
 	}
+}
+
+// resolveStyle turns a border style option into a concrete style string. Two
+// things stand in the way of just reading it: the value can be a format that
+// only means something once expanded (catppuccin's is a #{?pane_in_mode,...}
+// chain), and it can be the literal `default`, which means the terminal's
+// colours on a border but the BAR's colours in a status line. borderStyle
+// handles the second, display-message the first.
+func resolveStyle(ctl *control, opt string) string {
+	lines, err := ctl.run("display-message -p " + q(borderStyle(opt)))
+	if err != nil || len(lines) != 1 {
+		return "fg=terminal"
+	}
+	s := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(lines[0]), "#["), "]")
+	if s == "" {
+		return "fg=terminal"
+	}
+	return s
 }
 
 // optStr reads one global user option. An UNSET user option exits nonzero

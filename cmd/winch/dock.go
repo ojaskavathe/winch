@@ -505,6 +505,13 @@ func (d *daemon) dockOpen(ctl *control, client string) error {
 		fmt.Sprintf("split-window -hb -f -l %d -P -F '#{pane_id}' -t %s %s",
 			d.width(), q(wid), q(tuiCmd)),
 		"set-option -p -t " + q(wid+".{top-left}") + " @winch_sidebar 1",
+		// Pin the sidebar's own edge so it holds one colour through focus
+		// changes. Per PANE, so every other border in the window still
+		// highlights normally; both styles, since either can apply depending
+		// on whether the sidebar itself holds focus. Pane options ride the
+		// pane through swap-pane, so this is set once at spawn.
+		"set-option -p -t " + q(wid+".{top-left}") + " pane-border-style " + q(uiSeamStyle),
+		"set-option -p -t " + q(wid+".{top-left}") + " pane-active-border-style " + q(uiSeamStyle),
 	}
 	seq = append(seq, dockSessionCmds(sid)...)
 	seq = append(seq, dockWinCmd(sid, wid))
@@ -1090,25 +1097,6 @@ const padFlush = "#{||:#{==:#{status-position},bottom}," +
 // is briefly down to one pane. Blank columns hid all of that. A glyph does not.
 const padBordered = "#{&&:#{!=:#{window_panes},1},#{==:#{window_zoomed_flag},0}}"
 
-// padActive decides which of the two border styles the pad's glyph wears. In a
-// status format the context pane IS the active one, so its geometry answers
-// the question directly — the only difficulty is knowing what the question is.
-//
-// MEASURED, not reasoned about. The obvious rule, "a border is active when it
-// touches the active pane", is wrong for this cell: with a two-pane window and
-// the RIGHT pane focused, tmux paints the divider's top cell inactive even
-// though the active pane starts in the very next column. It follows the pane
-// on its LEFT — the sidebar. Believing the obvious rule instead put a bright
-// glyph above a dim border after every commit, which is when focus moves off
-// the sidebar, i.e. almost always.
-//
-// So: active exactly when the active pane IS the sidebar, identified by
-// geometry rather than id — the sidebar's id is known, but wiring it into the
-// format would mean rewriting the pad every time the sidebar is respawned.
-func padActive(width int) string {
-	return fmt.Sprintf("#{&&:#{==:#{pane_left},0},#{==:#{pane_right},%d}}", width-1)
-}
-
 // dockSessionCmds marks a session as docked: the bind-routing flag M-h/M-l
 // check. The status pad is separate (statusPadCmds) — it wraps the session's
 // own format, which has to be read before it can be wrapped.
@@ -1172,10 +1160,13 @@ func padCell(width, row int, padBG string) string {
 	if row != 0 {
 		return " "
 	}
+	// One style, matching the pinned border rather than asking tmux which of
+	// the two it would use — that question is what the pin removes. Commas
+	// become separate directives: tmux splits a conditional at the first comma
+	// not inside #{}, and a style like "fg=red,bold" would truncate the branch.
+	seam := "#[" + strings.ReplaceAll(uiSeamStyle, ",", "]#[") + "]"
 	return "#{?#{&&:" + padFlush + "," + padBordered + "}," +
-		"#{?" + padActive(width) + "," + borderStyle("pane-active-border-style") +
-		"," + borderStyle("pane-border-style") + "}" +
-		"#[bg=" + padBG + "]" + borderGlyph(uiBorderLines) +
+		seam + "#[bg=" + padBG + "]" + borderGlyph(uiBorderLines) +
 		", }"
 }
 

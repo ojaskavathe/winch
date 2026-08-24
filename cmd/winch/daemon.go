@@ -107,6 +107,18 @@ var uiTheme string
 // Same lifetime as uiTheme: changing it mid-session needs a daemon restart.
 var uiBorderLines string
 
+// uiSeamStyle is the colour of the sidebar's whole edge — the pane border down
+// the side and the glyph continuing it into the status bar.
+//
+// It exists because tmux dims that border whenever focus is not on the
+// sidebar, which is nearly always: the divider is the sidebar's own RIGHT
+// border, so it follows the sidebar's activity, not the neighbour's. A
+// 32-row line reads fine dim; the single cell in the status row reads as
+// missing. Rather than have the glyph disagree with the border, the border is
+// pinned — per PANE, so the rest of the window keeps its active highlight —
+// and the glyph is painted the same. @winch-seam-style overrides it.
+var uiSeamStyle string
+
 // altScreen records whether tmux honours the TUI's alternate-screen switch
 // (the `alternate-screen` window option, on by default). It decides how a
 // scrub can be left: with the alternate screen the pane's grid is CLIPPED on
