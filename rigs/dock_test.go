@@ -35,7 +35,7 @@ func TestDockScrub(t *testing.T) {
 	r.Chk("sidebar 40 cols", s.Width == sideW)
 	r.Chk("sidebar focused", s.Active == 1)
 	r.Chk("@winch_docked on work", r.ShowOpt("-t", "work", "-v", "@winch_docked") == "1")
-	r.Chk("status-left padded 41", len(r.ShowOpt("-t", "work", "status-left")) >= sideW+5)
+	r.Chk("status format wrapped by the pad", strings.Contains(r.ShowOpt("-t", "work", "status-format"), "@winch_win"))
 	_, err := r.TQ("has-session", "-t", "_winch")
 	r.Chk("no _winch session", err != nil)
 	cap := r.Capture(s.Pane)
@@ -204,8 +204,15 @@ func TestDockScrub(t *testing.T) {
 	r.Chk("no spacers remain", r.Spacers() == 0)
 	r.Chk("@winch_docked cleared", r.ShowOpt("-t", "play", "-v", "@winch_docked") == "" &&
 		r.ShowOpt("-t", "work", "-v", "@winch_docked") == "")
-	r.Chk("status unpadded everywhere", r.ShowOpt("-t", "work", "status-left") == "" &&
-		r.ShowOpt("-t", "play", "status-left") == "")
+	// The pad wraps status-format now, so that is what must be gone; both
+	// sessions fall back to the global format they started on.
+	wf, pf := strings.TrimSpace(r.ShowOpt("-t", "work", "status-format")), strings.TrimSpace(r.ShowOpt("-t", "play", "status-format"))
+	r.Chk("status unwrapped everywhere", wf == "" && pf == "")
+	if wf != "" || pf != "" {
+		t.Logf("  work=%.90q\n  play=%.90q", wf, pf)
+	}
+	r.Chk("window pointer cleared", r.ShowOpt("-t", "work", "-v", "@winch_win") == "" &&
+		r.ShowOpt("-t", "play", "-v", "@winch_win") == "")
 }
 
 func tail(layout string) string {

@@ -29,7 +29,10 @@ func TestScrubStatus(t *testing.T) {
 	r.SendKeys(sp, "q")
 	sleep(700)
 	over, _ = r.TQ("show-options", "-t", "work", "status-format")
-	r.Chk("override removed on q", strings.TrimSpace(over) == "")
+	// Not "empty": the sidebar is still docked, so the row is still wrapped
+	// in the pad. What must be gone is the target the scrub pointed it at.
+	r.Chk("override removed on q", !strings.Contains(over, pt))
+	r.Chk("the pad outlives the scrub", strings.Contains(over, "@winch_win"))
 	rendered = r.T("display-message", "-p", "-t", "work:", "#{T:status-format[0]}")
 	r.Chk("status back to the origin's windows", strings.Contains(rendered, "beta"))
 }

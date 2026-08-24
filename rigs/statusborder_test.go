@@ -149,7 +149,7 @@ func TestStatusPadBorderStyle(t *testing.T) {
 	}
 	r.Chk("content column is stacked", top != "" && bottom != "")
 
-	pad := strings.TrimSpace(r.ShowOpt("-t", r.ClientSess(), "-v", "status-left"))
+	pad := strings.TrimSpace(r.ShowOpt("-t", r.ClientSess(), "-v", "status-format[0]"))
 	r.Chk("pad is installed", strings.Contains(pad, "pane-active-border-style"))
 	styleFor := func(pane string) string {
 		out := r.T("display-message", "-p", "-t", pane, pad)

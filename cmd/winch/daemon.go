@@ -45,6 +45,14 @@ type daemon struct {
 	releaseT       *time.Timer
 	releaseC       <-chan time.Time
 
+	// statusBase caches each session's pre-pad status-format, keyed by
+	// session id. Reading one costs several control-mode round trips, and a
+	// cross-session hand-off is the most latency-critical path there is —
+	// stalling it before the critical batch shows the user a blank sidebar
+	// strip for a frame. Nobody edits their status format mid-scrub, and an
+	// undock drops the whole cache, so a toggle picks up a changed config.
+	statusBase map[string]statusSave
+
 	// agentCycle: per-client position in the agent switcher (M-a). Rapid
 	// re-invocations cycle down the attention-sorted list; after the tap
 	// window it restarts at the top-attention agent.
@@ -181,7 +189,7 @@ func runDaemon(tmuxSock, winchSock string) {
 		d.armDetect(w)
 		d.sweepSpacers(ctl)
 		d.sweepDockedState(ctl)
-		d.sweepScrubStatus(ctl)
+		d.sweepStatusFormat(ctl)
 		if ln == nil {
 			// Bind only now, with a populated world: a subscriber must never
 			// see the socket before there is a truthful snapshot behind it
