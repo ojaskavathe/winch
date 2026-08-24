@@ -56,6 +56,7 @@ type winSnap struct {
 	layout     string
 	activePane string
 	autoRename string // effective automatic-rename, frozen while docked
+	borderInd  string // WINDOW-level pane-border-indicators ("" = unset), forced off while docked
 	name       string
 }
 
@@ -119,6 +120,7 @@ type carveState struct {
 	spacer     string // spacer pane id; empty while the sidebar is in this window
 	orig       string // pre-carve full-width layout, replayed at release
 	autoRename string // effective automatic-rename, frozen at carve, restored at release
+	borderInd  string // window-level pane-border-indicators, restored at release
 }
 
 // listWidth is the sidebar's DEFAULT column width; the live width is
@@ -217,6 +219,7 @@ func (d *daemon) releaseOne(ctl *control, it releaseItem) {
 	}
 	seq = append(seq,
 		"set-option -w -t "+q(it.wid)+" automatic-rename "+it.t.autoRename,
+		borderIndRestore(it.wid, it.t.borderInd),
 		"set-option -w -uq -t "+q(it.wid)+" @winch_layout_dirty")
 	if _, err := ctl.runSeq(seq...); err != nil {
 		log.Printf("release %s: %v", it.wid, err)
@@ -371,14 +374,28 @@ func layoutDims(layout string) (int, int) {
 }
 
 func (d *daemon) winSnapshot(ctl *control, wid string) (winSnap, error) {
-	lines, err := ctl.run(snapQuery(wid))
+	// Two commands, one round trip. The second reads pane-border-indicators at
+	// WINDOW scope specifically: show-options -w -v does not inherit, so an
+	// empty answer means the window had none of its own and the restore is an
+	// unset. The snapQuery format would report the EFFECTIVE value instead,
+	// and writing that back would pin the window to whatever the global
+	// happened to be at dock time.
+	lines, err := ctl.runSeq(snapQuery(wid),
+		"show-options -w -t "+q(wid)+" -v pane-border-indicators")
 	if err != nil {
 		return winSnap{}, err
 	}
 	if len(lines) == 0 {
 		return winSnap{}, fmt.Errorf("no snapshot for %s", wid)
 	}
-	return parseSnap(lines[0])
+	snap, err := parseSnap(lines[0])
+	if err != nil {
+		return winSnap{}, err
+	}
+	if len(lines) > 1 {
+		snap.borderInd = strings.TrimSpace(lines[1])
+	}
+	return snap, nil
 }
 
 // leaveInfo queries what restoring the window being left needs: its CURRENT
@@ -502,14 +519,22 @@ func (d *daemon) dockOpen(ctl *control, client string) error {
 	// option and the session cmds ride the same batch as the split.
 	seq := []string{
 		"set-option -w -t " + q(wid) + " automatic-rename off",
+		borderIndCmd(wid),
 		fmt.Sprintf("split-window -hb -f -l %d -P -F '#{pane_id}' -t %s %s",
 			d.width(), q(wid), q(tuiCmd)),
 		"set-option -p -t " + q(wid+".{top-left}") + " @winch_sidebar 1",
 		// Pin the sidebar's own edge so it holds one colour through focus
 		// changes. Per PANE, so every other border in the window still
-		// highlights normally; both styles, since either can apply depending
-		// on whether the sidebar itself holds focus. Pane options ride the
-		// pane through swap-pane, so this is set once at spawn.
+		// highlights normally. Pane options ride the pane through swap-pane,
+		// so this is set once at spawn.
+		//
+		// Only the INACTIVE lookup actually reaches here: tmux reads
+		// pane-border-style from the pane that owns the border but
+		// pane-active-border-style from the WINDOW (rig-measured). That is why
+		// uiSeamStyle defaults to the active style — pinning the pane to it
+		// makes both lookups resolve to the same colour, which is the whole
+		// point. Setting the active one per-pane is harmless and documents
+		// the intent.
 		"set-option -p -t " + q(wid+".{top-left}") + " pane-border-style " + q(uiSeamStyle),
 		"set-option -p -t " + q(wid+".{top-left}") + " pane-active-border-style " + q(uiSeamStyle),
 	}
@@ -770,6 +795,7 @@ func (d *daemon) dockMove(ctl *control, wid string, focusMain bool, focusPane st
 		}
 		critical = append(critical,
 			"set-option -w -t "+q(wid)+" automatic-rename off",
+			borderIndCmd(wid),
 			fmt.Sprintf("split-window -d -hb -f -l %d -P -F '#{pane_id}' -t %s %s",
 				d.width(), q(wid), q(spacerCmd)),
 			"swap-pane -d -s "+q(p.pane)+" -t "+q(wid+".{top-left}"))
@@ -855,7 +881,7 @@ func (d *daemon) dockMove(ctl *control, wid string, focusMain bool, focusPane st
 	if spacerOld == "" {
 		log.Printf("scrub: no spacer id for %s — release will not restore it", p.win)
 	}
-	p.carved[p.win] = &carveState{spacer: spacerOld, orig: p.snap.layout, autoRename: p.snap.autoRename}
+	p.carved[p.win] = &carveState{spacer: spacerOld, orig: p.snap.layout, autoRename: p.snap.autoRename, borderInd: p.snap.borderInd}
 	delete(p.carved, wid)
 	if sidN != p.sess {
 		p.status = statusN
@@ -1026,6 +1052,7 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 			}
 			seq = append(seq,
 				"set-option -w -t "+q(p.originWin)+" automatic-rename "+t.autoRename,
+				borderIndRestore(p.originWin, t.borderInd),
 				"set-option -w -uq -t "+q(p.originWin)+" @winch_layout_dirty")
 			delete(p.carved, p.originWin)
 		}
@@ -1044,6 +1071,7 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 	seq := []string{
 		"kill-pane -t " + q(p.pane),
 		"set-option -w -t " + q(p.win) + " automatic-rename " + p.snap.autoRename,
+		borderIndRestore(p.win, p.snap.borderInd),
 		"set-option -w -uq -t " + q(p.win) + " @winch_layout_dirty",
 	}
 	if !moving {
@@ -1102,6 +1130,31 @@ const padBordered = "#{&&:#{!=:#{window_panes},1},#{==:#{window_zoomed_flag},0}}
 // own format, which has to be read before it can be wrapped.
 func dockSessionCmds(sid string) []string {
 	return []string{"set-option -t " + q(sid) + " @winch_docked 1"}
+}
+
+// borderIndCmd turns off tmux's active-pane border INDICATOR for a window the
+// sidebar is entering, and borderIndRestore puts it back on the way out.
+//
+// The indicator (`pane-border-indicators`, default `colour`) colours only HALF
+// the border in a window with exactly two panes, flipping which half as focus
+// moves. Docked, that is the common shape — sidebar plus one content pane — so
+// the sidebar's edge came out half active and half inactive, with the seam
+// glyph in the status bar necessarily disagreeing with one of the halves
+// whatever colour it took. Measured on the raw client stream: rows 1-6 in one
+// colour, 7-11 in the other, inverting with focus. With the indicator off the
+// same divider draws in a single colour, and stays that way past two panes.
+//
+// Restored per window rather than set globally: it is the user's option, and
+// only the windows the sidebar actually visits have a reason to change.
+func borderIndCmd(wid string) string {
+	return "set-option -w -t " + q(wid) + " pane-border-indicators off"
+}
+
+func borderIndRestore(wid, prev string) string {
+	if prev == "" {
+		return "set-option -w -uq -t " + q(wid) + " pane-border-indicators"
+	}
+	return "set-option -w -t " + q(wid) + " pane-border-indicators " + q(prev)
 }
 
 // padWin names the option the pad gates on: the window holding the sidebar.

@@ -94,13 +94,10 @@ func TestPadFollowsWindowTopBar(t *testing.T) {
 // that disagrees with the border one row away reads as broken however
 // defensible the rule behind it was.
 //
-// Bar at the top, as in the real config. The sidebar pane carries a pinned
-// border style, so the seam holds one colour whatever has focus — tmux would
-// otherwise dim the divider whenever the sidebar is not the active pane.
-//
-// Known limit: the pin is attributed to the sidebar only while the column
-// opposite it is a single pane. Split that column and tmux hands the top
-// border cell to the content pane instead, and the seam follows it again.
+// Bar at the top, as in the real config. The daemon turns pane-border-indicators
+// off on the docked window and pins the sidebar pane's border style, so the
+// edge holds one colour whatever has focus. See TestSeamIsOneColour for why
+// both are needed.
 func TestGlyphMatchesBorder(t *testing.T) {
 	r := New(t)
 	r.T("set-option", "-g", "status-position", "top")
@@ -235,6 +232,9 @@ func TestGlyphMatchesBorderAfterCommit(t *testing.T) {
 	r.T("set-option", "-g", "status-style", "bg=#181825,fg=#cdd6f4")
 	r.T("set-option", "-gw", "pane-border-style", "fg=#6c7086")
 	r.T("set-option", "-gw", "pane-active-border-style", "fg=#b4befe")
+	// The daemon resolves the seam colour at attach, so it has to see these.
+	r.KillDaemon()
+	r.D("ls")
 	sleep(300)
 
 	r.D("toggle", r.CL)
