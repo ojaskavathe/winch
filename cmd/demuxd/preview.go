@@ -76,13 +76,28 @@ func (d *daemon) stopStream() {
 // rows with no sequence at all). The billboard painter positions and resets
 // per line — carried state would be lost, washing panel backgrounds off
 // rows seemingly at random — so each line gets its carry-in prepended.
+//
+// The carry must NOT reach a row that has no cells of its own. Under plain
+// -e a blank row and a row filled blank in the carried bg are both zero
+// bytes, so carrying painted a full-width bar under every BCE bar (Claude
+// Code's message background bled onto the row beneath it). Under -N the two
+// separate: a bg-filled row comes back as real spaces, a default row is the
+// only thing left that is empty. Such a row is reset outright — but the
+// carry itself lives on, because a LATER row may still be in that bg.
 func selfContain(lines []string) {
 	var st sgrState
 	for i, ln := range lines {
-		if pre := st.seq(); pre != "" {
-			lines[i] = pre + ln
+		if ln == "" {
+			lines[i] = "\x1b[0m"
+			continue
 		}
-		st.fold(ln)
+		// -N pads to the row's painted extent; the painter re-pads to the
+		// pane edge in the line's ending state, so the spaces are redundant
+		// on the wire. Trim AFTER the emptiness test, never before: a row of
+		// bare spaces is a bg fill in the carried colour, not a blank row.
+		out := strings.TrimRight(ln, " ")
+		lines[i] = st.seq() + out
+		st.fold(out)
 	}
 }
 
@@ -336,7 +351,11 @@ func (d *daemon) preview(ctl *control, wid string, prefetch, stream bool) error 
 			// billboard puts the cursor in the agent's pane.
 			panes = append(panes, framePane{ID: p[0], Left: left, Top: top, Width: width, Height: height, Active: p[5] == "1",
 				Cursor: p[9] == "1", CursorX: cx, CursorY: cy})
-			caps = append(caps, "capture-pane -e -p -t "+q(p[0]), "display-message -p "+q(frameMarker))
+			// -N keeps trailing cells the app actually painted (a BCE bar's
+			// fill), which is what makes an EMPTY captured line mean "this row
+			// has no non-default cell" rather than "same state, nothing to
+			// say" — see selfContain.
+			caps = append(caps, "capture-pane -e -p -N -t "+q(p[0]), "display-message -p "+q(frameMarker))
 		}
 		if len(panes) == 0 {
 			return fmt.Errorf("no panes in %s", wid)

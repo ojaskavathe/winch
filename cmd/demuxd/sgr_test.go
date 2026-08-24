@@ -25,6 +25,31 @@ func TestSelfContainCarry(t *testing.T) {
 	}
 }
 
+// A row with no cells of its own must not inherit an open bg. Claude Code
+// paints its user-message background as bg + \033[K; capture leaves that line
+// with the bg open, and carrying it one row further painted a full-width bar
+// under every message. The carry still reaches rows PAST the blank one, and a
+// row of bare spaces is a fill in the carried colour, not a blank row.
+func TestSelfContainBlankRow(t *testing.T) {
+	bar := "\x1b[48;2;60;40;30m"
+	lines := []string{
+		bar + " > msg", // BCE bar, bg left open
+		"",             // -N: no non-default cell on this row
+		"still barred", // relies on the carry
+		"        ",     // -N fill: bg-blank row in the carried colour
+	}
+	selfContain(lines)
+	if lines[1] != "\x1b[0m" {
+		t.Errorf("blank row inherited the bar: %q", lines[1])
+	}
+	if !strings.HasPrefix(lines[2], bar) {
+		t.Errorf("carry dropped after a blank row: %q", lines[2])
+	}
+	if lines[3] != bar {
+		t.Errorf("bg fill mistaken for a blank row: %q", lines[3])
+	}
+}
+
 // The regression that garbled dense frames: hundreds of color changes above
 // a row must fold to ONE fg + ONE bg — never a partial compound.
 func TestSgrStateBounded(t *testing.T) {

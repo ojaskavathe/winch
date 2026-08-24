@@ -27,8 +27,12 @@ func TestBCEBillboard(t *testing.T) {
 	// Third block: a bg opened on one row and NEVER reset — capture emits
 	// the following row with no sequence at all (state carries across
 	// lines); the frame must self-contain it or the row paints black.
+	// Fourth block: the same bar followed by a genuinely BLANK row. Claude
+	// Code paints user messages this way, and carrying the open bg one row
+	// too far filled the row underneath — the two cases are only separable
+	// in a -N capture.
 	r.SendKeys(shell,
-		`clear; B=BCE; printf '\033[44m'"$B"'BAR\033[K\033[0m\n\033]8;;http://osc-leak.test\033\\'"$B"'LINK\033]8;;\033\\ \033[45m'"$B"'BAR2\033[K\033[0m\n\033[48;2;30;30;99m\033[K\n'"$B"'CARRY\033[0m\n'`,
+		`clear; B=BCE; printf '\033[44m'"$B"'BAR\033[K\033[0m\n\033]8;;http://osc-leak.test\033\\'"$B"'LINK\033]8;;\033\\ \033[45m'"$B"'BAR2\033[K\033[0m\n\033[48;2;30;30;99m\033[K\n'"$B"'CARRY\033[0m\n\033[48;2;7;77;177m'"$B"'GAP\033[K\033[0m\n\n'"$B"'AFTER\033[0m\n'`,
 		"Enter")
 	sleep(500)
 
@@ -54,6 +58,28 @@ func TestBCEBillboard(t *testing.T) {
 	r.Chk("OSC payload stripped", !strings.Contains(out, "osc-leak.test"))
 	r.Chk("bar after link intact", regexp.MustCompile(`45m[^\x1b]*BCEBAR2 {5,}`).MatchString(out))
 	r.Chk("carried bg reaches its row", regexp.MustCompile(`48;2;30;30;99m[^\x1b]*BCECARRY`).MatchString(out))
+
+	// The bar's bg must occupy exactly ONE row: its own. Before -N, the blank
+	// row below inherited the open bg and got padded to the pane edge, so the
+	// colour appeared on two rows.
+	gapBg := regexp.MustCompile(`48[;:]2[;:]7[;:]77[;:]177`)
+	r.WaitUntil(500, func() bool {
+		out, _ = r.TQ("capture-pane", "-e", "-p", "-t", sp)
+		return strings.Contains(out, "BCEGAP")
+	})
+	r.Chk("gap bar reached the billboard", strings.Contains(out, "BCEGAP"))
+	rows := 0
+	for _, ln := range strings.Split(out, "\n") {
+		if gapBg.MatchString(ln) {
+			rows++
+			t.Logf("gap-bg row: %q", ln)
+		}
+	}
+	r.Chk("blank row under a BCE bar does not inherit its bg", rows == 1)
+	if rows != 1 {
+		t.Logf("  bar bg painted on %d rows, want 1", rows)
+	}
+
 	for _, ln := range strings.Split(out, "\n") {
 		if strings.Contains(ln, "BCEBAR") {
 			t.Logf("bar line: %q", ln)
