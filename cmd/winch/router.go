@@ -113,6 +113,15 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 		// Border drag in the browse canvas: the TUI already repainted at
 		// the new width; make it the sidebar's width everywhere.
 		d.setWidth(ctl, env.msg.Width, true)
+	case "split":
+		// Agents-divider drag, sent on RELEASE. The TUI has already
+		// repainted at the new ratio and owns it for its own lifetime;
+		// the daemon only persists it and stamps it into future
+		// snapshots, so the next dock is born with the same split.
+		if f := env.msg.Split; f >= minSplit && f <= maxSplit {
+			d.h.setSplit(f)
+			saveOpt(ctl, optSplit, strconv.FormatFloat(f, 'f', 3, 64))
+		}
 	case "rename":
 		// Inline rename from the sidebar (`r` on a session row). The
 		// %session-renamed notification re-lists and the new name flows

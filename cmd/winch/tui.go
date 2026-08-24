@@ -343,8 +343,6 @@ func cmdTui(tmuxSock, winchSock string) {
 		benchLog, _ = os.OpenFile(winchSock+".tui-bench.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	}
 	tuiLog, _ = os.OpenFile(winchSock+".tui.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	splitFile = winchSock + ".tui.split"
-	loadSplit()
 	exe, _ := os.Executable()
 	cols, height := surfaceSize()
 	tlogf("start build=%s pane=%s size=%dx%d", exe, os.Getenv("TMUX_PANE"), cols, height)
@@ -728,6 +726,11 @@ func cmdTui(tmuxSock, winchSock string) {
 					if m.Width >= 18 {
 						listW = m.Width
 					}
+					// Same for the agents divider. The TUI is per-dock, so
+					// without this the split reset on every single M-s.
+					if m.Split > 0 {
+						listSplit = m.Split
+					}
 				}
 				// Selection is sticky to the ROW IDENTITY, not the index:
 				// world churn (a window or session appearing/dying — agents
@@ -880,8 +883,11 @@ func cmdTui(tmuxSock, winchSock string) {
 						if btn, mx, my, ok := parseMouse(mbuf); ok {
 							if b == 'm' { // release
 								if dragging {
+									// Report on release, not per motion event:
+									// the daemon writes a tmux option for each
+									// one, and a drag is dozens of events.
 									dragging = false
-									saveSplit()
+									send(cmdMsg{Cmd: "split", Split: listSplit})
 								}
 								if widthDrag {
 									// the daemon owns the width from here
@@ -1381,26 +1387,11 @@ func listTop(n, sel, height int) int {
 }
 
 // listSplit is the tree/agents divider ratio (herdr's sidebar_section_split,
-// default 0.5). Dragging the labeled rule adjusts it; persisted per winch
-// socket so redocks keep the chosen split.
-var (
-	listSplit = 0.5
-	splitFile string
-)
-
-func loadSplit() {
-	if b, err := os.ReadFile(splitFile); err == nil {
-		if v, err := strconv.ParseFloat(strings.TrimSpace(string(b)), 64); err == nil && v >= 0.1 && v <= 0.9 {
-			listSplit = v
-		}
-	}
-}
-
-func saveSplit() {
-	if splitFile != "" {
-		_ = os.WriteFile(splitFile, []byte(fmt.Sprintf("%.3f\n", listSplit)), 0o600)
-	}
-}
+// default 0.5). Dragging the labeled rule adjusts it; the daemon persists it
+// to @winch-agents-split and stamps it into every connect snapshot, so a
+// freshly spawned TUI is born with the chosen split rather than reading it
+// back from a file beside the socket.
+var listSplit = 0.5
 
 // listLayout is the list column's two-region geometry: the session tree
 // scrolls in its own window while agent rows stay PINNED at the bottom

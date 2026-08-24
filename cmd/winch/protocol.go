@@ -21,17 +21,18 @@ import (
 
 // cmdMsg is a client -> daemon request.
 type cmdMsg struct {
-	Type     string `json:"type"`
-	Cmd      string `json:"cmd"`
-	Client   string `json:"client,omitempty"`
-	Window   string `json:"window,omitempty"`
-	Role     string `json:"role,omitempty"`
-	Dir      string `json:"dir,omitempty"`   // nav: "next" | "prev"
-	Width    int    `json:"width,omitempty"` // winch: the TUI's new cols
-	Pane     string `json:"pane,omitempty"`  // commit: focus this pane (billboard click)
-	Sess     string `json:"sess,omitempty"`  // rename: target session
-	Name     string `json:"name,omitempty"`  // rename: new session name
-	Prefetch bool   `json:"prefetch,omitempty"`
+	Type     string  `json:"type"`
+	Cmd      string  `json:"cmd"`
+	Client   string  `json:"client,omitempty"`
+	Window   string  `json:"window,omitempty"`
+	Role     string  `json:"role,omitempty"`
+	Dir      string  `json:"dir,omitempty"`   // nav: "next" | "prev"
+	Width    int     `json:"width,omitempty"` // winch: the TUI's new cols
+	Split    float64 `json:"split,omitempty"` // split: the dragged agents-divider ratio
+	Pane     string  `json:"pane,omitempty"`  // commit: focus this pane (billboard click)
+	Sess     string  `json:"sess,omitempty"`  // rename: target session
+	Name     string  `json:"name,omitempty"`  // rename: new session name
+	Prefetch bool    `json:"prefetch,omitempty"`
 }
 
 // replyMsg answers one cmdMsg on the same connection.
@@ -59,6 +60,9 @@ type snapshotMsg struct {
 	// TUI must lay out at the user's dragged width on its FIRST paint,
 	// not paint at the default and jump when a widthMsg follows.
 	Width int `json:"width,omitempty"`
+	// The agents-divider ratio (@winch-agents-split), same first-paint
+	// reasoning. 0 means unset — the TUI keeps its default.
+	Split float64 `json:"split,omitempty"`
 	world
 }
 
@@ -133,6 +137,7 @@ type wireMsg struct {
 	Select     string      `json:"select"`
 	SelectPane string      `json:"selectpane"`
 	Width      int         `json:"width"`
+	Split      float64     `json:"split"`
 	Frame      []framePane `json:"frame"`
 	Gen        int         `json:"gen"`
 	Delta      bool        `json:"delta"`

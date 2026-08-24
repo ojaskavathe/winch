@@ -21,6 +21,7 @@ type hub struct {
 	selWin  string
 	selPane string
 	width   int
+	split   float64
 }
 
 type subscriber struct {
@@ -97,6 +98,13 @@ func (h *hub) setWidth(w int) {
 	h.mu.Unlock()
 }
 
+// setSplit records the agents-divider ratio, same reason again.
+func (h *hub) setSplit(f float64) {
+	h.mu.Lock()
+	h.split = f
+	h.mu.Unlock()
+}
+
 // setWorld replaces the world and broadcasts: a diff when ops are known, or a
 // fresh snapshot after a reconnect (resync=true) since diffs across a gap lie.
 func (h *hub) setWorld(w world, ops []op, resync bool, tmuxSock string) {
@@ -128,7 +136,7 @@ func (h *hub) add(conn net.Conn, tmuxSock string) *subscriber {
 	s := &subscriber{conn: conn, ch: make(chan []byte, 256)}
 	h.mu.Lock()
 	s.ch <- marshalLine(snapshotMsg{V: 1, Type: "snapshot", Tmux: tmuxSock, Theme: uiTheme,
-		Select: h.selWin, SelectPane: h.selPane, Width: h.width, world: h.world})
+		Select: h.selWin, SelectPane: h.selPane, Width: h.width, Split: h.split, world: h.world})
 	h.subs[s] = struct{}{}
 	h.mu.Unlock()
 	return s

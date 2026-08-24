@@ -1194,6 +1194,7 @@ func (d *daemon) setWidth(ctl *control, wpx int, resizePane bool) {
 	}
 	d.dockW = wpx
 	d.h.setWidth(wpx) // a TUI spawned later lays out at this width from birth
+	saveOpt(ctl, optWidth, strconv.Itoa(wpx))
 	if p := d.dock; p != nil {
 		for _, t := range p.carved {
 			if t.spacer != "" {

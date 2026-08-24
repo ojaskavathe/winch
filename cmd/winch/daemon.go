@@ -144,9 +144,12 @@ func runDaemon(tmuxSock, winchSock string) {
 			ctl.close()
 			log.Fatalf("tmux at %s escapes control-mode output; winch needs tmux >= 3.6", tmuxSock)
 		}
-		if lines, terr := ctl.run("show-options -gqv @winch-theme"); terr == nil && len(lines) == 1 {
-			uiTheme = strings.TrimSpace(lines[0])
-		}
+		// User config lives in tmux global options, so it survives a daemon
+		// restart (every deploy killed the dragged width before this) and can
+		// be preset in tmux.conf. Read once per attach; writes go back through
+		// the same keys. Convention: @winch-<name> with a HYPHEN is user
+		// config, @winch_<name> with an underscore is daemon runtime state.
+		d.loadConfig(ctl)
 		if lines, aerr := ctl.run("show-options -gwqv alternate-screen"); aerr == nil && len(lines) == 1 {
 			altScreen = strings.TrimSpace(lines[0]) != "off"
 			if !altScreen {
