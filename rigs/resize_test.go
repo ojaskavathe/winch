@@ -71,9 +71,9 @@ func TestClientResize(t *testing.T) {
 	// undock: no spacers, no dead panes, options clean
 	r.D("toggle", r.CL)
 	sleep(1200)
-	r.Chk("sidebar left user windows", r.DemuxPanes("-s", "-t", "work") == 0)
+	r.Chk("sidebar left user windows", r.WinchPanes("-s", "-t", "work") == 0)
 	r.Chk("no spacers remain", r.Spacers() == 0)
-	r.Chk("@demux_docked cleared", r.ShowOpt("-t", "work", "-v", "@demux_docked") == "")
+	r.Chk("@winch_docked cleared", r.ShowOpt("-t", "work", "-v", "@winch_docked") == "")
 	r.Chk("status unpadded", r.ShowOpt("-t", "work", "status-left") == "")
 	t.Logf("post-undock w1 layout: %s", r.Layout(r.W1))
 	t.Logf("post-undock w2 layout: %s", r.Layout(r.W2))

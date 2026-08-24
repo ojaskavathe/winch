@@ -1,5 +1,5 @@
 {
-  description = "demux — a sidebar for tmux: sessions, agents, live previews";
+  description = "winch — a sidebar for tmux: sessions, agents, live previews";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
@@ -16,12 +16,12 @@
     in
     {
       packages = forAll (pkgs: rec {
-        demuxd = pkgs.buildGoModule {
-          pname = "demuxd";
+        winch = pkgs.buildGoModule {
+          pname = "winch";
           version = "0.4.0";
 
           src = self;
-          subPackages = [ "cmd/demuxd" ];
+          subPackages = [ "cmd/winch" ];
           vendorHash = "sha256-W78PHNVSHhTrtZ6/7HfdmD+LjniySClfNbWpLaKTDRY=";
 
           ldflags = [
@@ -30,21 +30,24 @@
           ];
         };
 
-        # sidebar launcher: docks/undocks the list pane via demuxd
-        demux = pkgs.writeShellApplication {
-          name = "demux";
+        # The original sh-spike sidebar launcher, superseded by the Go daemon
+        # and kept only so nothing that still calls it breaks. Nothing in dots
+        # binds it any more — a candidate for deletion along with sidebar.sh
+        # and frame.conf.
+        winch-sh = pkgs.writeShellApplication {
+          name = "winch-sh";
           runtimeInputs = [ pkgs.tmux ];
           text = builtins.replaceStrings [ "@frameconf@" ] [ "${./frame.conf}" ] (
             builtins.readFile ./sidebar.sh
           );
         };
 
-        default = demuxd;
+        default = winch;
       });
 
       overlays.default = final: prev: {
-        demuxd = self.packages.${prev.stdenv.hostPlatform.system}.demuxd;
-        demux = self.packages.${prev.stdenv.hostPlatform.system}.demux;
+        winch = self.packages.${prev.stdenv.hostPlatform.system}.winch;
+        winch-sh = self.packages.${prev.stdenv.hostPlatform.system}.winch-sh;
       };
 
       devShells = forAll (pkgs: {

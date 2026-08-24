@@ -47,11 +47,11 @@ func TestNavFollow(t *testing.T) {
 	// G: toggle off (stay, restore)
 	r.D("toggle", r.CL)
 	sleep(600)
-	r.Chk("sidebar left user windows", r.DemuxPanes("-t", r.W3) == 0)
+	r.Chk("sidebar left user windows", r.WinchPanes("-t", r.W3) == 0)
 	r.Chk("TUI pane gone entirely", r.Side().Pane == "")
 	r.Chk("gamma layout exact", r.Layout(r.W3) == tail(r.LW3))
 	r.Chk("client still on gamma", r.ClientWin() == r.W3)
-	r.Chk("@demux_docked off work", r.ShowOpt("-t", "work", "-v", "@demux_docked") == "")
+	r.Chk("@winch_docked off work", r.ShowOpt("-t", "work", "-v", "@winch_docked") == "")
 	r.Chk("work status-left restored", r.ShowOpt("-t", "work", "status-left") == "")
 	r.Chk("no spacers remain", r.Spacers() == 0)
 
@@ -80,7 +80,7 @@ func TestNavFollow(t *testing.T) {
 	leftMain, rightMain := "", ""
 	for _, ln := range strings.Split(r.T("list-panes", "-t", r.W1, "-F", "#{pane_id} #{pane_left} #{pane_current_command}"), "\n") {
 		f := strings.Fields(ln)
-		if len(f) != 3 || strings.Contains(f[2], "demux") {
+		if len(f) != 3 || strings.Contains(f[2], "winch") {
 			continue
 		}
 		if f[1] == "0" || f[1] == strconv.Itoa(sideW+1) {

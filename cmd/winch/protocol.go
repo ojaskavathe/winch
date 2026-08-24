@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// The demux wire protocol: newline-delimited JSON over the unix socket, both
+// The winch wire protocol: newline-delimited JSON over the unix socket, both
 // directions. This file is the complete vocabulary — anything a client can
 // say or hear is defined here.
 //
@@ -47,7 +47,7 @@ type snapshotMsg struct {
 	V     int    `json:"v"`
 	Type  string `json:"type"`            // snapshot
 	Tmux  string `json:"tmux"`            // tmux server socket path
-	Theme string `json:"theme,omitempty"` // @demux-theme at attach; "" = default
+	Theme string `json:"theme,omitempty"` // @winch-theme at attach; "" = default
 	// Where the selection belongs, for a sidebar that does not exist yet.
 	// A freshly spawned TUI paints the right row on its FIRST paint instead
 	// of painting a default and correcting when the select arrives — during

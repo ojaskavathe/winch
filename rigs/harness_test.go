@@ -1,4 +1,4 @@
-// Package rigs is demux's integration test harness. Each test gets an
+// Package rigs is winch's integration test harness. Each test gets an
 // ISOLATED tmux server (socket named after the test + pid), a fake attached
 // client on a real pty, and a daemon — so the whole suite runs in parallel
 // and never touches your real tmux.
@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-var demuxdBin string
+var winchBin string
 
 // sideW mirrors the daemon's listWidth — the sidebar's fixed column width.
 const sideW = 26
@@ -42,21 +42,21 @@ var tmuxDir = func() string {
 	return filepath.Join(d, fmt.Sprintf("tmux-%d", os.Getuid()))
 }()
 
-// demuxDir mirrors demuxSocketPath's directory.
-var demuxDir = fmt.Sprintf("/tmp/demux-%d", os.Getuid())
+// winchDir mirrors winchSocketPath's directory.
+var winchDir = fmt.Sprintf("/tmp/winch-%d", os.Getuid())
 
 func TestMain(m *testing.M) {
 	sweepStaleServers()
-	tmp, err := os.MkdirTemp("", "demux-rig-")
+	tmp, err := os.MkdirTemp("", "winch-rig-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	demuxdBin = filepath.Join(tmp, "demuxd")
-	cmd := exec.Command("go", "build", "-o", demuxdBin, ".")
-	cmd.Dir = "../cmd/demuxd"
+	winchBin = filepath.Join(tmp, "winch")
+	cmd := exec.Command("go", "build", "-o", winchBin, ".")
+	cmd.Dir = "../cmd/winch"
 	if b, err := cmd.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "build demuxd: %v\n%s", err, b)
+		fmt.Fprintf(os.Stderr, "build winch: %v\n%s", err, b)
 		os.Exit(1)
 	}
 	code := m.Run()
@@ -93,7 +93,7 @@ type Rig struct {
 	W1, W2, W3, P1 string // window ids
 	LW1, LW2, LW3  string // pre-dock layout baselines
 	CL             string // fake client name
-	Sock           string // demux socket path (log at Sock+".log")
+	Sock           string // winch socket path (log at Sock+".log")
 
 	clientCmd *exec.Cmd
 	ptyMaster *os.File
@@ -144,7 +144,7 @@ func (r *Rig) teardown() {
 		r.t.Logf("keeping daemon log: %s.log", r.Sock)
 		return
 	}
-	for _, f := range glob(demuxDir + "/" + r.L + "-*") {
+	for _, f := range glob(winchDir + "/" + r.L + "-*") {
 		os.Remove(f)
 	}
 }
@@ -215,16 +215,16 @@ func (r *Rig) TQ(args ...string) (string, error) {
 	return strings.TrimRight(string(b), "\n"), err
 }
 
-// D runs the demuxd client binary against this rig's server. DEMUX_BENCH
+// D runs the winch client binary against this rig's server. WINCH_BENCH
 // rides along so the (auto-spawned) daemon logs its µs instrumentation —
 // free diagnostics whenever a rig fails.
 func (r *Rig) D(args ...string) string {
 	r.t.Helper()
-	cmd := exec.Command(demuxdBin, append([]string{"-L", r.L}, args...)...)
-	cmd.Env = append(envSansTmux(), "DEMUX_BENCH=1", "DEMUX_TEST_FAST=1")
+	cmd := exec.Command(winchBin, append([]string{"-L", r.L}, args...)...)
+	cmd.Env = append(envSansTmux(), "WINCH_BENCH=1", "WINCH_TEST_FAST=1")
 	b, err := cmd.CombinedOutput()
 	if err != nil {
-		r.t.Fatalf("demuxd %v: %v\n%s", args, err, b)
+		r.t.Fatalf("winch %v: %v\n%s", args, err, b)
 	}
 	return strings.TrimRight(string(b), "\n")
 }
@@ -286,7 +286,7 @@ func (r *Rig) setup() {
 	// is the ready signal.
 	r.D("ls")
 	for _, ln := range strings.Split(r.D("sock"), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(ln), "demux:") {
+		if strings.HasPrefix(strings.TrimSpace(ln), "winch:") {
 			r.Sock = strings.Fields(ln)[1]
 		}
 	}
@@ -421,7 +421,7 @@ func (r *Rig) WaitUntil(tries int, f func() bool) bool {
 	return false
 }
 
-// Sidebar is the demux TUI pane, wherever it currently lives.
+// Sidebar is the winch TUI pane, wherever it currently lives.
 type Sidebar struct {
 	Pane, Win           string
 	Left, Width, Active int
@@ -432,7 +432,7 @@ func (r *Rig) Side() Sidebar {
 		"#{pane_id} #{pane_current_command} #{window_id} #{pane_left} #{pane_width} #{pane_active}")
 	for _, ln := range strings.Split(out, "\n") {
 		f := strings.Fields(ln)
-		if len(f) == 6 && strings.Contains(f[1], "demux") {
+		if len(f) == 6 && strings.Contains(f[1], "winch") {
 			left, _ := strconv.Atoi(f[3])
 			width, _ := strconv.Atoi(f[4])
 			active, _ := strconv.Atoi(f[5])
@@ -542,15 +542,15 @@ func (r *Rig) TuiBenchHas(pat string) bool {
 	return err == nil && regexp.MustCompile(pat).Match(b)
 }
 
-// DemuxPanes counts demux TUI panes inside the given target's panes.
-func (r *Rig) DemuxPanes(flags ...string) int {
+// WinchPanes counts winch TUI panes inside the given target's panes.
+func (r *Rig) WinchPanes(flags ...string) int {
 	out, err := r.TQ(append(append([]string{"list-panes"}, flags...), "-F", "#{pane_current_command}")...)
 	if err != nil {
 		return 0
 	}
 	n := 0
 	for _, ln := range strings.Split(out, "\n") {
-		if strings.Contains(ln, "demux") {
+		if strings.Contains(ln, "winch") {
 			n++
 		}
 	}

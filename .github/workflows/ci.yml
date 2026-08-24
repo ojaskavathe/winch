@@ -15,7 +15,7 @@ jobs:
           go-version-file: go.mod
       - run: go build ./...
       - run: go vet ./...
-      - run: go test -count=1 ./cmd/demuxd/
+      - run: go test -count=1 ./cmd/winch/
 
   # Full integration rigs: isolated tmux servers on real ptys. -short skips
   # the big-scrollback tests; -parallel 2 because full parallel oversubscribes
@@ -27,7 +27,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      # ubuntu's apt tmux is 3.4, which escapes control-mode output (demux
+      # ubuntu's apt tmux is 3.4, which escapes control-mode output (winch
       # needs >= 3.6) — take tmux from nixpkgs instead.
       - uses: DeterminateSystems/nix-installer-action@v16
       - run: nix build nixpkgs#tmux && echo "$PWD/result/bin" >> "$GITHUB_PATH"
@@ -36,4 +36,4 @@ jobs:
         run: go test -count=1 -short -parallel 4 -timeout 10m .
       - name: daemon logs
         if: failure()
-        run: for f in /tmp/demux-*/*.log; do echo "===== $f"; cat "$f"; done
+        run: for f in /tmp/winch-*/*.log; do echo "===== $f"; cat "$f"; done

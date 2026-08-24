@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// TestBrowse: `demuxd browse` is dock + zoom — the sidebar docks into the
+// TestBrowse: `winch browse` is dock + zoom — the sidebar docks into the
 // client's current window and opens already scrubbing, full width. No parked
-// session exists anywhere (the _demux holdout is gone).
+// session exists anywhere (the _winch holdout is gone).
 func TestBrowse(t *testing.T) {
 	r := New(t)
 
@@ -15,8 +15,8 @@ func TestBrowse(t *testing.T) {
 	origin := r.ClientWin()
 	r.D("browse", r.CL)
 	sleep(1000)
-	_, err := r.TQ("has-session", "-t", "_demux")
-	r.Chk("no _demux session", err != nil)
+	_, err := r.TQ("has-session", "-t", "_winch")
+	r.Chk("no _winch session", err != nil)
 	s := r.Side()
 	r.Chk("sidebar docked in the current window", s.Win == origin)
 	r.Chk("client never moved", r.ClientWin() == origin)

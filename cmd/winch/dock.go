@@ -20,7 +20,7 @@ import (
 // The TUI pane is per-dock: dockOpen splits it into the window, dockClose
 // kills it (its process dies with it, and it also exits itself when the
 // daemon connection closes). There is no parked holding session — nothing
-// exists between docks. `demuxd browse` is this mode too: dock + immediate
+// exists between docks. `winch browse` is this mode too: dock + immediate
 // zoom into scrubbing (router.go browseOpen).
 //
 // Rig-verified (tmux 3.7b, rigs/):
@@ -38,13 +38,13 @@ import (
 //
 // Sequencing rules that keep transitions invisible:
 //   - everything the arriving window needs (swap, select-window, status pad,
-//     @demux_docked) rides ONE control sequence BEFORE switch-client — the
+//     @winch_docked) rides ONE control sequence BEFORE switch-client — the
 //     status pad landing after the switch is a visible flicker
 //   - undock + layout restore ride ONE sequence — as separate round trips,
 //     apps in the window (nvim) see two SIGWINCH resizes and jitter
 //
 // While docked, tools may reshape the window deliberately (tmux-equalize-nvim
-// equalizes the main region and sets @demux_layout_dirty). On leave, a dirty
+// equalizes the main region and sets @winch_layout_dirty). On leave, a dirty
 // window gets a PROPORTIONAL give-back (layout.go: drop the sidebar leaf,
 // rescale) instead of the pre-dock snapshot, which would undo the change.
 
@@ -71,7 +71,7 @@ type dockState struct {
 	client     string
 	pane       string // the sidebar TUI pane (spawned by dockOpen, dies at undock)
 	win        string // window currently hosting the sidebar
-	sess       string // session of win (tracks @demux_docked + status pad)
+	sess       string // session of win (tracks @winch_docked + status pad)
 	originSess string // where q returns to
 	originWin  string
 	snap       winSnap    // pre-dock snapshot of win
@@ -212,7 +212,7 @@ func (d *daemon) releaseOne(ctl *control, it releaseItem) {
 	}
 	seq = append(seq,
 		"set-option -w -t "+q(it.wid)+" automatic-rename "+it.t.autoRename,
-		"set-option -w -uq -t "+q(it.wid)+" @demux_layout_dirty")
+		"set-option -w -uq -t "+q(it.wid)+" @winch_layout_dirty")
 	if _, err := ctl.runSeq(seq...); err != nil {
 		log.Printf("release %s: %v", it.wid, err)
 	} else if bench {
@@ -221,13 +221,13 @@ func (d *daemon) releaseOne(ctl *control, it releaseItem) {
 }
 
 // sweepDockedState clears session state a previous daemon left behind when
-// it died mid-dock: the @demux_docked flag (M-h/M-l keep routing through
-// `demuxd nav`, which errors undocked) and the status-left pad (the bar
+// it died mid-dock: the @winch_docked flag (M-h/M-l keep routing through
+// `winch nav`, which errors undocked) and the status-left pad (the bar
 // sits shifted 41 cols right). The pre-dock status-left saves lived in the
 // dead daemon's memory — a session-level unset falls back to the global
 // value, which is where the pad-free truth lives.
 func (d *daemon) sweepDockedState(ctl *control) {
-	lines, err := ctl.run("list-sessions -F " + f("#{session_id}", "#{@demux_docked}"))
+	lines, err := ctl.run("list-sessions -F " + f("#{session_id}", "#{@winch_docked}"))
 	if err != nil {
 		return
 	}
@@ -237,7 +237,7 @@ func (d *daemon) sweepDockedState(ctl *control) {
 			continue
 		}
 		_, _ = ctl.runSeq(
-			"set-option -u -t "+q(p[0])+" @demux_docked",
+			"set-option -u -t "+q(p[0])+" @winch_docked",
 			"set-option -uq -t "+q(p[0])+" status-left",
 			"set-option -uq -t "+q(p[0])+" status-left-length")
 		log.Printf("swept stale dock state on %s", p[0])
@@ -248,7 +248,7 @@ func (d *daemon) sweepDockedState(ctl *control) {
 // left behind by dying mid-scrub — the saved original lived only in its
 // memory, so the bar stays pinned to whatever session the scrub was pointing
 // at, for every client that ever attaches to it. Deliberately NOT keyed on
-// @demux_docked: sweepDockedState clears that flag on the first restart, and
+// @winch_docked: sweepDockedState clears that flag on the first restart, and
 // an override that outlived it would then be unreachable forever. A session
 // unset falls back to the global format, which is the pad-free truth.
 func (d *daemon) sweepScrubStatus(ctl *control) {
@@ -337,7 +337,7 @@ func (d *daemon) winSnapshot(ctl *control, wid string) (winSnap, error) {
 // docked layout (for proportional give-back) and the dirty marker.
 func (d *daemon) leaveInfo(ctl *control, wid string) (layout string, dirty bool) {
 	lines, err := ctl.run("display-message -p -t " + q(wid) + " -F " +
-		f("#{window_layout}", "#{@demux_layout_dirty}"))
+		f("#{window_layout}", "#{@winch_layout_dirty}"))
 	if err != nil || len(lines) == 0 {
 		return "", false
 	}
@@ -390,10 +390,10 @@ func (d *daemon) tuiCommand() (string, error) {
 	cmd := self + " -S " + d.tmuxSock + " tui"
 	env := ""
 	if bench {
-		env += " DEMUX_BENCH=1"
+		env += " WINCH_BENCH=1"
 	}
 	if testFast {
-		env += " DEMUX_TEST_FAST=1"
+		env += " WINCH_TEST_FAST=1"
 	}
 	if env != "" {
 		cmd = "env" + env + " " + cmd
@@ -449,14 +449,14 @@ func (d *daemon) dockOpen(ctl *control, client string) error {
 		carved: adopted, openedAt: time.Now(), hostW: layoutWidth(snap.layout)}
 	p.status = d.savedStatus(ctl, sid)
 	// Freeze rename BEFORE the split: the sidebar takes focus, and an
-	// automatic-rename window would flip its name to "demuxd" (the sh-era
+	// automatic-rename window would flip its name to "winch" (the sh-era
 	// bug). The new pane lands at {top-left} deterministically, so its pane
 	// option and the session cmds ride the same batch as the split.
 	seq := []string{
 		"set-option -w -t " + q(wid) + " automatic-rename off",
 		fmt.Sprintf("split-window -hb -f -l %d -P -F '#{pane_id}' -t %s %s",
 			d.width(), q(wid), q(tuiCmd)),
-		"set-option -p -t " + q(wid+".{top-left}") + " @demux_sidebar 1",
+		"set-option -p -t " + q(wid+".{top-left}") + " @winch_sidebar 1",
 	}
 	seq = append(seq, dockSessionCmds(sid, d.width())...)
 	lines, err := ctl.runSeq(seq...)
@@ -649,7 +649,7 @@ func (d *daemon) pushSelect(m selectMsg) int {
 // the sidebar swapped into it, all in one batch. Either way the OLD window
 // inherits the spacer and keeps its docked geometry until release. Used by
 // commit-from-scrub, routed nav, and unrouted-switch follow. Everything the
-// arriving session needs (status pad, @demux_docked) is in the sequence
+// arriving session needs (status pad, @winch_docked) is in the sequence
 // BEFORE switch-client — after it, the pad lands a frame late and the status
 // line visibly flickers. focusMain puts the keyboard in the window's own
 // pane; false keeps focus in the sidebar.
@@ -752,7 +752,7 @@ func (d *daemon) dockMove(ctl *control, wid string, focusMain bool, focusPane st
 	restore := []string{"select-pane -t " + q(leaveFocus)}
 	if sidN != p.sess {
 		restore = append(restore, statusRestoreCmds(p.status)...)
-		restore = append(restore, "set-option -uq -t "+q(p.sess)+" @demux_docked")
+		restore = append(restore, "set-option -uq -t "+q(p.sess)+" @winch_docked")
 	}
 	outs, errs := ctl.runPipelined(critical, restore)
 	if errs[0] != nil {
@@ -928,7 +928,7 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 	log.Printf("undock client=%s win=%s to_origin=%v", p.client, p.win, toOrigin)
 	oldLayout, oldDirty, curActive := "", false, ""
 	if lines, err := ctl.run("display-message -p -t " + q(p.win) + " -F " +
-		f("#{window_layout}", "#{@demux_layout_dirty}", "#{pane_id}")); err == nil && len(lines) > 0 {
+		f("#{window_layout}", "#{@winch_layout_dirty}", "#{pane_id}")); err == nil && len(lines) > 0 {
 		if lp := strings.Split(lines[0], sep); len(lp) == 3 {
 			oldLayout, oldDirty, curActive = lp[0], lp[1] == "1", lp[2]
 		}
@@ -944,7 +944,7 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 	}
 
 	moving := toOrigin && p.originWin != p.win
-	undock := append([]string{"set-option -uq -t " + q(p.sess) + " @demux_docked"},
+	undock := append([]string{"set-option -uq -t " + q(p.sess) + " @winch_docked"},
 		statusRestoreCmds(p.status)...)
 	if moving {
 		// Land first, with the session bookkeeping in the SAME batch — an
@@ -961,7 +961,7 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 			}
 			seq = append(seq,
 				"set-option -w -t "+q(p.originWin)+" automatic-rename "+t.autoRename,
-				"set-option -w -uq -t "+q(p.originWin)+" @demux_layout_dirty")
+				"set-option -w -uq -t "+q(p.originWin)+" @winch_layout_dirty")
 			delete(p.carved, p.originWin)
 		}
 		seq = append(seq,
@@ -979,7 +979,7 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 	seq := []string{
 		"kill-pane -t " + q(p.pane),
 		"set-option -w -t " + q(p.win) + " automatic-rename " + p.snap.autoRename,
-		"set-option -w -uq -t " + q(p.win) + " @demux_layout_dirty",
+		"set-option -w -uq -t " + q(p.win) + " @winch_layout_dirty",
 	}
 	if !moving {
 		// Staying put: everything (undock, unpad, restore) in one batch so
@@ -1000,7 +1000,7 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 // leaveLayout picks what a window being released should get back: its exact
 // pre-carve layout normally, or a proportional rescale of the CURRENT docked
 // layout minus the given pane when it was deliberately reshaped while docked
-// (@demux_layout_dirty). Empty means no restore (let tmux expand naturally).
+// (@winch_layout_dirty). Empty means no restore (let tmux expand naturally).
 func (d *daemon) leaveLayout(wid string, exact string, dockedLayout string, dirty bool, drop string) string {
 	if !dirty {
 		return exact
@@ -1027,7 +1027,7 @@ func dockSessionCmds(sid string, width int) []string {
 	}
 	pad := fmt.Sprintf("#[bg=%s,fg=%s]", padBG, padBG) + strings.Repeat(" ", width+1) + "#[default]"
 	return []string{
-		"set-option -t " + q(sid) + " @demux_docked 1",
+		"set-option -t " + q(sid) + " @winch_docked 1",
 		"set-option -t " + q(sid) + " status-left " + q(pad),
 		fmt.Sprintf("set-option -t %s status-left-length %d", q(sid), width+1),
 	}
@@ -1092,7 +1092,7 @@ func (d *daemon) checkDock(ctl *control, w world) {
 		d.stopStream()
 		d.pv.target = ""
 		d.pv.reset()
-		_, _ = ctl.run("set-option -u -t " + q(p.sess) + " @demux_docked")
+		_, _ = ctl.run("set-option -u -t " + q(p.sess) + " @winch_docked")
 		for _, c := range d.scrubStatusCmds(p) {
 			_, _ = ctl.run(c)
 		}

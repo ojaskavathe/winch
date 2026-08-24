@@ -23,7 +23,7 @@ import (
 // frame (and the 10fps live stream) replaces it moments later. The daemon
 // owns every tmux interaction; this process spawns nothing.
 
-// benchLog, when DEMUX_BENCH is set, records per-event timings so latency can
+// benchLog, when WINCH_BENCH is set, records per-event timings so latency can
 // be attributed (key handling vs paint cost vs frame arrival).
 var benchLog *os.File
 
@@ -35,7 +35,7 @@ func benchf(format string, args ...any) {
 	fmt.Fprintf(benchLog, format+"\n", args...)
 }
 
-// tuiLog is ALWAYS on (<demux sock>.tui.log): low-volume lifecycle events —
+// tuiLog is ALWAYS on (<winch sock>.tui.log): low-volume lifecycle events —
 // which build started, what select arrived and where it resolved — so field
 // reports can be diagnosed from logs instead of guesses.
 var tuiLog *os.File
@@ -127,7 +127,7 @@ func (r row) inert() bool { return r.gap || r.head || r.cont }
 // palette: the sidebar's theme as raw SGR fragments. The look lives on a
 // brightness ladder (text > subtext > muted, plus bold/dim) — that ladder
 // is what reads as "font sizes" in a terminal. Default is catppuccin mocha
-// (herdr's default); `@demux-theme terminal` keeps an ANSI-16 mapping that
+// (herdr's default); `@winch-theme terminal` keeps an ANSI-16 mapping that
 // inherits the host scheme instead.
 type palette struct {
 	text    string // fg: selected/active names
@@ -331,19 +331,19 @@ func agentTaskTitle(t string) string {
 	return t
 }
 
-func cmdTui(tmuxSock, demuxSock string) {
-	conn, err := dialEnsure(tmuxSock, demuxSock)
+func cmdTui(tmuxSock, winchSock string) {
+	conn, err := dialEnsure(tmuxSock, winchSock)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "demuxd tui: %v\r\n", err)
+		fmt.Fprintf(os.Stderr, "winch tui: %v\r\n", err)
 		os.Exit(1)
 	}
 	defer conn.Close()
 
-	if os.Getenv("DEMUX_BENCH") != "" {
-		benchLog, _ = os.OpenFile(demuxSock+".tui-bench.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if os.Getenv("WINCH_BENCH") != "" {
+		benchLog, _ = os.OpenFile(winchSock+".tui-bench.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	}
-	tuiLog, _ = os.OpenFile(demuxSock+".tui.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	splitFile = demuxSock + ".tui.split"
+	tuiLog, _ = os.OpenFile(winchSock+".tui.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	splitFile = winchSock + ".tui.split"
 	loadSplit()
 	exe, _ := os.Executable()
 	cols, height := surfaceSize()
@@ -997,7 +997,7 @@ func cmdTui(tmuxSock, demuxSock string) {
 					}
 					relayout = true
 				// vim-tmux-navigator hands its keys to this pane (the
-				// @vim_navigator_pattern includes demuxd), so the sidebar
+				// @vim_navigator_pattern includes winch), so the sidebar
 				// behaves like a vim split: C-l goes INTO what you're looking
 				// at — the billboarded window mid-scrub, the main pane when
 				// docked idle — never "escapes" back to the docked window's
@@ -1381,7 +1381,7 @@ func listTop(n, sel, height int) int {
 }
 
 // listSplit is the tree/agents divider ratio (herdr's sidebar_section_split,
-// default 0.5). Dragging the labeled rule adjusts it; persisted per demux
+// default 0.5). Dragging the labeled rule adjusts it; persisted per winch
 // socket so redocks keep the chosen split.
 var (
 	listSplit = 0.5

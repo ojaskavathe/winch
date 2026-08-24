@@ -1,17 +1,17 @@
 # herdr triage (v0.8.2, 2026-08-22)
 
-What herdr does vs where demux stands, from a full source read of the herdr
+What herdr does vs where winch stands, from a full source read of the herdr
 clone. Framing first, because it changes every judgment below: **herdr is not
 a dashboard — it is a full terminal multiplexer** (client/server, own PTYs,
 own copy mode, own remote story, plugin system, ~257k lines of Rust) with
-agent awareness layered in. demux is the opposite bet: tmux stays the
-multiplexer, demux adds only the agent layer. So herdr's surface splits into
+agent awareness layered in. winch is the opposite bet: tmux stays the
+multiplexer, winch adds only the agent layer. So herdr's surface splits into
 thirds: things tmux already gives us, things we genuinely lack, and things we
 do better.
 
 ## already matched (or won)
 
-- **Live previews: demux wins outright.** herdr has NO pane previews of any
+- **Live previews: winch wins outright.** herdr has NO pane previews of any
   kind — its navigator shows a one-line text summary. Billboards (live,
   delta-streamed, cursor, gesture-commit, statusbar tracking) don't exist
   there.
@@ -20,10 +20,10 @@ do better.
   fast path, working/blocked/idle/done with the seen bit, done-until-visited,
   idle-confirmed anti-flap, blocked-is-strict philosophy. Cadences are
   comparable (300ms identified, both).
-- **Blocked reasons on the row**: demux shows "permission prompt" in the
+- **Blocked reasons on the row**: winch shows "permission prompt" in the
   sidebar; herdr surfaces reasons only in a debug CLI.
-- **Zero lock-in**: demux runs inside stock tmux, over plain ssh, and the
-  NDJSON data plane (`demuxd events`) supports foreign frontends. herdr
+- **Zero lock-in**: winch runs inside stock tmux, over plain ssh, and the
+  NDJSON data plane (`winch events`) supports foreign frontends. herdr
   requires adopting herdr.
 - **Flicker discipline**: both wrap frames in DECSET 2026; both keep chrome
   static (herdr deliberately has no spinner animation anywhere — same as us).
@@ -34,7 +34,7 @@ Sessions/attach/detach/persistence, splits/zoom/resize/swap, copy mode +
 search, scrollback, popups (display-popup), the entire keybinding system,
 custom command binds, status segments (status-right), window titles
 (set-titles), remote (ssh), drag-to-resize, per-pane mouse passthrough.
-herdr had to rebuild all of it; rebuilding it is demux's explicit non-goal.
+herdr had to rebuild all of it; rebuilding it is winch's explicit non-goal.
 Worktree management also lands here for now (sessions-per-worktree is the
 tmux idiom); revisit only if demand shows up.
 
@@ -69,12 +69,12 @@ tmux idiom); revisit only if demand shows up.
    planned cmd-namespace split; the data plane already knows which pane is
    which agent.
 7. **Manifest ops.** Overrides dir exists; missing: hot-reload without
-   daemon restart (`demuxd reload` is planned anyway) and an
+   daemon restart (`winch reload` is planned anyway) and an
    update/version story for manifests. herdr phones home to herdr.dev for
    manifest updates — we probably don't want auto-phone-home; a
-   `demuxd update-manifests` style explicit pull is the tasteful version.
+   `winch update-manifests` style explicit pull is the tasteful version.
 8. **Config surface.** Already on the roadmap; herdr's config-reference is
-   effectively our menu of candidate `@demux-*` options (sidebar width,
+   effectively our menu of candidate `@winch-*` options (sidebar width,
    indicators style, notification delivery, confirm-close...).
 
 ## ui/ux gaps (ranked) — why it "looks nothing like herdr"
@@ -86,10 +86,10 @@ system that's missing.
 
 1. **Palette + theming.** herdr: semantic tokens (accent, panel/active-row/
    selection backgrounds, surfaces, overlays, per-state colors), 18 themes,
-   and — the one that fits demux best — a `terminal` theme mapping
-   everything to ANSI-16 so chrome inherits the host scheme. demux should
+   and — the one that fits winch best — a `terminal` theme mapping
+   everything to ANSI-16 so chrome inherits the host scheme. winch should
    grow a small token set (accent, muted, state colors, row-fill) defaulting
-   to ANSI colors, themable later via @demux-* options.
+   to ANSI colors, themable later via @winch-* options.
 2. **Selection style.** We use full reverse-video for the selected row —
    harsh, and it's also our cursor. herdr fills the row bg (active_row_bg)
    and keeps a *separate* selection_bg token so cursor-on-active-row stays
@@ -172,13 +172,13 @@ RGB theme (default catppuccin like herdr, `terminal` = ANSI fallback).
 color and no icon dimming — inverted; icon bright + word dim is theirs.
 Branch token: mauve when active else overlay0; git `↑n` green `↓n` red.
 
-**Still missing in demux after the restyle**: the RGB ladder + themes,
+**Still missing in winch after the restyle**: the RGB ladder + themes,
 active-vs-selected dual fills, branch/git second row for sessions (needs
 daemon git awareness), narrower default width + drag resize, scrollbar
 (`▕` track / `▐` thumb), footer actions, collapsed 4-col dot strip,
 right-aligned header tokens, drag reorder.
 
-## what is a "space" for demux
+## what is a "space" for winch
 
 herdr's hierarchy maps 1:1 onto tmux's, shifted one level up:
 
@@ -198,7 +198,7 @@ herdr's grouped/indented worktree children are the model for a future
 
 One consequence to hold onto: herdr's sidebar lists ONLY workspaces — tabs
 live in the tab bar (tmux's own status-line window list is our tab bar).
-demux deliberately deviates by nesting windows under sessions, because
+winch deliberately deviates by nesting windows under sessions, because
 window rows are what billboard scrubbing scrubs. The herdr-faithful styling
 for that deviation is the worktree-child treatment: windows as indented,
 subordinate one-line rows under two-row session cards.

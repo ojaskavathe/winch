@@ -1,13 +1,13 @@
-# demux architecture
+# winch architecture
 
-demux is a sidebar for tmux — one dockable view converging the server's two
+winch is a sidebar for tmux — one dockable view converging the server's two
 worlds: sessions/windows, and the coding agents (claude, codex, gemini,
 grok, opencode) running inside them with their working/blocked/idle/done
 states. A daemon mirrors the tmux server's entire state and serves the
 sidebar with live previews of every window. One Go binary, three hats:
 
-- `demuxd run` — the daemon. One per tmux server, keyed by the server socket.
-- `demuxd tui` — the sidebar, spawned by the daemon into a real tmux pane.
+- `winch run` — the daemon. One per tmux server, keyed by the server socket.
+- `winch tui` — the sidebar, spawned by the daemon into a real tmux pane.
 - everything else (`toggle`, `nav`, `browse`, `ls`, `events`, `sock`,
   `equalize`) — thin client verbs; each is one short-lived socket connection,
   and any of them lazily autostarts the daemon.
@@ -38,13 +38,13 @@ across a gap.
 
 ## sockets and process model
 
-`demuxd` mirrors tmux's own socket resolution (`-S` > `-L` > `$TMUX` >
+`winch` mirrors tmux's own socket resolution (`-S` > `-L` > `$TMUX` >
 default), resolves symlinks (macOS `/tmp` -> `/private/tmp`) so every client
 agrees on server identity, and derives its own socket as
-`/tmp/demux-$UID/<name>-<sha256[:4]>.sock`. The daemon binds only after the
+`/tmp/winch-$UID/<name>-<sha256[:4]>.sock`. The daemon binds only after the
 first world fetch — a subscriber can never connect before there is a
 truthful snapshot behind the socket. Startup also sweeps state a dead
-predecessor may have leaked: orphaned spacer panes and stale `@demux_docked`
+predecessor may have leaked: orphaned spacer panes and stale `@winch_docked`
 session options.
 
 ## world model and wire protocol
@@ -61,7 +61,7 @@ the daemon pushes is type-tagged (`snapshot`, `diff`, `select`, `frame`,
 is additive: the snapshot carries a protocol version and clients must ignore
 unknown keys.
 
-The TUI has no privileged channel — it is just a socket client. `demuxd
+The TUI has no privileged channel — it is just a socket client. `winch
 events` streams the same NDJSON to anything else; alternate frontends are a
 supported direction, not an accident.
 
@@ -80,7 +80,7 @@ Two tiers, screen as authority:
 2. **Screen** — `capture-pane` text run through per-agent TOML manifests:
    ordered rules with priorities, regions, and gates (`contains`, regex,
    line anchors). Manifests are embedded in the binary and overridable from
-   `~/.config/demux/agents/`. The match rules derive from
+   `~/.config/winch/agents/`. The match rules derive from
    [herdr](https://github.com/herdrdev/herdr) (see `manifests/LICENSE-herdr`),
    which learned the hard way that agent hooks are edge-triggered and lie —
    the screen is level-triggered truth.
@@ -94,13 +94,13 @@ State semantics:
 - **done** is UI state, not detection: a completion in a window no attached
   client is watching becomes "done" and sticks until the user visits it.
 
-Aggregate counts land in the `@demux_agents` server option for the
+Aggregate counts land in the `@winch_agents` server option for the
 statusline (`!blocked ✓done ✻working`), and a blocked transition notifies
 clients that aren't looking at that window.
 
 ## sidebar, dock, spacers
 
-`demuxd toggle` docks the TUI as a **real 40-col pane** at the left edge of
+`winch toggle` docks the TUI as a **real 40-col pane** at the left edge of
 the client's current window; the main area stays the user's actual panes —
 live, focusable, typable. Undock restores the window's exact pre-dock layout.
 
@@ -111,8 +111,8 @@ mid-transition) and swept by the next daemon if one leaks. All layout
 mutations batch kill-pane + select-layout into single tmux calls — two calls
 means two visible reflows.
 
-While docked, window navigation (`M-h`/`M-l`) routes through `demuxd nav` so
-the sidebar rides along atomically; `@demux_docked` on the session is what
+While docked, window navigation (`M-h`/`M-l`) routes through `winch nav` so
+the sidebar rides along atomically; `@winch_docked` on the session is what
 the tmux binds test to decide routing.
 
 ## billboards: the scrub preview
@@ -147,13 +147,13 @@ them atomically — no tearing, no flicker frames.
 
 ## equalize
 
-`demuxd equalize` rebalances panes with nvim splits weighted by their
+`winch equalize` rebalances panes with nvim splits weighted by their
 window's content (talking to nvim over its RPC socket). It needs no daemon
 and can be compiled out with `-tags noequalize`.
 
 ## testing
 
-- **Unit tests** (`cmd/demuxd`) are pure and run in the nix build sandbox.
+- **Unit tests** (`cmd/winch`) are pure and run in the nix build sandbox.
 - **Rigs** (`rigs/`, a separate module on purpose) are the real harness:
   each test boots an isolated tmux server, attaches a fake 200x50 client on
   a real pty (raw `/dev/ptmx` shims for darwin and linux), starts a daemon,
@@ -166,5 +166,5 @@ and can be compiled out with `-tags noequalize`.
 
 Near-term architecture debts, recorded here so the shape is explicit:
 protocol versioning docs for third-party frontends, decoupling the frame
-stream from dock state, and a config surface (`@demux-*` tmux user options
-read at attach plus `demuxd init` emitting the tmux.conf snippet).
+stream from dock state, and a config surface (`@winch-*` tmux user options
+read at attach plus `winch init` emitting the tmux.conf snippet).

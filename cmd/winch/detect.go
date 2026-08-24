@@ -71,7 +71,7 @@ type detectState struct {
 	ticker    *time.Ticker
 	tickC     <-chan time.Time
 	period    time.Duration
-	lastOpt   string // last @demux_agents value pushed
+	lastOpt   string // last @winch_agents value pushed
 }
 
 // wrapperCmds run agents under an interpreter: pane_current_command says
@@ -372,7 +372,7 @@ func (d *daemon) notifyBlocked(ctl *control, w *world, ids []string) {
 		if a == nil {
 			continue
 		}
-		msg := fmt.Sprintf("demux: %s needs attention in %s:%s", a.kind, sessName[sessOf[a.win]], winName[a.win])
+		msg := fmt.Sprintf("winch: %s needs attention in %s:%s", a.kind, sessName[sessOf[a.win]], winName[a.win])
 		for _, c := range w.Clients {
 			if cur[c.SessionID] == a.win {
 				continue // already looking at it
@@ -386,7 +386,7 @@ func (d *daemon) notifyBlocked(ctl *control, w *world, ids []string) {
 	}
 }
 
-// pushStatusOpt maintains @demux_agents, a global option the status line
+// pushStatusOpt maintains @winch_agents, a global option the status line
 // can reference for free: "!2 ✓1 ✻3" (blocked / done / working counts;
 // empty when quiet). Zero-cost render — no #() and no process spawns.
 func (d *daemon) pushStatusOpt(ctl *control, w *world) {
@@ -416,7 +416,7 @@ func (d *daemon) pushStatusOpt(ctl *control, w *world) {
 		return
 	}
 	d.det.lastOpt = opt
-	cmds := []string{"set-option -g @demux_agents " + q(opt)}
+	cmds := []string{"set-option -g @winch_agents " + q(opt)}
 	for _, c := range w.Clients {
 		cmds = append(cmds, "refresh-client -S -t "+q(c.Name))
 	}

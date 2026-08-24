@@ -9,7 +9,7 @@ import (
 
 // Mini layout engine for docked-mode give-back. When the user reshapes a
 // window WHILE the sidebar is docked (tmux-equalize-nvim sets
-// @demux_layout_dirty), restoring the pre-dock snapshot on leave would undo
+// @winch_layout_dirty), restoring the pre-dock snapshot on leave would undo
 // their change. Instead: parse the docked #{window_layout}, drop the sidebar
 // leaf, rescale what remains to the full window width, and apply that.
 // Heights are untouched — the sidebar only ever takes width.

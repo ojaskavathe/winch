@@ -1,7 +1,7 @@
 The agent detection manifests in this directory (claude.toml, codex.toml,
 gemini.toml, grok.toml, opencode.toml) contain rules ported from herdr's
 detection manifests, used under the Apache License 2.0 reproduced below.
-Each file's header notes the derivation and demux's modifications.
+Each file's header notes the derivation and winch's modifications.
 
 herdr: https://github.com/herdrdev/herdr
 

@@ -1,4 +1,4 @@
-module github.com/ojaskavathe/demux
+module github.com/ojaskavathe/winch
 
 go 1.25.0
 

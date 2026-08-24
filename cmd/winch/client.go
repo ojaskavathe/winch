@@ -16,8 +16,8 @@ import (
 // dialEnsure connects to the daemon, lazily starting one if the socket is
 // dead. The retry loop is a startup handshake, not a poll: it ends the moment
 // the daemon binds, or after 2s with the daemon's error.
-func dialEnsure(tmuxSock, demuxSock string) (net.Conn, error) {
-	if conn, err := net.DialTimeout("unix", demuxSock, 250*time.Millisecond); err == nil {
+func dialEnsure(tmuxSock, winchSock string) (net.Conn, error) {
+	if conn, err := net.DialTimeout("unix", winchSock, 250*time.Millisecond); err == nil {
 		return conn, nil
 	}
 
@@ -26,8 +26,8 @@ func dialEnsure(tmuxSock, demuxSock string) (net.Conn, error) {
 		return nil, err
 	}
 	cmd := exec.Command(self, "-S", tmuxSock, "run")
-	logPath := demuxSock + ".log"
-	_ = os.MkdirAll(filepath.Dir(demuxSock), 0o700)
+	logPath := winchSock + ".log"
+	_ = os.MkdirAll(filepath.Dir(winchSock), 0o700)
 	if logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
 		cmd.Stdout = logf
 		cmd.Stderr = logf
@@ -41,7 +41,7 @@ func dialEnsure(tmuxSock, demuxSock string) (net.Conn, error) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if conn, err := net.DialTimeout("unix", demuxSock, 250*time.Millisecond); err == nil {
+		if conn, err := net.DialTimeout("unix", winchSock, 250*time.Millisecond); err == nil {
 			return conn, nil
 		}
 		time.Sleep(25 * time.Millisecond)
@@ -49,22 +49,22 @@ func dialEnsure(tmuxSock, demuxSock string) (net.Conn, error) {
 	return nil, fmt.Errorf("daemon did not come up (see %s)", logPath)
 }
 
-func cmdLs(tmuxSock, demuxSock string) {
-	conn, err := dialEnsure(tmuxSock, demuxSock)
+func cmdLs(tmuxSock, winchSock string) {
+	conn, err := dialEnsure(tmuxSock, winchSock)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "demuxd ls: %v\n", err)
+		fmt.Fprintf(os.Stderr, "winch ls: %v\n", err)
 		os.Exit(1)
 	}
 	defer conn.Close()
 	sc := bufio.NewScanner(conn)
 	sc.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	if !sc.Scan() {
-		fmt.Fprintln(os.Stderr, "demuxd ls: no snapshot from daemon")
+		fmt.Fprintln(os.Stderr, "winch ls: no snapshot from daemon")
 		os.Exit(1)
 	}
 	var snap snapshotMsg
 	if err := json.Unmarshal(sc.Bytes(), &snap); err != nil || snap.Type != "snapshot" {
-		fmt.Fprintf(os.Stderr, "demuxd ls: bad snapshot: %v\n", err)
+		fmt.Fprintf(os.Stderr, "winch ls: bad snapshot: %v\n", err)
 		os.Exit(1)
 	}
 	fmt.Print(snap.world.String())
@@ -85,27 +85,27 @@ func staleBindWarning() string {
 	if !strings.HasPrefix(exe, "/nix/store/") {
 		return "" // dev binary; nothing to compare against
 	}
-	prof, err := filepath.EvalSymlinks(os.Getenv("HOME") + "/.nix-profile/bin/demuxd")
+	prof, err := filepath.EvalSymlinks(os.Getenv("HOME") + "/.nix-profile/bin/winch")
 	if err != nil || prof == exe {
 		return ""
 	}
-	return fmt.Sprintf("demux: M-s runs a STALE build\n  bind:      %s\n  installed: %s\n  fix: tmux source-file ~/.config/tmux/tmux.conf ; pkill demuxd", exe, prof)
+	return fmt.Sprintf("winch: M-s runs a STALE build\n  bind:      %s\n  installed: %s\n  fix: tmux source-file ~/.config/tmux/tmux.conf ; pkill winch", exe, prof)
 }
 
 // sendCmd is every bind entrypoint (toggle, nav, browse): one short-lived
 // connection, one cmd, wait for the daemon's reply so bind errors surface in
 // tmux via run-shell output.
-func sendCmd(tmuxSock, demuxSock string, m cmdMsg) {
+func sendCmd(tmuxSock, winchSock string, m cmdMsg) {
 	m.Type = "cmd"
-	conn, err := dialEnsure(tmuxSock, demuxSock)
+	conn, err := dialEnsure(tmuxSock, winchSock)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "demuxd %s: %v\n", m.Cmd, err)
+		fmt.Fprintf(os.Stderr, "winch %s: %v\n", m.Cmd, err)
 		os.Exit(1)
 	}
 	defer conn.Close()
 	b, _ := json.Marshal(m)
 	if _, err := conn.Write(append(b, '\n')); err != nil {
-		fmt.Fprintf(os.Stderr, "demuxd %s: %v\n", m.Cmd, err)
+		fmt.Fprintf(os.Stderr, "winch %s: %v\n", m.Cmd, err)
 		os.Exit(1)
 	}
 	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
@@ -117,43 +117,43 @@ func sendCmd(tmuxSock, demuxSock string, m cmdMsg) {
 			continue // snapshot/diff lines on the same conn
 		}
 		if r.OK != nil && !*r.OK {
-			fmt.Fprintf(os.Stderr, "demuxd %s: %s\n", m.Cmd, r.Err)
+			fmt.Fprintf(os.Stderr, "winch %s: %s\n", m.Cmd, r.Err)
 			os.Exit(1)
 		}
 		return
 	}
-	fmt.Fprintf(os.Stderr, "demuxd %s: no reply from daemon\n", m.Cmd)
+	fmt.Fprintf(os.Stderr, "winch %s: no reply from daemon\n", m.Cmd)
 	os.Exit(1)
 }
 
 // cmdToggle is the M-s entrypoint.
-func cmdToggle(tmuxSock, demuxSock, client string) {
+func cmdToggle(tmuxSock, winchSock, client string) {
 	if w := staleBindWarning(); w != "" {
 		fmt.Println(w)
 	}
-	sendCmd(tmuxSock, demuxSock, cmdMsg{Cmd: "toggle", Client: client})
+	sendCmd(tmuxSock, winchSock, cmdMsg{Cmd: "toggle", Client: client})
 }
 
 // cmdNav is the routed M-h / M-l while docked: previous/next window with the
 // sidebar riding along in one atomic server sequence.
-func cmdNav(tmuxSock, demuxSock, dir, client string) {
-	sendCmd(tmuxSock, demuxSock, cmdMsg{Cmd: "nav", Dir: dir, Client: client})
+func cmdNav(tmuxSock, winchSock, dir, client string) {
+	sendCmd(tmuxSock, winchSock, cmdMsg{Cmd: "nav", Dir: dir, Client: client})
 }
 
 // cmdBrowse docks the sidebar and zooms straight into billboard scrubbing.
-func cmdBrowse(tmuxSock, demuxSock, client string) {
-	sendCmd(tmuxSock, demuxSock, cmdMsg{Cmd: "browse", Client: client})
+func cmdBrowse(tmuxSock, winchSock, client string) {
+	sendCmd(tmuxSock, winchSock, cmdMsg{Cmd: "browse", Client: client})
 }
 
 // cmdAgents is the M-a entrypoint: the agent switcher.
-func cmdAgents(tmuxSock, demuxSock, client string) {
-	sendCmd(tmuxSock, demuxSock, cmdMsg{Cmd: "agents", Client: client})
+func cmdAgents(tmuxSock, winchSock, client string) {
+	sendCmd(tmuxSock, winchSock, cmdMsg{Cmd: "agents", Client: client})
 }
 
-func cmdEvents(tmuxSock, demuxSock string) {
-	conn, err := dialEnsure(tmuxSock, demuxSock)
+func cmdEvents(tmuxSock, winchSock string) {
+	conn, err := dialEnsure(tmuxSock, winchSock)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "demuxd events: %v\n", err)
+		fmt.Fprintf(os.Stderr, "winch events: %v\n", err)
 		os.Exit(1)
 	}
 	defer conn.Close()

@@ -1,4 +1,4 @@
-// demuxd — the demux daemon (milestone 1: world model + pub/sub).
+// winch — the winch daemon (milestone 1: world model + pub/sub).
 //
 // One daemon per tmux server. It holds a single persistent control-mode
 // connection (`tmux -C attach`), reduces notifications into a world model
@@ -35,7 +35,7 @@ import (
 var tmuxPath = "tmux"
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `usage: demuxd [-L name | -S path] <command>
+	fmt.Fprintf(os.Stderr, `usage: winch [-L name | -S path] <command>
 
 commands:
   run                    run the daemon in the foreground
@@ -48,20 +48,20 @@ commands:
                          repeat invocations cycle through agents
   equalize [pane]        equalize panes, nvim splits weighted (no daemon needed)
   tui                    the sidebar TUI (spawned by the daemon)
-  sock                   print the tmux and demux socket paths and exit
+  sock                   print the tmux and winch socket paths and exit
 `)
 	os.Exit(2)
 }
 
 func main() {
-	fs := flag.NewFlagSet("demuxd", flag.ExitOnError)
+	fs := flag.NewFlagSet("winch", flag.ExitOnError)
 	fs.Usage = usage
 	lName := fs.String("L", "", "tmux socket name (as tmux -L)")
 	sPath := fs.String("S", "", "tmux socket path (as tmux -S)")
 	_ = fs.Parse(os.Args[1:])
 
 	tmuxSock := resolveTmuxSocket(*sPath, *lName)
-	demuxSock := demuxSocketPath(tmuxSock)
+	winchSock := winchSocketPath(tmuxSock)
 
 	args := fs.Args()
 	if len(args) < 1 {
@@ -69,34 +69,34 @@ func main() {
 	}
 	switch args[0] {
 	case "run":
-		runDaemon(tmuxSock, demuxSock)
+		runDaemon(tmuxSock, winchSock)
 	case "ls":
-		cmdLs(tmuxSock, demuxSock)
+		cmdLs(tmuxSock, winchSock)
 	case "events":
-		cmdEvents(tmuxSock, demuxSock)
+		cmdEvents(tmuxSock, winchSock)
 	case "toggle":
 		client := ""
 		if len(args) > 1 {
 			client = args[1]
 		}
-		cmdToggle(tmuxSock, demuxSock, client)
+		cmdToggle(tmuxSock, winchSock, client)
 	case "nav":
 		if len(args) < 3 || (args[1] != "next" && args[1] != "prev") {
 			usage()
 		}
-		cmdNav(tmuxSock, demuxSock, args[1], args[2])
+		cmdNav(tmuxSock, winchSock, args[1], args[2])
 	case "browse":
 		client := ""
 		if len(args) > 1 {
 			client = args[1]
 		}
-		cmdBrowse(tmuxSock, demuxSock, client)
+		cmdBrowse(tmuxSock, winchSock, client)
 	case "agents":
 		client := ""
 		if len(args) > 1 {
 			client = args[1]
 		}
-		cmdAgents(tmuxSock, demuxSock, client)
+		cmdAgents(tmuxSock, winchSock, client)
 	case "equalize":
 		pane := ""
 		if len(args) > 1 {
@@ -104,9 +104,9 @@ func main() {
 		}
 		cmdEqualize(tmuxSock, pane)
 	case "tui":
-		cmdTui(tmuxSock, demuxSock)
+		cmdTui(tmuxSock, winchSock)
 	case "sock":
-		fmt.Printf("tmux:  %s\ndemux: %s\n", tmuxSock, demuxSock)
+		fmt.Printf("tmux:  %s\nwinch: %s\n", tmuxSock, winchSock)
 	default:
 		usage()
 	}

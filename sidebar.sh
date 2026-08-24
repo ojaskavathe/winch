@@ -1,4 +1,4 @@
-# demux: session/window sidebar for tmux. three modes, one core.
+# winch: session/window sidebar for tmux. three modes, one core.
 #
 #   focus [pane]    PANE mode summon (M-s): open the sidebar as a real pane
 #                   / focus it / close if focused
@@ -11,13 +11,13 @@
 #   run             the sidebar process itself
 #   refresh         signal sidebars to repaint (wired to tmux hooks)
 #
-# HARD-WON RULES (see thoughts/demux-architecture.md):
+# HARD-WON RULES (see thoughts/winch-architecture.md):
 # - NEVER call select-layout: tmux assigns layout geometry to panes by index
 #   order, ignoring the pane ids in the string; join-pane -b desyncs index
 #   from geometric order, so any layout restore shuffles pane contents.
 # - join-pane / kill-pane / resize-pane are content-safe: they target panes
 #   by id and never remap. width restoration is therefore done by recording
-#   pane widths on entry (@demux_widths) and resize-pane'ing them back on
+#   pane widths on entry (@winch_widths) and resize-pane'ing them back on
 #   leave. structure is never touched.
 #
 # Sidebar keys: j/k or arrows preview (switches the view live), g/G
@@ -26,23 +26,23 @@
 set -euo pipefail
 
 SELF="${BASH_SOURCE[0]}"
-STATE_DIR="${XDG_RUNTIME_DIR:-$HOME/.cache}/demux"
-WIDTH="${DEMUX_WIDTH:-32}"
-FRAME_CONF="${DEMUX_FRAME_CONF:-@frameconf@}"
-FRAME_SOCKET="${DEMUX_FRAME_SOCKET:-demux-frame}"
+STATE_DIR="${XDG_RUNTIME_DIR:-$HOME/.cache}/winch"
+WIDTH="${WINCH_WIDTH:-32}"
+FRAME_CONF="${WINCH_FRAME_CONF:-@frameconf@}"
+FRAME_SOCKET="${WINCH_FRAME_SOCKET:-winch-frame}"
 mkdir -p "$STATE_DIR"
 
 # inner = the tmux server being browsed. FRAME mode carries its socket in
-# DEMUX_INNER; pane/popup modes are already inside it.
+# WINCH_INNER; pane/popup modes are already inside it.
 itmux() {
-  if [[ -n ${DEMUX_INNER:-} ]]; then
-    tmux -S "$DEMUX_INNER" "$@"
+  if [[ -n ${WINCH_INNER:-} ]]; then
+    tmux -S "$WINCH_INNER" "$@"
   else
     tmux "$@"
   fi
 }
 
-POPUP="${DEMUX_POPUP:-}"
+POPUP="${WINCH_POPUP:-}"
 PANEMODE=""
 ORIG_SESSION=""
 ORIG_WID=""
@@ -120,7 +120,7 @@ build() {
   if [[ -n $PANEMODE ]]; then
     # follow moves this pane between windows; re-read where we are (and
     # rewarm the width-record cache for the next leave, same call)
-    IFS='|' read -r MYSESSION MYWID WREC < <(tmux display-message -p -t "$TMUX_PANE" '#{session_name}|#{window_id}|#{@demux_widths}')
+    IFS='|' read -r MYSESSION MYWID WREC < <(tmux display-message -p -t "$TMUX_PANE" '#{session_name}|#{window_id}|#{@winch_widths}')
     CURWID=$MYWID
   else
     inner_client
@@ -192,7 +192,7 @@ build() {
         cur_label=$ppath
       fi
     fi
-  done < <(itmux list-panes -a -F '#{session_name}|#{session_attached}|#{session_windows}|#{window_index}|#{window_id}|#{window_active}|#{pane_active}|#{@demux_sidebar}|#{b:pane_current_path}' 2>/dev/null)
+  done < <(itmux list-panes -a -F '#{session_name}|#{session_attached}|#{session_windows}|#{window_index}|#{window_id}|#{window_active}|#{pane_active}|#{@winch_sidebar}|#{b:pane_current_path}' 2>/dev/null)
   flush_window
   clamp_sel
 }
@@ -211,7 +211,7 @@ clamp_sel() {
 
 paint() {
   local buf i now
-  buf="${C_TITLE} demux${R}${K}"$'\n'
+  buf="${C_TITLE} winch${R}${K}"$'\n'
   for i in "${!ITEM_KIND[@]}"; do
     if ((i == SEL)) && [[ ${ITEM_KIND[$i]} != "sep" ]]; then
       buf+="${REV}${ITEM_PLAIN[$i]}${NOREV}${K}"$'\n'
@@ -262,7 +262,7 @@ sel_move() {
 }
 
 # ---- width bookkeeping (pane mode) ------------------------------------
-# @demux_widths on a window = "id=w id=w ..." recorded BEFORE the sidebar
+# @winch_widths on a window = "id=w id=w ..." recorded BEFORE the sidebar
 # joined; leaving resize-panes them back. resize-pane is content-safe.
 
 OLD_WIDTHS=""
@@ -279,7 +279,7 @@ read_move_state() {
     O%*) live+="${line#O} " ;;
     *) rec=$line ;;
     esac
-  done < <(itmux list-panes -t "$oldwid" -F 'O#{pane_id}' \; show-options -wqv -t "$oldwid" @demux_widths 2>/dev/null)
+  done < <(itmux list-panes -t "$oldwid" -F 'O#{pane_id}' \; show-options -wqv -t "$oldwid" @winch_widths 2>/dev/null)
   # shellcheck disable=SC2086
   for kv in $rec; do
     [[ $live == *" ${kv%%=*} "* ]] && keep+="$kv "
@@ -314,11 +314,11 @@ restore_widths() {
       ;;
     *) live+="$line " ;;
     esac
-  done < <(itmux list-panes -t "$wid" -F '#{pane_id}#{?#{@demux_sidebar},S,}' 2>/dev/null)
+  done < <(itmux list-panes -t "$wid" -F '#{pane_id}#{?#{@winch_sidebar},S,}' 2>/dev/null)
   ((hassb)) && return 0
   # unset first (guaranteed cleanup even if a resize aborts the rest), then
   # best-effort resizes for panes that were alive at read time
-  local str="set-option -wu -t '$wid' @demux_widths"
+  local str="set-option -wu -t '$wid' @winch_widths"
   # shellcheck disable=SC2086
   for kv in $rec; do
     [[ $live == *" ${kv%%=*} "* ]] && str+=" ; resize-pane -t '${kv%%=*}' -x ${kv#*=}"
@@ -327,12 +327,12 @@ restore_widths() {
   # if-shell re-checks presence SERVER-SIDE, atomic with the restore, so
   # full-width values can never be applied around a present sidebar (which
   # over-constrains the window, crushes panes, and poisons later baselines)
-  itmux if-shell -t "$wid" -F '#{m:*S*,#{P:#{?#{@demux_sidebar},S,}}}' '' "$str" 2>/dev/null || true
+  itmux if-shell -t "$wid" -F '#{m:*S*,#{P:#{?#{@winch_sidebar},S,}}}' '' "$str" 2>/dev/null || true
 }
 
 # HOT PATH: exactly one synchronous tmux call per keypress. the target's
 # width record is captured server-side (set-option -F, pre-join, target
-# context) and echoed back for our cache; @demux_nav stamps the move so
+# context) and echoed back for our cache; @winch_nav stamps the move so
 # follow ignores hooks we caused ourselves. the window we left is restored
 # asynchronously, then a self-signal repaints markers off the keypress path.
 preview_move() {
@@ -342,11 +342,11 @@ preview_move() {
   # -oq: capture the width baseline only if none exists — a pending async
   # restore means the stored record is the TRUE pre-sidebar baseline, and
   # overwriting it with absorbed widths would corrupt every later restore
-  if ! out=$(itmux set-option -Fwoq -t "$twid" @demux_widths '#{P:#{pane_id}=#{pane_width} }' \; \
-    set-option -g @demux_nav "$EPOCHSECONDS" \; \
+  if ! out=$(itmux set-option -Fwoq -t "$twid" @winch_widths '#{P:#{pane_id}=#{pane_width} }' \; \
+    set-option -g @winch_nav "$EPOCHSECONDS" \; \
     join-pane -hbdf -l "$WIDTH" -s "$TMUX_PANE" -t "$twid" \; \
     "$@" \; \
-    display-message -p -t "$twid" '#{@demux_widths}' 2>/dev/null); then
+    display-message -p -t "$twid" '#{@winch_widths}' 2>/dev/null); then
     render
     return 0
   fi
@@ -363,16 +363,16 @@ move_with() {
   local twid=$1
   shift
   local sb="" sbwid=""
-  IFS=' ' read -r sb sbwid < <(itmux list-panes -a -f '#{==:#{@demux_sidebar},1}' -F '#{pane_id} #{window_id}') || true
+  IFS=' ' read -r sb sbwid < <(itmux list-panes -a -f '#{==:#{@winch_sidebar},1}' -F '#{pane_id} #{window_id}') || true
   local CMD=()
   if [[ -n $sb && $sbwid != "$twid" ]]; then
     read_move_state "$sbwid"
-    CMD+=(set-option -g @demux_nav "$EPOCHSECONDS" ";")
-    CMD+=(set-option -Fwoq -t "$twid" @demux_widths '#{P:#{pane_id}=#{pane_width} }' ";")
+    CMD+=(set-option -g @winch_nav "$EPOCHSECONDS" ";")
+    CMD+=(set-option -Fwoq -t "$twid" @winch_widths '#{P:#{pane_id}=#{pane_width} }' ";")
     CMD+=(join-pane -hbdf -l "$WIDTH" -s "$sb" -t "$twid" ";")
     [[ ${#} -gt 0 ]] && CMD+=("$@" ";")
     resize_args "$OLD_WIDTHS"
-    CMD+=(set-option -wu -t "$sbwid" @demux_widths)
+    CMD+=(set-option -wu -t "$sbwid" @winch_widths)
   else
     CMD+=("$@")
   fi
@@ -386,7 +386,7 @@ close_pane() {
     O%*) live+="${line#O} " ;;
     *) rec=$line ;;
     esac
-  done < <(itmux list-panes -t "$wid" -F 'O#{pane_id}' \; show-options -wqv -t "$wid" @demux_widths 2>/dev/null)
+  done < <(itmux list-panes -t "$wid" -F 'O#{pane_id}' \; show-options -wqv -t "$wid" @winch_widths 2>/dev/null)
   # shellcheck disable=SC2086
   for kv in $rec; do
     [[ ${kv%%=*} == "$pane" ]] && continue
@@ -394,7 +394,7 @@ close_pane() {
   done
   local CMD=(kill-pane -t "$pane" ";")
   resize_args "${keep% }"
-  CMD+=(set-option -wu -t "$wid" @demux_widths ";" set-option -gu @demux_open)
+  CMD+=(set-option -wu -t "$wid" @winch_widths ";" set-option -gu @winch_open)
   itmux "${CMD[@]}" 2>/dev/null || itmux kill-pane -t "$pane" 2>/dev/null || true
 }
 
@@ -405,7 +405,7 @@ open_at() {
   rec=${rec% }
   # no -d: opening the sidebar focuses it, ready for j/k/enter
   pane=$(itmux split-window -hbf -l "$WIDTH" -t "$target" -P -F '#{pane_id}' "exec bash '$SELF' run")
-  itmux set-option -w -t "$wid" @demux_widths "$rec" \; set-option -p -t "$pane" @demux_sidebar 1 \; set-option -p -t "$pane" @demux_client "$client" \; set-option -g @demux_open 1
+  itmux set-option -w -t "$wid" @winch_widths "$rec" \; set-option -p -t "$pane" @winch_sidebar 1 \; set-option -p -t "$pane" @winch_client "$client" \; set-option -g @winch_open 1
 }
 
 # the sidebar is global: toggle closes it wherever it lives, or opens here
@@ -419,7 +419,7 @@ toggle() {
     [[ -n $sb ]] || continue
     found=1
     close_pane "$sb" "$sbwid"
-  done < <(itmux list-panes -a -f '#{==:#{@demux_sidebar},1}' -F '#{pane_id} #{window_id}')
+  done < <(itmux list-panes -a -f '#{==:#{@winch_sidebar},1}' -F '#{pane_id} #{window_id}')
   ((found)) || open_at "$target" "$client"
   unlock
 }
@@ -432,7 +432,7 @@ focus() {
   client="${2:-}"
   lock
   sb=""
-  IFS=' ' read -r sb sbwid < <(itmux list-panes -a -f '#{==:#{@demux_sidebar},1}' -F '#{pane_id} #{window_id}') || true
+  IFS=' ' read -r sb sbwid < <(itmux list-panes -a -f '#{==:#{@winch_sidebar},1}' -F '#{pane_id} #{window_id}') || true
   if [[ -z $sb ]]; then
     open_at "$target" "$client"
   elif [[ $target == "$sb" ]]; then
@@ -450,17 +450,17 @@ focus() {
   unlock
 }
 
-# hook fallback for switches demux didn't make itself. follows the CLIENT
+# hook fallback for switches winch didn't make itself. follows the CLIENT
 # the sidebar was opened for, never "some client".
 follow() {
   local sb sbwid sbclient cwid ts
-  # skip hooks demux's own moves triggered (@demux_nav stamps them); the
+  # skip hooks winch's own moves triggered (@winch_nav stamps them); the
   # sidebar repaints itself, and these no-op follows were serializing
   # behind the preview lock, lagging every keypress
-  ts=$(itmux show-options -gqv @demux_nav 2>/dev/null) || ts=""
+  ts=$(itmux show-options -gqv @winch_nav 2>/dev/null) || ts=""
   [[ -n $ts ]] && ((EPOCHSECONDS - ts <= 1)) && return 0
   sb=""
-  IFS='|' read -r sb sbwid sbclient < <(itmux list-panes -a -f '#{==:#{@demux_sidebar},1}' -F '#{pane_id}|#{window_id}|#{@demux_client}') || true
+  IFS='|' read -r sb sbwid sbclient < <(itmux list-panes -a -f '#{==:#{@winch_sidebar},1}' -F '#{pane_id}|#{window_id}|#{@winch_client}') || true
   [[ -n $sb ]] || return 0
   lock
   cwid=""
@@ -478,7 +478,7 @@ follow() {
 }
 
 # window cycling that carries the sidebar in the same batch; bound to
-# M-h/M-l only while the sidebar is open (@demux_open)
+# M-h/M-l only while the sidebar is open (@winch_open)
 nav() {
   local dir=$1 cw=${2:-} csess wids=() i n target
   [[ -n $cw ]] || return 0
@@ -582,14 +582,14 @@ close_self() {
 
 run() {
   [[ -n $POPUP || -n ${TMUX_PANE:-} ]] || {
-    echo "demux run: need a tmux pane or popup" >&2
+    echo "winch run: need a tmux pane or popup" >&2
     exit 1
   }
-  [[ -z $POPUP && -z ${DEMUX_INNER:-} && -n ${TMUX_PANE:-} ]] && PANEMODE=1
+  [[ -z $POPUP && -z ${WINCH_INNER:-} && -n ${TMUX_PANE:-} ]] && PANEMODE=1
   # resolve the client we serve (set by open_at for pane mode; the popup
   # runs in its client's context; frame's nested client is the only one)
   if [[ -n $PANEMODE ]]; then
-    CLIENT=$(tmux display-message -p -t "$TMUX_PANE" '#{@demux_client}' 2>/dev/null) || CLIENT=""
+    CLIENT=$(tmux display-message -p -t "$TMUX_PANE" '#{@winch_client}' 2>/dev/null) || CLIENT=""
   elif [[ -n $POPUP ]]; then
     CLIENT=$(tmux display-message -p '#{client_name}' 2>/dev/null) || CLIENT=""
   fi
@@ -667,7 +667,7 @@ refresh() {
     # PIDs get recycled; only signal if it's really a sidebar (USR1's
     # default action TERMINATES an unsuspecting process)
     case "$(ps -p "$pid" -o command= 2>/dev/null)" in
-    *demux*) kill -USR1 "$pid" 2>/dev/null || rm -f "$f" ;;
+    *winch*) kill -USR1 "$pid" 2>/dev/null || rm -f "$f" ;;
     *) rm -f "$f" ;;
     esac
   done
@@ -678,10 +678,10 @@ refresh() {
 frame_focus() {
   local active sb pane
   active="${1:-}"
-  sb=$(tmux list-panes -f '#{==:#{@demux_sidebar},1}' -F '#{pane_id}')
+  sb=$(tmux list-panes -f '#{==:#{@winch_sidebar},1}' -F '#{pane_id}')
   if [[ -z $sb ]]; then
     pane=$(tmux split-window -hbf -l "$WIDTH" -P -F '#{pane_id}' "exec bash '$SELF' run")
-    tmux set-option -p -t "$pane" @demux_sidebar 1
+    tmux set-option -p -t "$pane" @winch_sidebar 1
   elif [[ $active == "$sb" ]]; then
     tmux kill-pane -t "$sb"
   else
@@ -701,11 +701,11 @@ frame_ensure() {
   if ! "${F[@]}" has-session -t frame 2>/dev/null; then
     tmux -L "$FRAME_SOCKET" -f "$FRAME_CONF" new-session -d -s frame -n frame \
       "exec env -u TMUX -u TMUX_PANE tmux -S '$inner_sock' attach"
-    "${F[@]}" set-environment -g DEMUX_INNER "$inner_sock"
+    "${F[@]}" set-environment -g WINCH_INNER "$inner_sock"
     "${F[@]}" bind -n M-s run-shell -b "bash '$SELF' frame-focus '#{pane_id}'"
     local pane
     pane=$(tmux -L "$FRAME_SOCKET" split-window -hbf -l "$WIDTH" -t frame -P -F '#{pane_id}' "exec bash '$SELF' run")
-    tmux -L "$FRAME_SOCKET" set-option -p -t "$pane" @demux_sidebar 1
+    tmux -L "$FRAME_SOCKET" set-option -p -t "$pane" @winch_sidebar 1
   fi
 }
 
@@ -720,7 +720,7 @@ toggle) toggle "${2:-}" "${3:-}" ;;
 follow) follow ;;
 nav) nav "${2:?next|prev}" "${3:-}" ;;
 popup)
-  DEMUX_POPUP=1
+  WINCH_POPUP=1
   POPUP=1
   run
   ;;
@@ -730,7 +730,7 @@ run) run ;;
 refresh) refresh ;;
 frame-focus) frame_focus "${2:-}" ;;
 *)
-  echo "usage: demux {focus|toggle|follow|nav next|prev|popup|up|run|refresh}" >&2
+  echo "usage: winch {focus|toggle|follow|nav next|prev|popup|up|run|refresh}" >&2
   exit 2
   ;;
 esac

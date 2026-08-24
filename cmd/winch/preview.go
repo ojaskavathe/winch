@@ -10,7 +10,7 @@ import (
 
 // The preview engine: capture a window, ship it to the TUI as a billboard
 // frame, and keep the current target live on a stream ticker. Docked scrub
-// zoom is the only consumer (`demuxd browse` is that too, pre-zoomed).
+// zoom is the only consumer (`winch browse` is that too, pre-zoomed).
 
 // previewState is the engine's state on the daemon.
 type previewState struct {
@@ -259,7 +259,7 @@ func parseDims(line string) (int, int) {
 // Geometry is queried fresh (cross-session geometry emits no events), then
 // every pane is captured in one sequence with marker lines between panes:
 // capture output line counts are not reliable (trailing blanks), markers are.
-const frameMarker = "\x1fdemux-frame\x1f"
+const frameMarker = "\x1fwinch-frame\x1f"
 
 // preview captures wid and ships it as a frame. A prefetch warms the TUI's
 // cache for adjacent rows without becoming the streamed target. The sidebar

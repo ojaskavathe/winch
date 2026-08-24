@@ -12,7 +12,7 @@ import (
 
 // The command router: client cmds arrive on the hub queue, get coalesced by
 // handleCmd, and runCmd dispatches each. Everything is docked-mode now —
-// `demuxd browse` is dock + zoom — so the dock owns every command. All of it
+// `winch browse` is dock + zoom — so the dock owns every command. All of it
 // runs on the consume loop — one thread, serialized with re-lists and tmux
 // commands.
 
@@ -221,7 +221,7 @@ func (d *daemon) toggle(ctl *control, client string) error {
 	return d.dockOpen(ctl, client)
 }
 
-// browseOpen is `demuxd browse`: dock into the client's current window and
+// browseOpen is `winch browse`: dock into the client's current window and
 // zoom straight into billboard scrubbing — the old full-screen browser is
 // now just the dock's scrub view, opened from row one.
 func (d *daemon) browseOpen(ctl *control, client string) error {
@@ -249,7 +249,7 @@ func (d *daemon) agentsOpen(ctl *control, client string) error {
 		}
 	}
 	if len(agents) == 0 {
-		_, err := ctl.run("display-message -t " + q(client) + " " + q("demux: no agents"))
+		_, err := ctl.run("display-message -t " + q(client) + " " + q("winch: no agents"))
 		return err
 	}
 	sort.Slice(agents, func(i, j int) bool {

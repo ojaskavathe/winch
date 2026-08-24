@@ -14,7 +14,7 @@ import (
 // binaries) is classified from its title (tier 1) and screen (tier 2, TOML
 // manifest engine), states flow as pane diffs, completions in unwatched
 // windows become "done" until visited, blocked notifies other clients, the
-// sidebar renders glyphs plus the agents section, and @demux_agents keeps
+// sidebar renders glyphs plus the agents section, and @winch_agents keeps
 // the statusline counts.
 func TestAgent(t *testing.T) {
 	r := New(t)
@@ -33,12 +33,12 @@ func TestAgent(t *testing.T) {
 	// detection tick's own discovery finds this pane (up to 2s) before its
 	// 3s startup grace even starts.
 	ap := r.T("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", r.W3, fake+" 100000")
-	sleep(1700) // discovery + startup grace + a tick (DEMUX_TEST_FAST scale)
+	sleep(1700) // discovery + startup grace + a tick (WINCH_TEST_FAST scale)
 	r.T("select-pane", "-T", "⠧ Cooking up a thing", "-t", ap)
 	r.Chk("spinner title -> working", r.WaitUntil(300, func() bool {
 		return r.LogHas("agent claude pane=.* state=.*->working")
 	}))
-	r.Chk("statusline counts working", strings.Contains(r.ShowOpt("-gqv", "@demux_agents"), "✻"))
+	r.Chk("statusline counts working", strings.Contains(r.ShowOpt("-gqv", "@winch_agents"), "✻"))
 
 	// ✳ title = idle — but the client is looking at beta, not gamma, so
 	// the completion lands as DONE and sticks until gamma is visited.
@@ -108,7 +108,7 @@ func TestAgent(t *testing.T) {
 	r.Chk("blocked state on agent row", r.WaitUntil(300, func() bool {
 		return strings.Contains(r.Capture(s.Pane), "blocked · claude")
 	}))
-	r.Chk("statusline counts blocked", strings.Contains(r.ShowOpt("-gqv", "@demux_agents"), "!"))
+	r.Chk("statusline counts blocked", strings.Contains(r.ShowOpt("-gqv", "@winch_agents"), "!"))
 
 	// Border continuity: in browse mode the list paints its own │ column;
 	// glyph rows once left the cursor at col 1 and dropped their border
@@ -162,14 +162,14 @@ func TestAgent(t *testing.T) {
 
 	// Kill the agents: states must leave the world (glyphs gone).
 	r.D("toggle", r.CL)
-	r.await(5000, "undocked", func() bool { return r.DemuxPanes("-a") == 0 })
+	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 	r.TQ("kill-pane", "-t", ap)
 	r.TQ("kill-pane", "-t", bp)
 	r.Chk("gamma layout intact", r.WaitUntil(300, func() bool {
 		return r.Layout(r.W3) == tail(r.LW3)
 	}))
 	r.Chk("statusline cleared", r.WaitUntil(200, func() bool {
-		return r.ShowOpt("-gqv", "@demux_agents") == ""
+		return r.ShowOpt("-gqv", "@winch_agents") == ""
 	}))
 
 	// No agents left: the switcher declines to dock and just says so.

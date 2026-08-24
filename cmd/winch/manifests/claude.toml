@@ -1,5 +1,5 @@
 # claude code detection rules. Ported from herdr's manifest (Apache 2.0,
-# v2026.08.19.1) with demux adjustments: no osc_progress rules (tmux
+# v2026.08.19.1) with winch adjustments: no osc_progress rules (tmux
 # swallows OSC 9;4), plus a steadier background-shell working rule (the
 # footer "· 1 shell ·" chip truncates in and out on narrow panes).
 id = "claude"
@@ -82,7 +82,7 @@ any = [
 
 [[rules]]
 id = "shells_still_running"
-# demux addition: the post-turn status line while background shells live.
+# winch addition: the post-turn status line while background shells live.
 # Short and never truncated — steadier than the footer chip below.
 state = "working"
 priority = 966
@@ -175,7 +175,7 @@ all = [
 
 [[rules]]
 id = "permission_prompt_anywhere"
-# demux addition: the numbered yes/no list without the boxed form — the
+# winch addition: the numbered yes/no list without the boxed form — the
 # question plus a real option list is blocked evidence wherever it sits.
 label = "permission prompt"
 state = "blocked"

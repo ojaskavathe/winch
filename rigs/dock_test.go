@@ -34,10 +34,10 @@ func TestDockScrub(t *testing.T) {
 	r.Chk("sidebar at left edge", s.Left == 0)
 	r.Chk("sidebar 40 cols", s.Width == sideW)
 	r.Chk("sidebar focused", s.Active == 1)
-	r.Chk("@demux_docked on work", r.ShowOpt("-t", "work", "-v", "@demux_docked") == "1")
+	r.Chk("@winch_docked on work", r.ShowOpt("-t", "work", "-v", "@winch_docked") == "1")
 	r.Chk("status-left padded 41", len(r.ShowOpt("-t", "work", "status-left")) >= sideW+5)
-	_, err := r.TQ("has-session", "-t", "_demux")
-	r.Chk("no _demux session", err != nil)
+	_, err := r.TQ("has-session", "-t", "_winch")
+	r.Chk("no _winch session", err != nil)
 	cap := r.Capture(s.Pane)
 	r.Chk("narrow list shows sessions", strings.Contains(cap, "work") && strings.Contains(cap, "play"))
 	r.Chk("narrow list has no border", !strings.Contains(cap, "│"))
@@ -171,7 +171,7 @@ func TestDockScrub(t *testing.T) {
 	r.Chk("C-l idle focuses adjacent main", active == leftMain)
 
 	// C-l mid-scrub is Enter, not escape: the navigator pattern includes
-	// demuxd, so tmux hands C-l to the TUI, which commits to the billboard
+	// winch, so tmux hands C-l to the TUI, which commits to the billboard
 	// you're looking at instead of unzooming back to the docked window.
 	r.T("select-pane", "-t", sp)
 	r.SendKeys(sp, "l") // billboard beta (q reset the pick to w1)
@@ -198,12 +198,12 @@ func TestDockScrub(t *testing.T) {
 	r.D("toggle", r.CL)
 	sleep(800)
 	r.Chk("M-s landed on play", r.ClientSess() == "play")
-	r.Chk("sidebar dismissed", r.DemuxPanes("-s", "-t", "work") == 0 && r.DemuxPanes("-s", "-t", "play") == 0)
+	r.Chk("sidebar dismissed", r.WinchPanes("-s", "-t", "work") == 0 && r.WinchPanes("-s", "-t", "play") == 0)
 	r.Chk("w1 layout exact after undock", r.Layout(r.W1) == tail(r.LW1))
 	r.Chk("beta layout exact after undock", r.Layout(r.W2) == tail(r.LW2))
 	r.Chk("no spacers remain", r.Spacers() == 0)
-	r.Chk("@demux_docked cleared", r.ShowOpt("-t", "play", "-v", "@demux_docked") == "" &&
-		r.ShowOpt("-t", "work", "-v", "@demux_docked") == "")
+	r.Chk("@winch_docked cleared", r.ShowOpt("-t", "play", "-v", "@winch_docked") == "" &&
+		r.ShowOpt("-t", "work", "-v", "@winch_docked") == "")
 	r.Chk("status unpadded everywhere", r.ShowOpt("-t", "work", "status-left") == "" &&
 		r.ShowOpt("-t", "play", "status-left") == "")
 }

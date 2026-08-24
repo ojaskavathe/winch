@@ -50,7 +50,7 @@ func TestStaleBillboard(t *testing.T) {
 	// has actually turned over — under full-suite load the rig shell can
 	// lag seconds behind send-keys, and scrubbing onto a live screen that
 	// still shows OLDMARK is correct behavior, not the stale-cache bug.
-	// Then sit past frameTTL (1s under DEMUX_TEST_FAST) so the OLDMARK
+	// Then sit past frameTTL (1s under WINCH_TEST_FAST) so the OLDMARK
 	// cache is properly stale.
 	r.SendKeys(shell, "clear; while :; do echo FRESHMARK; sleep 2; done", "Enter")
 	r.Chk("w1 live screen turned fresh", r.WaitUntil(1000, func() bool {

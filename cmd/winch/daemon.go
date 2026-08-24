@@ -14,12 +14,12 @@ import (
 	"time"
 )
 
-var bench = os.Getenv("DEMUX_BENCH") != ""
+var bench = os.Getenv("WINCH_BENCH") != ""
 
 // testFast, set only by the rig harness, compresses pure wall-clock
 // constants (discovery tick, startup grace, frame TTL) so tests don't
 // sleep through them. It never changes behavior, only timing.
-var testFast = os.Getenv("DEMUX_TEST_FAST") != ""
+var testFast = os.Getenv("WINCH_TEST_FAST") != ""
 
 // daemon is the single-threaded core: every field is touched only from the
 // consume loop, so none of it needs locking.
@@ -90,7 +90,7 @@ func (d *daemon) clientView(ctl *control, client string) (sid, wid string, cw, c
 	return "", "", 0, 0, fmt.Errorf("no client %s (server has: %s)", client, strings.Join(names, ", "))
 }
 
-// uiTheme is the @demux-theme option read once at attach; rides every
+// uiTheme is the @winch-theme option read once at attach; rides every
 // snapshot so the TUI paints in the right palette from its first frame.
 var uiTheme string
 
@@ -112,8 +112,8 @@ const debounce = 15 * time.Millisecond
 // only — key handling and painting never wait on this.
 const scrubQuiet = 150 * time.Millisecond
 
-func runDaemon(tmuxSock, demuxSock string) {
-	log.SetPrefix("demuxd: ")
+func runDaemon(tmuxSock, winchSock string) {
+	log.SetPrefix("winch: ")
 	log.SetFlags(log.Ltime | log.Lmicroseconds)
 	if exe, err := os.Executable(); err == nil {
 		log.Printf("build %s", exe)
@@ -142,9 +142,9 @@ func runDaemon(tmuxSock, demuxSock string) {
 		if lines, perr := ctl.run("display-message -p '" + sep + "'"); perr == nil &&
 			len(lines) == 1 && lines[0] == `\037` {
 			ctl.close()
-			log.Fatalf("tmux at %s escapes control-mode output; demux needs tmux >= 3.6", tmuxSock)
+			log.Fatalf("tmux at %s escapes control-mode output; winch needs tmux >= 3.6", tmuxSock)
 		}
-		if lines, terr := ctl.run("show-options -gqv @demux-theme"); terr == nil && len(lines) == 1 {
+		if lines, terr := ctl.run("show-options -gqv @winch-theme"); terr == nil && len(lines) == 1 {
 			uiTheme = strings.TrimSpace(lines[0])
 		}
 		if lines, aerr := ctl.run("show-options -gwqv alternate-screen"); aerr == nil && len(lines) == 1 {
@@ -178,16 +178,16 @@ func runDaemon(tmuxSock, demuxSock string) {
 			// Bind only now, with a populated world: a subscriber must never
 			// see the socket before there is a truthful snapshot behind it
 			// (an early `ls` would print an empty world and exit 0).
-			if err := os.MkdirAll(filepath.Dir(demuxSock), 0o700); err != nil {
+			if err := os.MkdirAll(filepath.Dir(winchSock), 0o700); err != nil {
 				ctl.close()
 				log.Fatalf("socket dir: %v", err)
 			}
-			ln, err = listenExclusive(demuxSock)
+			ln, err = listenExclusive(winchSock)
 			if err != nil {
 				ctl.close()
 				log.Fatalf("%v", err)
 			}
-			defer os.Remove(demuxSock)
+			defer os.Remove(winchSock)
 			go serve(ln, h, tmuxSock)
 			log.Printf("attached to %s: %d sessions, %d windows, %d panes",
 				tmuxSock, len(w.Sessions), len(w.Windows), len(w.Panes))
@@ -310,7 +310,7 @@ func consume(d *daemon, ctl *control, w world, sig chan os.Signal) bool {
 	}
 }
 
-// listenExclusive binds the demux socket, stealing it only from the dead: if
+// listenExclusive binds the winch socket, stealing it only from the dead: if
 // something answers on the socket, another daemon owns this server.
 func listenExclusive(path string) (net.Listener, error) {
 	ln, err := net.Listen("unix", path)

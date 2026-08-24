@@ -13,17 +13,17 @@ import (
 	"strings"
 )
 
-// `demuxd equalize` — equalize the current window's panes, weighting each
+// `winch equalize` — equalize the current window's panes, weighting each
 // nvim pane by its internal split counts (a pane showing 2 nvim columns
 // deserves twice the width), then `wincmd =` inside every nvim. Absorbed
 // from the standalone tmux-equalize-nvim tool; runs standalone over exec'd
-// tmux — no daemon needed, so it works in plain tmux with demux idle.
+// tmux — no daemon needed, so it works in plain tmux with winch idle.
 //
-// Docked interplay: with a demux sidebar in the window (@demux_sidebar), only
+// Docked interplay: with a winch sidebar in the window (@winch_sidebar), only
 // the main region is equalized — select-layout assigns geometry by pane INDEX
 // order, which diverges from geometric order with a joined sidebar and would
 // shuffle contents. Per-leaf absolute resize-pane is content-safe. The window
-// is marked @demux_layout_dirty so the daemon gives the sidebar's columns
+// is marked @winch_layout_dirty so the daemon gives the sidebar's columns
 // back proportionally on undock instead of restoring the pre-dock snapshot.
 
 type eqPane struct {
@@ -47,12 +47,12 @@ func (t eqTmux) ok(args ...string) bool {
 	return cmd.Run() == nil
 }
 
-// cmdEqualize is the `demuxd equalize [pane]` entrypoint. The pane argument
+// cmdEqualize is the `winch equalize [pane]` entrypoint. The pane argument
 // (bind with "#{pane_id}") pins the target; without it tmux's default
 // resolution picks the attached client's current pane.
 func cmdEqualize(tmuxSock, pane string) {
 	if err := equalizeRun(eqTmux{sock: tmuxSock}, pane); err != nil {
-		fmt.Fprintf(os.Stderr, "demuxd equalize: %v\n", err)
+		fmt.Fprintf(os.Stderr, "winch equalize: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -121,7 +121,7 @@ func equalizeRun(t eqTmux, pane string) error {
 
 func eqCurrentPanes(t eqTmux, window string) map[string]eqPane {
 	lines, err := t.out("list-panes", "-t", window, "-F",
-		"#{pane_id}\t#{pane_dead}\t#{pane_current_command}\t#{@nvim_server}\t#{@demux_sidebar}")
+		"#{pane_id}\t#{pane_dead}\t#{pane_current_command}\t#{@nvim_server}\t#{@winch_sidebar}")
 	if err != nil {
 		return nil
 	}
@@ -348,7 +348,7 @@ func eqAssign(n *lnode, x, y, w, h int, counts map[string]map[string]int) {
 }
 
 // eqDocked equalizes everything EXCEPT the fixed sidebar pane, which must be
-// a direct child of the root row (demux docks with join-pane -hb -f).
+// a direct child of the root row (winch docks with join-pane -hb -f).
 // Targets are computed by the normal weighted assign over the main region,
 // then applied as absolute per-leaf resize-pane calls in geometric order —
 // once every boundary left of / above a leaf is settled, setting the leaf's
@@ -388,7 +388,7 @@ func eqDocked(t eqTmux, root *lnode, fixed, window string, counts map[string]map
 	pseudo := &lnode{kind: '{', kids: mains}
 	eqAssign(pseudo, left, root.y, width, root.h, counts)
 
-	args := []string{"set-option", "-w", "-t", window, "@demux_layout_dirty", "1"}
+	args := []string{"set-option", "-w", "-t", window, "@winch_layout_dirty", "1"}
 	add := func(cmd ...string) {
 		args = append(args, ";")
 		args = append(args, cmd...)

@@ -132,7 +132,7 @@ func TestTitleTier(t *testing.T) {
 
 func TestManifestOverride(t *testing.T) {
 	dir := t.TempDir()
-	sub := filepath.Join(dir, "demux", "agents")
+	sub := filepath.Join(dir, "winch", "agents")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +285,7 @@ func TestBlockedRowShowsReason(t *testing.T) {
 func TestSessionGitRow(t *testing.T) {
 	st := &store{
 		sessions: map[string]session{
-			"$1": {ID: "$1", Name: "dots", Branch: "demux", Ahead: 2, Behind: 1},
+			"$1": {ID: "$1", Name: "dots", Branch: "winch", Ahead: 2, Behind: 1},
 			"$2": {ID: "$2", Name: "scratch"},
 		},
 		windows: map[string]window{"@1": {ID: "@1", SessionID: "$1", Active: true}},
@@ -298,7 +298,7 @@ func TestSessionGitRow(t *testing.T) {
 			git = append(git, r.label)
 		}
 	}
-	if len(git) != 1 || !strings.Contains(git[0], "demux ↑2 ↓1") {
+	if len(git) != 1 || !strings.Contains(git[0], "winch ↑2 ↓1") {
 		t.Fatalf("git rows = %q", git)
 	}
 }

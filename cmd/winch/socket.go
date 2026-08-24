@@ -32,7 +32,7 @@ func resolveTmuxSocket(sPath, lName string) string {
 }
 
 // canonical resolves symlinks (macOS /tmp -> /private/tmp) so the same server
-// hashes to the same demux socket whether the path came from $TMUX (already
+// hashes to the same winch socket whether the path came from $TMUX (already
 // resolved) or was constructed here.
 func canonical(p string) string {
 	if r, err := filepath.EvalSymlinks(p); err == nil {
@@ -41,10 +41,10 @@ func canonical(p string) string {
 	return filepath.Clean(p)
 }
 
-// demuxSocketPath derives this server's demux socket. Kept short: unix socket
+// winchSocketPath derives this server's winch socket. Kept short: unix socket
 // paths cap at ~104 bytes on darwin.
-func demuxSocketPath(tmuxSock string) string {
+func winchSocketPath(tmuxSock string) string {
 	sum := sha256.Sum256([]byte(tmuxSock))
-	dir := filepath.Join("/tmp", fmt.Sprintf("demux-%d", os.Getuid()))
+	dir := filepath.Join("/tmp", fmt.Sprintf("winch-%d", os.Getuid()))
 	return filepath.Join(dir, fmt.Sprintf("%s-%x.sock", filepath.Base(tmuxSock), sum[:4]))
 }

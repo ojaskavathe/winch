@@ -68,7 +68,7 @@ func TestHeavyHistory(t *testing.T) {
 	r.Chk("re-entered heavy", r.ClientWin() == heavy)
 	r.D("toggle", r.CL) // undock on heavy; releases drain deferred
 	r.await(6000, "deferred releases drained", func() bool {
-		return r.Spacers() == 0 && r.DemuxPanes("-a") == 0
+		return r.Spacers() == 0 && r.WinchPanes("-a") == 0
 	})
 
 	// M-s dismiss INTO the (again uncarved) heavy window lands directly —
@@ -85,7 +85,7 @@ func TestHeavyHistory(t *testing.T) {
 	r.D("toggle", r.CL)
 	r.Chk("dismiss landed on heavy", r.WaitUntil(200, func() bool { return r.ClientWin() == heavy }))
 	r.await(6000, "post-dismiss releases drained", func() bool {
-		return r.Spacers() == 0 && r.DemuxPanes("-a") == 0
+		return r.Spacers() == 0 && r.WinchPanes("-a") == 0
 	})
 
 	b, err := os.ReadFile(r.Sock + ".log")

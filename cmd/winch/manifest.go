@@ -17,7 +17,7 @@ import (
 // (schema ported from herdr's, Apache 2.0 — see
 // thoughts/agent-detection-research.md) compiled into matchers evaluated
 // over a screen+title snapshot. Manifests ship as DATA: the bundled ones
-// are embedded, and a user file at <config>/demux/agents/<id>.toml
+// are embedded, and a user file at <config>/winch/agents/<id>.toml
 // replaces the bundled manifest of the same id — when an agent's UI copy
 // changes, the fix is a user-editable TOML, not a release.
 //
@@ -118,10 +118,10 @@ func loadManifests() map[string]*cManifest {
 		}
 		byID[m.id] = m
 	}
-	// User overrides: <config>/demux/agents/<id>.toml replaces the bundled
+	// User overrides: <config>/winch/agents/<id>.toml replaces the bundled
 	// manifest wholesale. XDG_CONFIG_HOME is honored explicitly — Go's
 	// UserConfigDir ignores it on darwin, and the override dir must behave
-	// the same on every platform demux ships to.
+	// the same on every platform winch ships to.
 	dir := os.Getenv("XDG_CONFIG_HOME")
 	if dir == "" {
 		if d, err := os.UserConfigDir(); err == nil {
@@ -129,7 +129,7 @@ func loadManifests() map[string]*cManifest {
 		}
 	}
 	if dir != "" {
-		files, _ := filepath.Glob(filepath.Join(dir, "demux", "agents", "*.toml"))
+		files, _ := filepath.Glob(filepath.Join(dir, "winch", "agents", "*.toml"))
 		for _, fp := range files {
 			b, err := os.ReadFile(fp)
 			if err != nil {

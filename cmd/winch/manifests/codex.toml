@@ -1,6 +1,6 @@
 # codex CLI detection rules, ported from herdr's manifest with one
 # simplification: herdr bounds blockers with codex prompt-marker regions
-# (after_last_prompt_marker etc.); demux uses bottom-line windows instead,
+# (after_last_prompt_marker etc.); winch uses bottom-line windows instead,
 # which the visible viewport tail approximates well enough.
 id = "codex"
 version = "2026.08.21.1"

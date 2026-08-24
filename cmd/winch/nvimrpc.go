@@ -14,7 +14,7 @@ import (
 )
 
 // A minimal msgpack-rpc client for nvim — just enough for equalize's two
-// calls (nvim_eval, nvim_command), so demuxd stays dependency-free. Results
+// calls (nvim_eval, nvim_command), so winch stays dependency-free. Results
 // that need structure are fetched as json_encode(...) strings and parsed
 // with encoding/json; the msgpack side only ever decodes the reply envelope.
 
