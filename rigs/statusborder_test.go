@@ -60,6 +60,85 @@ func TestStatusPadBorder(t *testing.T) {
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 }
 
+// TestStatusPadBorderStyle: tmux colours a border segment with
+// pane-active-border-style only where it TOUCHES the active pane. The glyph
+// must follow the same rule, or it reads as a permanently-focused edge.
+//
+// Two ways to fail the touch test, and both are covered: focus on a pane that
+// does not border the sidebar column at all, and focus on one that does but at
+// the other end of the divider — a stacked split leaves the bar-adjacent
+// segment belonging to the other pane.
+//
+// The style is checked by re-rendering the daemon's own pad string against a
+// chosen pane, because the screen model records runes and not colour. Using
+// the option tmux actually holds, not a copy of the format, is what keeps this
+// a test of the daemon rather than of the test.
+func TestStatusPadBorderStyle(t *testing.T) {
+	r := New(t)
+
+	r.D("toggle", r.CL)
+	r.await(5000, "docked", func() bool { return r.Side().Pane != "" })
+	side := r.Side()
+	sleep(600)
+
+	// Distinguishable stand-ins for the two styles.
+	r.T("set-option", "-gw", "pane-active-border-style", "fg=red")
+	r.T("set-option", "-gw", "pane-border-style", "fg=blue")
+
+	// Stack the content column: top and bottom both touch the border, but
+	// with the bar at the bottom only the lower one owns the segment next
+	// to it.
+	content := ""
+	for _, ln := range strings.Split(r.T("list-panes", "-t", side.Win, "-F", "#{pane_id} #{pane_left}"), "\n") {
+		if f := strings.Fields(ln); len(f) == 2 && f[1] != "0" {
+			content = f[0]
+		}
+	}
+	r.Chk("found the content pane", content != "")
+	r.T("split-window", "-v", "-t", content)
+	sleep(500)
+
+	var top, bottom string
+	for _, ln := range strings.Split(r.T("list-panes", "-t", side.Win, "-F", "#{pane_id} #{pane_left} #{pane_top}"), "\n") {
+		f := strings.Fields(ln)
+		if len(f) != 3 || f[1] == "0" {
+			continue
+		}
+		if f[2] == "0" {
+			top = f[0]
+		} else {
+			bottom = f[0]
+		}
+	}
+	r.Chk("content column is stacked", top != "" && bottom != "")
+
+	pad := strings.TrimSpace(r.ShowOpt("-t", r.ClientSess(), "-v", "status-left"))
+	r.Chk("pad is installed", strings.Contains(pad, "pane-active-border-style"))
+	styleFor := func(pane string) string {
+		out := r.T("display-message", "-p", "-t", pane, pad)
+		switch {
+		case strings.Contains(out, "red"):
+			return "active"
+		case strings.Contains(out, "blue"):
+			return "inactive"
+		}
+		return "neither(" + out + ")"
+	}
+
+	r.Chk("sidebar focused: active", styleFor(side.Pane) == "active")
+	r.Chk("bar-adjacent content pane: active", styleFor(bottom) == "active")
+	got := styleFor(top)
+	r.Chk("pane at the far end of the divider: inactive", got == "inactive")
+	if got != "inactive" {
+		t.Logf("  top content pane rendered %s, want inactive", got)
+	}
+
+	r.T("kill-pane", "-t", bottom)
+	sleep(400)
+	r.D("toggle", r.CL)
+	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
+}
+
 // TestStatusPadBorderNotAdjacent: the glyph only continues the border when the
 // padded row actually touches the pane area. status-left lives on
 // status-format[0], and with the bar at the TOP a second status row lands

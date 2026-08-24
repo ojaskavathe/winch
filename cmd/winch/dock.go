@@ -1025,6 +1025,28 @@ func (d *daemon) leaveLayout(wid string, exact string, dockedLayout string, dirt
 const padFlush = "#{||:#{==:#{status-position},bottom}," +
 	"#{||:#{==:#{status},on},#{==:#{status},1}}}"
 
+// padActive decides which of the two border styles the pad's glyph wears, by
+// reproducing tmux's own rule for that one cell: a border segment is active
+// when it touches the active pane. In a status format the context pane IS the
+// active one, so its geometry answers it directly.
+//
+// Touching means ending in the column left of the border (the sidebar) or
+// starting in the column right of it. That alone is not enough — a content
+// column split into stacked panes gives the divider two segments, and this
+// cell continues only the one at the end where the status bar is: the bottom
+// row when the bar is below, the top row when it is above.
+//
+// Geometry over pane ids on purpose. The sidebar's id is known, but the pane
+// on the other side of the border changes with every split and resize, and
+// the daemon would have to rewrite the pad to keep up.
+func padActive(width int) string {
+	touches := fmt.Sprintf("#{||:#{==:#{pane_right},%d},#{==:#{pane_left},%d}}", width-1, width+1)
+	atEnd := "#{?#{==:#{status-position},bottom}," +
+		"#{==:#{pane_bottom},#{e|-:#{window_height},1}}," +
+		"#{==:#{pane_top},0}}"
+	return "#{&&:" + touches + "," + atEnd + "}"
+}
+
 // dockSessionCmds marks a session as docked: the bind-routing flag M-h/M-l
 // check, plus the status pad that shifts the status line past the sidebar.
 func dockSessionCmds(sid string, width int) []string {
@@ -1043,13 +1065,14 @@ func dockSessionCmds(sid string, width int) []string {
 	// sidebar ground, the pad and status-style's bg are all #181825, so the
 	// bar otherwise just runs across the top of the sidebar.
 	//
-	// pane-active-border-style, not pane-border-style: tmux colours a border
-	// segment active when it touches the active pane, and this one touches
-	// both the sidebar and the leftmost content pane. It is inactive only
-	// while focus sits on a right-hand split.
+	// The bg is forced back after the border style because tmux's stock
+	// pane-border-style is the literal `default`, which resets bg as well and
+	// would drop this cell onto the statusline's background.
 	pad := fmt.Sprintf("#[bg=%s,fg=%s]", padBG, padBG) + strings.Repeat(" ", width) +
-		"#[#{E:pane-active-border-style}]" +
-		"#{?" + padFlush + "," + borderGlyph(uiBorderLines) + ", }" +
+		"#{?" + padFlush + "," +
+		"#{?" + padActive(width) + ",#[#{E:pane-active-border-style}],#[#{E:pane-border-style}]}" +
+		"#[bg=" + padBG + "]" + borderGlyph(uiBorderLines) +
+		", }" +
 		"#[default]"
 	return []string{
 		"set-option -t " + q(sid) + " @winch_docked 1",
