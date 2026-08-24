@@ -14,6 +14,8 @@ import (
 
 type screen struct {
 	grid     [][]rune
+	fg       [][]string // foreground SGR parameters in force when the cell was written
+	sgrFG    string     // current foreground, "" for default
 	row, col int
 	rows     int
 	cols     int
@@ -22,13 +24,40 @@ type screen struct {
 
 func newScreen(rows, cols int) *screen {
 	g := make([][]rune, rows)
+	f := make([][]string, rows)
 	for y := range g {
 		g[y] = make([]rune, cols)
+		f[y] = make([]string, cols)
 		for x := range g[y] {
 			g[y][x] = ' '
 		}
 	}
-	return &screen{grid: g, row: 1, col: 1, rows: rows, cols: cols}
+	return &screen{grid: g, fg: f, row: 1, col: 1, rows: rows, cols: cols}
+}
+
+// setSGR tracks just the foreground, which is all a border is. Enough to ask
+// whether two cells were painted the same colour — the question "does this
+// glyph match the border it continues" reduces to exactly that, and no amount
+// of comparing runes can answer it.
+func (s *screen) setSGR(params string) {
+	if params == "" || params == "0" {
+		s.sgrFG = ""
+		return
+	}
+	f := strings.Split(params, ";")
+	for i := 0; i < len(f); i++ {
+		switch {
+		case f[i] == "0":
+			s.sgrFG = ""
+		case f[i] == "39":
+			s.sgrFG = ""
+		case f[i] == "38" && i+1 < len(f):
+			s.sgrFG = strings.Join(f[i:], ";") // truecolor/256 run to the end
+			return
+		case len(f[i]) == 2 && f[i][0] == '3', len(f[i]) == 2 && f[i][0] == '9':
+			s.sgrFG = f[i]
+		}
+	}
 }
 
 // colText is the text in the first w columns below the status row — the
@@ -156,6 +185,8 @@ func (s *screen) write(chunk []byte) {
 							s.grid[s.row-1][x-1] = ' '
 						}
 					}
+				case "m":
+					s.setSGR(p)
 				}
 				i += len(m[0])
 			case ']':
@@ -192,6 +223,7 @@ func (s *screen) write(chunk []byte) {
 		n := len(string(ru))
 		if s.row >= 1 && s.row <= s.rows && s.col >= 1 && s.col <= s.cols {
 			s.grid[s.row-1][s.col-1] = ru
+			s.fg[s.row-1][s.col-1] = s.sgrFG
 		}
 		s.col++
 		i += n

@@ -162,12 +162,19 @@ func TestStatusPadBorderStyle(t *testing.T) {
 		return "neither(" + out + ")"
 	}
 
+	// tmux gives this cell to the pane on its LEFT (see padActive): focus on
+	// the sidebar lights it, focus anywhere in the content column does not,
+	// wherever in that column the focus happens to be.
 	r.Chk("sidebar focused: active", styleFor(side.Pane) == "active")
-	r.Chk("bar-adjacent content pane: active", styleFor(bottom) == "active")
-	got := styleFor(top)
-	r.Chk("pane at the far end of the divider: inactive", got == "inactive")
-	if got != "inactive" {
-		t.Logf("  top content pane rendered %s, want inactive", got)
+	for _, c := range []struct{ name, pane string }{
+		{"bar-adjacent content pane", bottom},
+		{"far-end content pane", top},
+	} {
+		got := styleFor(c.pane)
+		r.Chk(c.name+": inactive", got == "inactive")
+		if got != "inactive" {
+			t.Logf("  %s rendered %s, want inactive", c.name, got)
+		}
 	}
 
 	r.T("kill-pane", "-t", bottom)

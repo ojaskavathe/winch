@@ -1090,26 +1090,23 @@ const padFlush = "#{||:#{==:#{status-position},bottom}," +
 // is briefly down to one pane. Blank columns hid all of that. A glyph does not.
 const padBordered = "#{&&:#{!=:#{window_panes},1},#{==:#{window_zoomed_flag},0}}"
 
-// padActive decides which of the two border styles the pad's glyph wears, by
-// reproducing tmux's own rule for that one cell: a border segment is active
-// when it touches the active pane. In a status format the context pane IS the
-// active one, so its geometry answers it directly.
+// padActive decides which of the two border styles the pad's glyph wears. In a
+// status format the context pane IS the active one, so its geometry answers
+// the question directly — the only difficulty is knowing what the question is.
 //
-// Touching means ending in the column left of the border (the sidebar) or
-// starting in the column right of it. That alone is not enough — a content
-// column split into stacked panes gives the divider two segments, and this
-// cell continues only the one at the end where the status bar is: the bottom
-// row when the bar is below, the top row when it is above.
+// MEASURED, not reasoned about. The obvious rule, "a border is active when it
+// touches the active pane", is wrong for this cell: with a two-pane window and
+// the RIGHT pane focused, tmux paints the divider's top cell inactive even
+// though the active pane starts in the very next column. It follows the pane
+// on its LEFT — the sidebar. Believing the obvious rule instead put a bright
+// glyph above a dim border after every commit, which is when focus moves off
+// the sidebar, i.e. almost always.
 //
-// Geometry over pane ids on purpose. The sidebar's id is known, but the pane
-// on the other side of the border changes with every split and resize, and
-// the daemon would have to rewrite the pad to keep up.
+// So: active exactly when the active pane IS the sidebar, identified by
+// geometry rather than id — the sidebar's id is known, but wiring it into the
+// format would mean rewriting the pad every time the sidebar is respawned.
 func padActive(width int) string {
-	touches := fmt.Sprintf("#{||:#{==:#{pane_right},%d},#{==:#{pane_left},%d}}", width-1, width+1)
-	atEnd := "#{?#{==:#{status-position},bottom}," +
-		"#{==:#{pane_bottom},#{e|-:#{window_height},1}}," +
-		"#{==:#{pane_top},0}}"
-	return "#{&&:" + touches + "," + atEnd + "}"
+	return fmt.Sprintf("#{&&:#{==:#{pane_left},0},#{==:#{pane_right},%d}}", width-1)
 }
 
 // dockSessionCmds marks a session as docked: the bind-routing flag M-h/M-l
@@ -1169,17 +1166,35 @@ func padPrefix(width, row int) string {
 // multi-row bar at the top no row gets a glyph, which is honest rather than
 // pointing one at a row of text.
 //
-// The bg is forced back after the border style because tmux's stock
-// pane-border-style is the literal `default`, which resets bg as well and
-// would drop this cell onto the statusline's background.
+// The bg is forced back after the border style because a style can reset it,
+// and this cell belongs to the pad's ground either way.
 func padCell(width, row int, padBG string) string {
 	if row != 0 {
 		return " "
 	}
 	return "#{?#{&&:" + padFlush + "," + padBordered + "}," +
-		"#{?" + padActive(width) + ",#[#{E:pane-active-border-style}],#[#{E:pane-border-style}]}" +
+		"#{?" + padActive(width) + "," + borderStyle("pane-active-border-style") +
+		"," + borderStyle("pane-border-style") + "}" +
 		"#[bg=" + padBG + "]" + borderGlyph(uiBorderLines) +
 		", }"
+}
+
+// borderStyle emits the style tmux paints a border segment in — with one
+// rewrite that is the whole reason this function exists.
+//
+// tmux's stock pane-border-style is the literal `default`, and `default`
+// inside a STATUS line does not mean what it means on a border: it resolves to
+// status-style, the BAR's own colours (stock: fg=black). So applying the
+// option verbatim painted the glyph in the statusbar's foreground, one row
+// above a border drawn in the terminal's — dark on dark, and on the default
+// theme indistinguishable from no glyph at all.
+//
+// fg=terminal (tmux >= 3.4) is the terminal's own foreground, which is exactly
+// what a `default` border is drawn with. An option holding a real colour, or a
+// format that computes one, is passed through untouched.
+func borderStyle(opt string) string {
+	unset := "#{||:#{==:#{" + opt + "},default},#{==:#{" + opt + "},}}"
+	return "#[#{?" + unset + ",fg=terminal,#{E:" + opt + "}}]"
 }
 
 // statusPadCmds installs the pad by WRAPPING the session's own status-format,
