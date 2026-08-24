@@ -32,6 +32,11 @@ type previewState struct {
 	lastCapture  time.Time
 	gated        bool // gate currently holding (logs the idle EDGE, not every tick)
 
+	// warm: per-window record of what the CURRENT TUI already has cached,
+	// so a prefetch for unchanged content ships a restamp instead of a
+	// full frame. Lives and dies with the delta lineage (reset()).
+	warm map[string]warmState
+
 	// The live stream: while billboards are showing, the target is
 	// re-captured on this ticker (10fps) so previews stay live — scrolling
 	// logs, agent output. Frames are dropped when content hasn't changed,
@@ -43,10 +48,29 @@ type previewState struct {
 	tickC  <-chan time.Time
 }
 
+// warmState is what was last shipped to the current TUI for one window: the
+// prefetch gate's memory. Cleared with the delta lineage, never outliving the
+// TUI generation it describes.
+type warmState struct {
+	rects    string
+	activity int64
+	at       time.Time
+}
+
+// markWarm records that wid's current content is now in the client's cache.
+func (pv *previewState) markWarm(wid, rects string, activity int64) {
+	if pv.warm == nil {
+		pv.warm = map[string]warmState{}
+	}
+	pv.warm[wid] = warmState{rects: rects, activity: activity, at: time.Now()}
+}
+
 // reset forgets the delta and gate state, so the next preview captures and
-// ships a full frame unconditionally (scrub start, target teardown).
+// ships a full frame unconditionally (scrub start, target teardown). The warm
+// map goes with it: it describes a client cache that is about to be gone.
 func (pv *previewState) reset() {
 	pv.lastPanes, pv.lastRects, pv.lastActivity = nil, "", 0
+	pv.warm = nil
 }
 
 // frameBytes marshals the cached target grid as a full frame, for replaying
@@ -424,6 +448,31 @@ func (d *daemon) preview(ctl *control, wid string, prefetch, stream bool) error 
 		d.pv.gated = true
 		return nil
 	}
+	// Same gate for PREFETCHES, which are the other half of the capture bill:
+	// every settled keystroke warms both neighbours, and scrubbing back and
+	// forth re-captured, re-selfContained and re-marshalled ~77KB per window
+	// per pass for content that had not changed a byte.
+	//
+	// The TUI's cache ages out after frameTTL, so simply not sending would
+	// throw away the instant paint the prefetch exists to buy. Instead send a
+	// FRESH marker — "what you already hold for this window is still current,
+	// restamp it" — which is the same guarantee in ~60 bytes.
+	//
+	// Keyed on what was last SHIPPED to the current TUI generation, so an
+	// evicted cache can only cost a missed instant paint, never wrong
+	// content: pv.reset() clears the map wherever the delta lineage is
+	// dropped, and a TUI that gets a marker for a window it doesn't hold
+	// ignores it and waits for the real preview.
+	if prefetch {
+		if wm, ok := d.pv.warm[wid]; ok && wm.rects == rects && wm.activity == activity &&
+			wm.at.Unix() >= activity+1 {
+			if bench {
+				log.Printf("bench gate prefetch win=%s", wid)
+			}
+			d.h.sendRole("list", marshalLine(frameMsg{Type: "frame", Window: wid, Fresh: true}))
+			return nil
+		}
+	}
 	minLeft := panes[0].Left
 	for _, p := range panes {
 		if p.Left < minLeft {
@@ -461,6 +510,7 @@ func (d *daemon) preview(ctl *control, wid string, prefetch, stream bool) error 
 	}
 	if prefetch {
 		d.h.sendRole("list", marshalLine(frameMsg{Type: "frame", Window: wid, Panes: panes}))
+		d.pv.markWarm(wid, rects, activity)
 		return nil
 	}
 	d.pv.target = wid

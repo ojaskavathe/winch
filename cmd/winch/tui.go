@@ -791,6 +791,18 @@ func cmdTui(tmuxSock, winchSock string) {
 				// is cached either way — the key batch paints it if the
 				// target still matches, the stream re-covers it otherwise.
 				quiet := len(keys) == 0 && !shrinkExpected
+				if m.Fresh {
+					// The daemon skipped a prefetch because this window has
+					// not changed since we were last given it. Restamp so the
+					// cache doesn't age out of frameTTL and lose the instant
+					// paint the prefetch was for. Unknown window: ignore —
+					// the real preview will bring content when we land there.
+					if prev, ok := frames[m.Window]; ok {
+						prev.at = time.Now()
+						frames[m.Window] = prev
+					}
+					break
+				}
 				if m.Delta {
 					// Row delta against the cache at Base. Patch copies every
 					// touched Lines slice — the painted state may share lines

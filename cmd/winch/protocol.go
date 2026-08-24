@@ -103,6 +103,10 @@ type frameMsg struct {
 	Gen    int         `json:"gen,omitempty"`   // generation of this frame
 	Delta  bool        `json:"delta,omitempty"` // Panes carry only changed rows
 	Base   int         `json:"base,omitempty"`  // delta applies to the cache at this gen
+	// Fresh answers a prefetch whose window has not changed since the client
+	// was last given it: no Panes, just "your cache is still current, restamp
+	// it". A client that no longer holds the window ignores it.
+	Fresh bool `json:"fresh,omitempty"`
 }
 
 type framePane struct {
@@ -142,6 +146,7 @@ type wireMsg struct {
 	Gen        int         `json:"gen"`
 	Delta      bool        `json:"delta"`
 	Base       int         `json:"base"`
+	Fresh      bool        `json:"fresh"`
 	OK         *bool       `json:"ok"`
 	Err        string      `json:"err"`
 }
