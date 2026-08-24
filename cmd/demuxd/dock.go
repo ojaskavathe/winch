@@ -244,6 +244,28 @@ func (d *daemon) sweepDockedState(ctl *control) {
 	}
 }
 
+// sweepScrubStatus removes scrub status-format overrides a previous daemon
+// left behind by dying mid-scrub — the saved original lived only in its
+// memory, so the bar stays pinned to whatever session the scrub was pointing
+// at, for every client that ever attaches to it. Deliberately NOT keyed on
+// @demux_docked: sweepDockedState clears that flag on the first restart, and
+// an override that outlived it would then be unreachable forever. A session
+// unset falls back to the global format, which is the pad-free truth.
+func (d *daemon) sweepScrubStatus(ctl *control) {
+	sids, err := ctl.run("list-sessions -F " + f("#{session_id}"))
+	if err != nil {
+		return
+	}
+	for _, sid := range sids {
+		cur, err := ctl.run("show-options -t " + q(sid) + " status-format")
+		if err != nil || !strings.Contains(strings.Join(cur, "\n"), scrubFmtMark) {
+			continue
+		}
+		_, _ = ctl.run("set-option -uq -t " + q(sid) + " status-format")
+		log.Printf("swept leaked scrub status-format on %s", sid)
+	}
+}
+
 // sweepSpacers kills spacer panes a previous daemon left behind (it died or
 // was killed while docked) — matched by their distinctive start command.
 func (d *daemon) sweepSpacers(ctl *control) {
@@ -466,6 +488,12 @@ func (d *daemon) dockOpen(ctl *control, client string) error {
 // re-expanded in that context so #S names the target session. The theme's
 // own window-status formats and styles are referenced, never copied, so any
 // theme renders itself.
+// scrubFmtMark identifies a status-format[0] THIS daemon wrote. The filtered
+// #{S:} loop is the whole trick and nothing a theme emits looks like it, so
+// a sweep can recognise a leaked override without touching a session-level
+// format the user set themselves. TestScrubFmtMarked pins the tie.
+const scrubFmtMark = "#{S:#{?#{==:#{session_id},$"
+
 func scrubStatusFormat(sid, wid string) string {
 	curWin := "#{==:#{window_id}," + wid + "}"
 	entry := "#{?" + curWin +

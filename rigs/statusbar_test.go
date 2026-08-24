@@ -33,3 +33,36 @@ func TestScrubStatus(t *testing.T) {
 	rendered = r.T("display-message", "-p", "-t", "work:", "#{T:status-format[0]}")
 	r.Chk("status back to the origin's windows", strings.Contains(rendered, "beta"))
 }
+
+// TestScrubStatusSurvivesCrash: the restore lives in daemon memory, so a
+// daemon killed mid-scrub (crash, or a deploy's pkill) leaves the origin
+// session's bar pinned to the scrub target — permanently, for every client
+// that attaches, and tmux's own session switcher cannot shake it. The next
+// daemon must sweep it.
+func TestScrubStatusSurvivesCrash(t *testing.T) {
+	r := New(t)
+
+	r.D("toggle", r.CL) // dock on beta (work session)
+	sleep(800)
+	sp := r.Side().Pane
+	r.SendKeys(sp, "k", "k", "k") // cross-session scrub onto play:ptwo
+	sleep(900)
+
+	pt := r.T("display-message", "-p", "-t", "play:ptwo", "#{window_id}")
+	over, _ := r.TQ("show-options", "-t", "work", "status-format")
+	r.Chk("override installed before the crash", strings.Contains(over, pt))
+
+	r.KillDaemon() // mid-scrub: nothing restores anything
+
+	over, _ = r.TQ("show-options", "-t", "work", "status-format")
+	r.Chk("override outlives the daemon", strings.Contains(over, pt))
+
+	r.D("ls") // respawn: the startup sweep runs
+	r.await(3000, "override swept", func() bool {
+		o, _ := r.TQ("show-options", "-t", "work", "status-format")
+		return strings.TrimSpace(o) == ""
+	})
+	rendered := r.T("display-message", "-p", "-t", "work:", "#{T:status-format[0]}")
+	r.Chk("bar describes the session it belongs to", strings.Contains(rendered, "beta"))
+	r.Chk("target's windows gone from the bar", !strings.Contains(rendered, "ptwo"))
+}

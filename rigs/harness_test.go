@@ -186,6 +186,17 @@ func envSansTmux() []string {
 	return out
 }
 
+// KillDaemon kills the daemon (and the TUI it spawned) the way a crash or a
+// deploy's pkill does — no teardown, no restore. The next D() respawns it.
+// Matched by socket path, exactly as teardown does.
+func (r *Rig) KillDaemon() {
+	r.t.Helper()
+	exec.Command("pkill", "-f", tmuxDir+"/"+r.L).Run()
+	r.await(3000, "daemon gone", func() bool {
+		return exec.Command("pgrep", "-f", tmuxDir+"/"+r.L).Run() != nil
+	})
+}
+
 // T runs a tmux command against this rig's server; fatal on error.
 func (r *Rig) T(args ...string) string {
 	r.t.Helper()

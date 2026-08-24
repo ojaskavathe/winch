@@ -173,6 +173,7 @@ func runDaemon(tmuxSock, demuxSock string) {
 		d.armDetect(w)
 		d.sweepSpacers(ctl)
 		d.sweepDockedState(ctl)
+		d.sweepScrubStatus(ctl)
 		if ln == nil {
 			// Bind only now, with a populated world: a subscriber must never
 			// see the socket before there is a truthful snapshot behind it
