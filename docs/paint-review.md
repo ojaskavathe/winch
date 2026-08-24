@@ -97,7 +97,14 @@ for itself, so one settled key batch that also receives a diff and a frame
 paints three times.
 
 **Fix:** handlers set dirty flags; one render pass runs at the bottom of the
-event-loop iteration. This subsumes F3 and is the precondition for §3.
+event-loop iteration. This is the precondition for §3.
+
+**Status:** the *cost* half is handled by F3's output cache — a duplicate
+paint now costs a string compare rather than a write. What remains is the
+*correctness* half: 16 call sites are still 16 places that can paint from a
+half-known world, which is what §3b is about. The loop is one `select` per
+iteration, so the render pass belongs immediately after it closes
+(tui.go:1096).
 
 ### F5 — prefetch frames are always full, and often never painted
 
@@ -209,7 +216,7 @@ artifact frame — `blankStripFrames` already measures exactly that.
 |---|---|---|---|
 | 1 | ~~F1 + F2~~ **done** (d51ec46) — measured 88.0 KB → 43.3 KB worst case, ~0.5 KB when content mostly matches; every scrub step now diffs. `rigs/paintcost_test.go` pins it | | |
 | 2 | ~~3a: retire the handoff~~ **done** (eeed28c) — −219 lines; commit is a swap, sidebar process lives for the whole dock. `rigs/scrubexit_test.go` TestCrossWindowCommit pins it | | |
-| 3 | F4 + F3: single render pass, output cache | −38% list paints, −50% paints per key | low |
+| 3 | ~~F3~~ **done** (34848f4) — output cache on both painters; a paint that would change nothing costs a string compare. F4's single render pass is still open (see below) | | |
 | 4 | F5: delta prefetches | ~halves frame bytes on the wire | low |
 | 5 | 3b: mechanical I1/I2 | stops the bug class returning | medium, refactor |
 | 6 | F6: batch `setWidth`, pipeline `fetchWorld`, stop timer churn | tidiness; daemon is not hot | low |
