@@ -30,24 +30,11 @@
           ];
         };
 
-        # The original sh-spike sidebar launcher, superseded by the Go daemon
-        # and kept only so nothing that still calls it breaks. Nothing in dots
-        # binds it any more — a candidate for deletion along with sidebar.sh
-        # and frame.conf.
-        winch-sh = pkgs.writeShellApplication {
-          name = "winch-sh";
-          runtimeInputs = [ pkgs.tmux ];
-          text = builtins.replaceStrings [ "@frameconf@" ] [ "${./frame.conf}" ] (
-            builtins.readFile ./sidebar.sh
-          );
-        };
-
         default = winch;
       });
 
       overlays.default = final: prev: {
         winch = self.packages.${prev.stdenv.hostPlatform.system}.winch;
-        winch-sh = self.packages.${prev.stdenv.hostPlatform.system}.winch-sh;
       };
 
       devShells = forAll (pkgs: {
