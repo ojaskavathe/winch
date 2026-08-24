@@ -208,7 +208,7 @@ artifact frame — `blankStripFrames` already measures exactly that.
 | # | Change | Payoff | Risk |
 |---|---|---|---|
 | 1 | ~~F1 + F2~~ **done** (d51ec46) — measured 88.0 KB → 43.3 KB worst case, ~0.5 KB when content mostly matches; every scrub step now diffs. `rigs/paintcost_test.go` pins it | | |
-| 2 | 3a: retire the handoff, commit via `swap-pane` | deletes a bug class and a state machine | medium — needs the swap-from-zoom rig |
+| 2 | ~~3a: retire the handoff~~ **done** (eeed28c) — −219 lines; commit is a swap, sidebar process lives for the whole dock. `rigs/scrubexit_test.go` TestCrossWindowCommit pins it | | |
 | 3 | F4 + F3: single render pass, output cache | −38% list paints, −50% paints per key | low |
 | 4 | F5: delta prefetches | ~halves frame bytes on the wire | low |
 | 5 | 3b: mechanical I1/I2 | stops the bug class returning | medium, refactor |
