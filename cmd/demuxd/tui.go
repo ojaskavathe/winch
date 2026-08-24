@@ -501,10 +501,18 @@ func cmdTui(tmuxSock, demuxSock string) {
 		// in/out) just re-scales on the next paint — no cache invalidation.
 		scaled := scaleFrame(c.panes, avail)
 		var prev []framePane
-		if win == paintedWin && sameGeometry(paintedPanes, scaled) {
+		// Diff against what is ON SCREEN, not against "the same window's
+		// last frame". The screen does not care where content came from, so
+		// a scrub step to a same-shaped window is a line diff like any
+		// other; keying this on window identity made the hot path — moving
+		// the selection — take the full-repaint branch by definition.
+		if len(paintedPanes) > 0 && sameRects(paintedPanes, scaled) {
 			prev = paintedPanes
 		}
-		paintFrame(scaled, prev, cp, paintedCurPane)
+		// Borders carry the active pane's color, and they live in the gaps
+		// no pane writes — so a diffed paint still has to redraw them when
+		// the active pane changed.
+		paintFrame(scaled, prev, cp, paintedCurPane, prev == nil || !sameActive(prev, scaled))
 		paintedWin, paintedGen, paintedPanes, paintedCurPane = win, c.gen, scaled, cp
 	}
 	// clampSel keeps the selection inside the list and off chrome — a
@@ -553,7 +561,10 @@ func cmdTui(tmuxSock, demuxSock string) {
 		rows = st.rows(winPick)
 		clampSel()
 		paintList(rows, sel)
-		paintedWin, paintedGen = "", -1 // size/world may have shifted regions
+		// Size/world may have shifted the regions: the screen no longer
+		// holds what we last painted, so the diff baseline goes too (the
+		// canvas diff keys on geometry alone now, not on window identity).
+		paintedWin, paintedGen, paintedPanes = "", -1, nil
 		paintFrameFor(target())
 	}
 	// shrinkExpected: a commit/close was sent from wide mode, so the pane is
@@ -1651,17 +1662,37 @@ func agentGlyph(state string) (string, string) {
 	return "", ""
 }
 
-// sameGeometry reports whether two frames tile identically with the same
-// active pane — the precondition for line-level diff painting (an active
-// change recolors borders, so it takes the full path).
-func sameGeometry(a, b []framePane) bool {
+// sameRects reports whether two frames tile identically — the precondition
+// for line-level diff painting, since every cell one frame writes the other
+// writes too.
+//
+// Deliberately NOT including Active: which pane is active only decides the
+// border color, and folding it in here forced a full repaint on the single
+// most common scrub step. Billboarding the docked window yields Active=false
+// for its remaining pane (the active one is the sidebar, filtered out of its
+// own frame) while any other window yields true, so identical single-pane
+// layouts differed by that flag alone and repainted ~44KB instead of a diff.
+func sameRects(a, b []framePane) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for i := range a {
 		if a[i].Left != b[i].Left || a[i].Top != b[i].Top ||
-			a[i].Width != b[i].Width || a[i].Height != b[i].Height ||
-			a[i].Active != b[i].Active {
+			a[i].Width != b[i].Width || a[i].Height != b[i].Height {
+			return false
+		}
+	}
+	return true
+}
+
+// sameActive reports whether the same pane is active in both frames; when it
+// is not, the borders must be recolored even if the diff covers the content.
+func sameActive(a, b []framePane) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Active != b[i].Active {
 			return false
 		}
 	}
@@ -1774,7 +1805,64 @@ func cursorIdx(frame []framePane, pane string) int {
 	return active
 }
 
-func paintFrame(frame, prev []framePane, curPane, prevCurPane string) {
+// geoSig is a compact rendering of a frame's pane rectangles: whether two
+// frames share geometry decides whether a paint can diff, so when a paint is
+// unexpectedly full this is the first thing to look at.
+func geoSig(frame []framePane) string {
+	var b strings.Builder
+	for i, p := range frame {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, "%d+%dx%dx%d/%d", p.Left, p.Top, p.Width, p.Height, len(p.Lines))
+		if p.Active {
+			b.WriteByte('*')
+		}
+	}
+	return b.String()
+}
+
+// paneRows is how many rows of a pane the paint loop actually writes: past
+// its captured lines the rectangle is not covered, so those cells still need
+// erasing on a layout change.
+func paneRows(p framePane) int {
+	if n := len(p.Lines); n < p.Height {
+		return n
+	}
+	return p.Height
+}
+
+// uncovered returns the column spans of region row y that no pane will
+// write — the only cells a full repaint has to blank.
+func uncovered(frame []framePane, y, avail int) [][2]int {
+	var cov [][2]int
+	for _, p := range frame {
+		if y < p.Top || y >= p.Top+paneRows(p) {
+			continue
+		}
+		l, r := max(p.Left, 0), min(p.Left+p.Width, avail)
+		if r > l {
+			cov = append(cov, [2]int{l, r})
+		}
+	}
+	sort.Slice(cov, func(i, j int) bool { return cov[i][0] < cov[j][0] })
+	var out [][2]int
+	x := 0
+	for _, c := range cov {
+		if c[0] > x {
+			out = append(out, [2]int{x, c[0]})
+		}
+		if c[1] > x {
+			x = c[1]
+		}
+	}
+	if x < avail {
+		out = append(out, [2]int{x, avail})
+	}
+	return out
+}
+
+func paintFrame(frame, prev []framePane, curPane, prevCurPane string, borders bool) {
 	start := time.Now()
 	ci := cursorIdx(frame, curPane)
 	pci := -1
@@ -1791,9 +1879,16 @@ func paintFrame(frame, prev []framePane, curPane, prevCurPane string) {
 	b.WriteString("\033[?2026h\033[0m")
 	changed := 0
 	if prev == nil {
-		blank := strings.Repeat(" ", avail)
-		for y := 1; y <= height; y++ {
-			fmt.Fprintf(&b, "\033[%d;%dH%s", y, offX+1, blank)
+		// Erase only the cells the incoming layout will NOT write. Panes
+		// tile the region, so that is usually just the border columns.
+		// Blanking the whole region first cost 43.8KB of spaces at 480x96
+		// — 57% of a measured full paint — and every byte of it was
+		// overwritten by pane content microseconds later.
+		wide := strings.Repeat(" ", avail)
+		for y := 0; y < height; y++ {
+			for _, u := range uncovered(frame, y, avail) {
+				fmt.Fprintf(&b, "\033[%d;%dH%s", y+1, offX+u[0]+1, wide[:u[1]-u[0]])
+			}
 		}
 	}
 	for pi, p := range frame {
@@ -1864,13 +1959,13 @@ func paintFrame(frame, prev []framePane, curPane, prevCurPane string) {
 				p.Top+1+p.CursorY, offX+p.Left+1+p.CursorX, ch)
 		}
 	}
-	if prev == nil {
+	if borders {
 		// Borders last: scaled-frame rounding can collapse a gap onto a
 		// pane's first column, and the border should win that cell.
 		paintBorders(&b, frame, cols, height, offX)
 	}
 	b.WriteString("\033[?2026l")
 	os.Stdout.WriteString(b.String())
-	benchf("paint_frame dur_us=%d bytes=%d panes=%d diff=%v changed_lines=%d",
-		time.Since(start).Microseconds(), b.Len(), len(frame), prev != nil, changed)
+	benchf("paint_frame dur_us=%d bytes=%d panes=%d diff=%v changed_lines=%d geo=%s",
+		time.Since(start).Microseconds(), b.Len(), len(frame), prev != nil, changed, geoSig(frame))
 }
