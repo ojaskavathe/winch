@@ -486,8 +486,9 @@ func cmdTui(tmuxSock, demuxSock string) {
 		paintFrame(scaled, prev, cp, paintedCurPane)
 		paintedWin, paintedGen, paintedPanes, paintedCurPane = win, c.gen, scaled, cp
 	}
-	paintAll := func() {
-		rows = st.rows(winPick)
+	// clampSel keeps the selection inside the list and off chrome — a
+	// rebuild can land the raw index on a heading, gap or rule.
+	clampSel := func() {
 		if sel >= len(rows) {
 			sel = len(rows) - 1
 		}
@@ -495,11 +496,15 @@ func cmdTui(tmuxSock, demuxSock string) {
 			sel = 0
 		}
 		for sel < len(rows)-1 && rows[sel].inert() {
-			sel++ // a rebuild can land the raw index on chrome
+			sel++
 		}
 		for sel > 0 && rows[sel].inert() {
 			sel-- // bottom edge was chrome: back up into the list
 		}
+	}
+	paintAll := func() {
+		rows = st.rows(winPick)
+		clampSel()
 		paintList(rows, sel)
 		paintedWin, paintedGen = "", -1 // size/world may have shifted regions
 		paintFrameFor(target())
@@ -514,6 +519,14 @@ func cmdTui(tmuxSock, demuxSock string) {
 	// clear as its own sync-wrapped frame (probe-verified), which blanks the
 	// billboard visibly before the swap.
 	shrinkExpected := false
+	// The daemon always replays a select to a freshly spawned sidebar
+	// (dockOpen, handoff, and the scrub-end respawn all do). Painting the
+	// snapshot before it arrives shows the selection on row one for a few
+	// ms and then jumps it — one visible flick per respawn, i.e. on every
+	// Enter that lands back on the docked window. So the first list paint
+	// waits for that select, with a deadline in case one never comes.
+	selPending := true
+	selDeadline := time.After(150 * time.Millisecond)
 	// Browse mode: cached frame paints locally NOW; the daemon refreshes it
 	// (and streams it live) right behind, neighbors prefetched warm. Docked
 	// (narrow) mode: the same preview cmd IS the scrub — the daemon moves
@@ -673,8 +686,10 @@ func cmdTui(tmuxSock, demuxSock string) {
 					sel = i
 					break
 				}
-				if sel >= len(rows) {
-					sel = len(rows) - 1
+				clampSel()
+				if selPending {
+					// First world, selection still unknown: hold the paint.
+					break
 				}
 				paintList(rows, sel)
 			case "width":
@@ -707,6 +722,8 @@ func cmdTui(tmuxSock, demuxSock string) {
 				if w, ok := st.windows[m.Window]; ok {
 					curSess = w.SessionID
 				}
+				selPending = false
+				clampSel()
 				tlogf("select win=%s found=%v sel=%d rows=%d", m.Window, found, sel, len(rows))
 				paintList(rows, sel)
 				if !shrinkExpected {
@@ -996,6 +1013,14 @@ func cmdTui(tmuxSock, demuxSock string) {
 					paintFrameFor(target())
 					requestFrames()
 				}
+			}
+		case <-selDeadline:
+			// No select arrived (a TUI spawned outside the docked flow):
+			// paint what we have rather than sitting blank.
+			if selPending {
+				selPending = false
+				tlogf("select deadline: painting without one")
+				paintAll()
 			}
 		case <-winch:
 			shrinkExpected = false // the resize this was armed for has landed

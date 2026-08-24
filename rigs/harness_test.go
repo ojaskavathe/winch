@@ -82,6 +82,16 @@ type Rig struct {
 	recMu     sync.Mutex
 	recording bool
 	recBuf    []byte
+	recChunks []recChunk
+	recStart  time.Time
+}
+
+// recChunk is one read from the client pty, stamped with when it arrived —
+// enough to replay the stream in time and ask "what was on screen, for how
+// long", which is what a flicker actually is.
+type recChunk struct {
+	At   time.Duration
+	Data []byte
 }
 
 func New(t *testing.T) *Rig {
@@ -265,6 +275,10 @@ func (r *Rig) attachFakeClient() {
 			r.recMu.Lock()
 			if r.recording {
 				r.recBuf = append(r.recBuf, buf[:n]...)
+				r.recChunks = append(r.recChunks, recChunk{
+					At:   time.Since(r.recStart),
+					Data: append([]byte(nil), buf[:n]...),
+				})
 			}
 			r.recMu.Unlock()
 		}
@@ -278,8 +292,22 @@ func (r *Rig) attachFakeClient() {
 func (r *Rig) StartRecord() {
 	r.recMu.Lock()
 	r.recBuf = nil
+	r.recChunks = nil
+	r.recStart = time.Now()
 	r.recording = true
 	r.recMu.Unlock()
+}
+
+// StopRecordT ends the capture and returns the stream as time-stamped
+// chunks (StopRecord's flat bytes lose WHEN, and a flicker is defined by
+// how long the wrong thing stayed on screen).
+func (r *Rig) StopRecordT() []recChunk {
+	r.recMu.Lock()
+	defer r.recMu.Unlock()
+	r.recording = false
+	out := r.recChunks
+	r.recChunks, r.recBuf = nil, nil
+	return out
 }
 
 // StopRecord ends the capture and returns the raw byte stream.
