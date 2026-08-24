@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -272,6 +273,44 @@ func (d *daemon) sweepStatusFormat(ctl *control) {
 			"set-option -uq -t "+q(sid)+" @winch_win")
 		log.Printf("swept leaked winch status-format on %s", sid)
 	}
+}
+
+// sweepLegacyPad removes the status-left pad that winch installed before the
+// pad moved into status-format. Those builds kept the original in daemon
+// memory, so upgrading past them STRANDS the pad: the bar stays shifted by the
+// old sidebar width for every client that ever attaches, and nothing left in
+// the option tree explains why. Nothing else will ever clear it — the current
+// daemon has no reason to look at status-left at all.
+//
+// Recognised by shape, since those builds wrote no mark: a session-level
+// status-left whose entire visible text is spaces, at least a sidebar's worth
+// of them. That is exactly what the pad was, and not something anyone sets on
+// purpose.
+func (d *daemon) sweepLegacyPad(ctl *control) {
+	sids, err := ctl.run("list-sessions -F " + f("#{session_id}"))
+	if err != nil {
+		return
+	}
+	for _, sid := range sids {
+		// -v does not inherit, so this is the SESSION's own value or nothing
+		// — a global status-left is the user's and must survive.
+		lines, err := ctl.run("show-options -t " + q(sid) + " -v status-left")
+		if err != nil || len(lines) != 1 || !legacyPad(lines[0]) {
+			continue
+		}
+		_, _ = ctl.runSeq(
+			"set-option -uq -t "+q(sid)+" status-left",
+			"set-option -uq -t "+q(sid)+" status-left-length")
+		log.Printf("swept legacy status-left pad on %s", sid)
+	}
+}
+
+var styleSeqRe = regexp.MustCompile(`#\[[^]]*\]`)
+
+// legacyPad reports whether a status-left is one of those stranded pads.
+func legacyPad(v string) bool {
+	t := styleSeqRe.ReplaceAllString(v, "")
+	return len(t) >= minWidth && strings.TrimLeft(t, " ") == ""
 }
 
 // sweepSpacers kills spacer panes a previous daemon left behind (it died or

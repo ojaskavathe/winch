@@ -190,6 +190,7 @@ func runDaemon(tmuxSock, winchSock string) {
 		d.sweepSpacers(ctl)
 		d.sweepDockedState(ctl)
 		d.sweepStatusFormat(ctl)
+		d.sweepLegacyPad(ctl)
 		if ln == nil {
 			// Bind only now, with a populated world: a subscriber must never
 			// see the socket before there is a truthful snapshot behind it
