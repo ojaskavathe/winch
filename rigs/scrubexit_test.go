@@ -73,13 +73,17 @@ func TestScrubExitClean(t *testing.T) {
 	sleep(800)
 }
 
-// TestHandoffArrivesPainted: committing onto a DIFFERENT window hands off to
-// a freshly spawned TUI in that window, and phase 2 switches the client onto
-// it about a millisecond after its hello. The new TUI therefore has to be
-// born knowing the selection (the daemon stamps it into its first snapshot):
-// if it paints a default row first and corrects when the select arrives, the
-// correction happens in front of the user.
-func TestHandoffArrivesPainted(t *testing.T) {
+// TestCrossWindowCommit: committing onto a DIFFERENT window moves the
+// sidebar there with a geometry-free swap-pane — the same pane, the same
+// process, no second TUI. It used to hand off to a freshly spawned TUI
+// because swapping the ZOOMED sidebar rewrapped its canvas-filled grid into
+// the strip; the alternate screen makes that shrink a clip instead, and the
+// zoomed layout already paints the list in the first listW columns, so the
+// sidebar lands showing exactly the list.
+//
+// What this pins: the client ends up in the target window, the sidebar
+// process survives the move, and no presented frame shows an empty strip.
+func TestCrossWindowCommit(t *testing.T) {
 	// A live-shaped client (480x96, kitty, synchronized output): the artifact
 	// is a redraw race, so it only appears at the real screen size with real
 	// content to repaint.
@@ -96,17 +100,22 @@ func TestHandoffArrivesPainted(t *testing.T) {
 	sleep(600)
 
 	// scrub to the OTHER session and commit there
+	startWin := r.Side().Win
+	startPID := paneStartPID(r, sp)
 	scrubAway(r, sp)
 	mark := benchSize(r)
 	r.StartRecord()
 	r.SendKeys(sp, "Enter")
 	r.await(5000, "landed in the other session", func() bool {
 		s := r.Side()
-		return s.Pane != sp && s.Width == sideW
+		return s.Win != startWin && s.Width == sideW
 	})
 	sleep(900)
 	chunks := r.StopRecordT()
 
+	r.Chk("client followed the sidebar", r.ClientWin() == r.Side().Win)
+	r.Chk("the sidebar moved rather than being respawned",
+		r.Side().Pane == sp && paneStartPID(r, sp) == startPID)
 	r.Chk("arrived sidebar shows the list", strings.Contains(r.Capture(r.Side().Pane), "sessions"))
 	sels := selectionsPainted(r, mark)
 	r.Chk("arriving TUI paints its selection once", len(sels) <= 1)

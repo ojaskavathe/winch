@@ -51,12 +51,12 @@ type snapshotMsg struct {
 	// Where the selection belongs, for a sidebar that does not exist yet.
 	// A freshly spawned TUI paints the right row on its FIRST paint instead
 	// of painting a default and correcting when the select arrives — during
-	// a handoff the client switches onto that TUI within a millisecond of
-	// its hello, so a correcting repaint lands after the user can see it.
+	// the client can be looking at that TUI within a millisecond of its
+	// hello, so a correcting repaint lands after the user can see it.
 	Select     string `json:"select,omitempty"`
 	SelectPane string `json:"selectpane,omitempty"`
 	// The sidebar's current width, for the same reason: a TUI born during a
-	// handoff must lay out at the user's dragged width on its FIRST paint,
+	// TUI must lay out at the user's dragged width on its FIRST paint,
 	// not paint at the default and jump when a widthMsg follows.
 	Width int `json:"width,omitempty"`
 	world

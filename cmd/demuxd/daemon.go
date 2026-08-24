@@ -45,12 +45,6 @@ type daemon struct {
 	releaseT       *time.Timer
 	releaseC       <-chan time.Time
 
-	// handoff: a scrub commit waiting for its fresh TUI to paint before the
-	// client switches (dock.go handoffState).
-	handoff  *handoffState
-	handoffT *time.Timer
-	handoffC <-chan time.Time
-
 	// agentCycle: per-client position in the agent switcher (M-a). Rapid
 	// re-invocations cycle down the attention-sorted list; after the tap
 	// window it restarts at the top-attention agent.
@@ -251,9 +245,7 @@ func consume(d *daemon, ctl *control, w world, sig chan os.Signal) bool {
 			d.h.setWorld(w, ops, false, d.tmuxSock)
 			d.armDetect(w)
 			d.pushStatusOpt(ctl, &w)
-			if d.handoff == nil { // mid-handoff the world is ours, half-moved
-				d.checkDock(ctl, w)
-			}
+			d.checkDock(ctl, w)
 			if dur := time.Since(start); dur > 25*time.Millisecond {
 				log.Printf("relist took %s ops=%d", dur, len(ops))
 			} else if bench {
@@ -266,22 +258,20 @@ func consume(d *daemon, ctl *control, w world, sig chan os.Signal) bool {
 			// are showing (a docked zoom-scrub). Yield to queued commands —
 			// a mid-scrub tick would capture a target that's about to change
 			// anyway.
-			streaming := d.pv.target != "" && d.dock != nil && d.dock.scrubbing &&
-				d.handoff == nil
+			streaming := d.pv.target != "" && d.dock != nil && d.dock.scrubbing
 			if streaming && len(d.h.cmds) == 0 {
 				_ = d.preview(ctl, d.pv.target, false, true)
 			}
 		case <-d.det.tickC:
-			// Agent detection pass. Yields to queued commands and pauses
-			// mid-handoff (the world is ours, half-moved); a skipped tick
-			// just means the next one classifies, 300ms later.
-			if d.handoff == nil && len(d.h.cmds) == 0 {
+			// Agent detection pass. Yields to queued commands; a skipped
+			// tick just means the next one classifies, 300ms later.
+			if len(d.h.cmds) == 0 {
 				d.detectTickRun(ctl, &w)
 			}
 		case <-d.gitC:
 			// Slow git repoll (branch / ahead-behind per session). Only a
 			// change publishes; the diff is a couple of session puts.
-			if d.handoff == nil && len(d.h.cmds) == 0 && d.gitScan(&w) {
+			if len(d.h.cmds) == 0 && d.gitScan(&w) {
 				next := w
 				next.Sessions = append([]session(nil), w.Sessions...)
 				d.injectGit(&next)
@@ -291,10 +281,6 @@ func consume(d *daemon, ctl *control, w world, sig chan os.Signal) bool {
 					d.h.setWorld(w, ops, false, d.tmuxSock)
 				}
 			}
-		case <-d.handoffC:
-			d.handoffC = nil
-			log.Printf("handoff: fresh TUI never said hello, switching anyway")
-			d.handoffFinish(ctl)
 		case <-d.releaseC:
 			d.releaseC = nil
 			if len(d.pendingRelease) == 0 {

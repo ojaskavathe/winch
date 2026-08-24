@@ -115,12 +115,13 @@ func TestDockScrub(t *testing.T) {
 	}
 	r.Chk("billboard == docked reality", pos > 0 && abs(pos-mreal) <= 1)
 
-	r.Chk("commit was a handoff", r.LogHas("bench handoff finish"))
-	r.Chk("handoff go-signal was the hello, not the timer", !r.LogHas("never said hello"))
+	// A commit into another window is a geometry-free swap of the sidebar
+	// pane, not a second TUI spawned there (see TestCrossWindowCommit).
+	r.Chk("commit was a swap", r.LogHas("bench scrub .* -> .* swap=true"))
 
 	// P: escaping a billboard (vim-navigator C-l) recovers.
-	// Commits HAND OFF to a fresh TUI pane (the old one becomes the
-	// origin's spacer) — re-fetch the sidebar after every landing.
+	// The sidebar pane id survives a commit now, but re-fetch anyway: an
+	// undock/redock in between does replace it.
 	sp = r.Side().Pane
 	r.T("select-pane", "-t", sp)
 	r.SendKeys(sp, "l")

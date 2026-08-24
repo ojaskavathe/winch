@@ -63,12 +63,6 @@ func (d *daemon) handleCmd(ctl *control, env cmdEnvelope) {
 func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 	start := time.Now()
 	var err error
-	if d.handoff != nil && env.msg.Cmd != "hello-list" {
-		// A commit is mid-handoff (≤300ms): the world is half-moved, so
-		// anything else acks and drops rather than racing it.
-		d.h.send(env.sub, marshalLine(replyMsg{Type: "reply", OK: true}))
-		return
-	}
 	switch env.msg.Cmd {
 	case "toggle":
 		err = d.toggle(ctl, env.msg.Client)
@@ -153,24 +147,15 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 			}
 		}
 	case "hello-list":
-		// A fresh TUI connected. Mid-handoff this IS the go signal: it has
-		// the world, gets the target selection, paints, and the client
-		// switches onto an already-painted sidebar.
+		// A fresh TUI connected, and has already painted (it sends hello
+		// after its first paint). Its snapshot carried the selection and the
+		// width, so these are belt-and-braces for a TUI that connected
+		// before the daemon knew either.
 		if d.dockW != 0 {
-			// Non-default width: the fresh TUI's layout math must match
-			// before its first wide paint.
 			d.h.send(env.sub, marshalLine(widthMsg{Type: "width", Width: d.dockW}))
 		}
-		if d.handoff != nil {
-			// The stamp in this TUI's snapshot already carried the target,
-			// so it has painted the right row; this is belt-and-braces for
-			// a TUI that connected before the handoff was armed.
-			d.h.send(env.sub, marshalLine(selectMsg{Type: "select", Window: d.handoff.wid}))
-			d.handoffFinish(ctl)
-			break
-		}
-		// Otherwise dockOpen just spawned it; replay the selection it
-		// missed (and the current frame, when browse pre-zoomed into a scrub).
+		// dockOpen just spawned it; replay the selection it missed (and the
+		// current frame, when browse pre-zoomed into a scrub).
 		if d.dock != nil {
 			d.h.send(env.sub, marshalLine(selectMsg{Type: "select", Window: d.dock.win}))
 			if d.dock.scrubbing && d.pv.lastPanes != nil {
@@ -216,7 +201,7 @@ func (d *daemon) toggle(ctl *control, client string) error {
 					// content in front of the user instantly), THEN undock;
 					// the expand-to-full-width reflow happens behind content
 					// the user is already reading, never before it.
-					if err := d.dockMove(ctl, target, true); err != nil {
+					if err := d.dockMove(ctl, target, true, ""); err != nil {
 						return err
 					}
 					return d.dockClose(ctl, false)

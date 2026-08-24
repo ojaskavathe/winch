@@ -310,7 +310,7 @@ func (st *store) rows(winPick map[string]string) []row {
 				window: p.WindowID, pane: p.ID, agent: p.AgentState, arow: true,
 			})
 			out = append(out, row{
-				label:  who, styled: whoStyled,
+				label: who, styled: whoStyled,
 				window: p.WindowID, pane: p.ID, arow: true, cont: true,
 			})
 		}
@@ -410,11 +410,8 @@ func cmdTui(tmuxSock, demuxSock string) {
 		conn.Write(append(b, '\n'))
 	}
 	// hello is sent AFTER the first paint, not on connect — it is the
-	// handoff's go signal (router.go: hello finishes phase 2 and switches
-	// the client onto this pane), so it has to mean "I am on screen". Sent
-	// on connect it meant "I exist", and the client switched onto a sidebar
-	// that had not painted yet: an empty strip for the first frames in the
-	// arriving window.
+	// signal that this pane is ready to be looked at, so it has to mean
+	// "I am on screen" rather than "I exist".
 	helloSent := false
 	sayHello := func() {
 		if !helloSent {
@@ -425,8 +422,8 @@ func cmdTui(tmuxSock, demuxSock string) {
 
 	st := &store{}
 	sel := 0
-	esc := 0          // escape-sequence state: arrows + SGR mouse
-	var mbuf []byte   // SGR mouse params after \x1b[<
+	esc := 0           // escape-sequence state: arrows + SGR mouse
+	var mbuf []byte    // SGR mouse params after \x1b[<
 	dragging := false  // left button held on the agents divider
 	widthDrag := false // left button held on the │ width border (wide mode)
 	var rows []row
@@ -578,7 +575,7 @@ func cmdTui(tmuxSock, demuxSock string) {
 	// billboard visibly before the swap.
 	shrinkExpected := false
 	// The daemon always replays a select to a freshly spawned sidebar
-	// (dockOpen, handoff, and the scrub-end respawn all do). Painting the
+	// (dockOpen does, and so does the respawn fallback). Painting the
 	// snapshot before it arrives shows the selection on row one for a few
 	// ms and then jumps it — one visible flick per respawn, i.e. on every
 	// Enter that lands back on the docked window. So the first list paint

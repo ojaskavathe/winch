@@ -551,7 +551,7 @@ func (d *daemon) scrubStart(ctl *control, wid string) error {
 // scrubEnd stops billboard scrubbing. unzoom=true is the landed-back-home
 // path (Enter/q on the docked window): the real panes reappear exactly as
 // they were. unzoom=false is for paths that dispose of the zoom some other
-// way (a handoff hides it, an external escape already unzoomed).
+// way (the commit swap carries it out, an external escape already unzoomed).
 func (d *daemon) scrubEnd(ctl *control, unzoom bool) {
 	p := d.dock
 	if p == nil || !p.scrubbing {
@@ -607,9 +607,7 @@ func (d *daemon) scrubEnd(ctl *control, unzoom bool) {
 
 // pushSelect broadcasts the sidebar's selection AND records it, so a TUI
 // spawned afterwards is born with it (snapshotMsg.Select) instead of
-// painting a default row and correcting a beat later — during a handoff the
-// client switches onto the new TUI within a millisecond of its hello, so
-// that correction is visible.
+// painting a default row and correcting a beat later, which is visible.
 func (d *daemon) pushSelect(m selectMsg) int {
 	d.h.setSelect(m.Window, m.Pane)
 	return d.h.sendRole("list", marshalLine(m))
@@ -627,7 +625,9 @@ func (d *daemon) pushSelect(m selectMsg) int {
 // BEFORE switch-client — after it, the pad lands a frame late and the status
 // line visibly flickers. focusMain puts the keyboard in the window's own
 // pane; false keeps focus in the sidebar.
-func (d *daemon) dockMove(ctl *control, wid string, focusMain bool) error {
+// focusPane, when set and live in wid, is the pane to land on instead of the
+// window's own active pane — a billboard click commits onto the split it hit.
+func (d *daemon) dockMove(ctl *control, wid string, focusMain bool, focusPane string) error {
 	p := d.dock
 	if p == nil || wid == "" || wid == p.win {
 		return nil
@@ -703,7 +703,11 @@ func (d *daemon) dockMove(ctl *control, wid string, focusMain bool) error {
 		critical = append(critical, "switch-client -c "+q(p.client)+" -t "+q(sidN))
 	}
 	if focusMain {
-		critical = append(critical, "select-pane -t "+q(snapN.activePane))
+		focus := snapN.activePane
+		if focusPane != "" && d.paneInWindow(focusPane, wid) {
+			focus = focusPane
+		}
+		critical = append(critical, "select-pane -t "+q(focus))
 	} else {
 		// swap-pane, unlike join, does not hand the sidebar focus.
 		critical = append(critical, "select-pane -t "+q(p.pane))
@@ -729,7 +733,7 @@ func (d *daemon) dockMove(ctl *control, wid string, focusMain bool) error {
 			// retry once as a first visit — tgt is nil then, no recursion.
 			delete(p.carved, wid)
 			log.Printf("scrub swap %s failed (%v), retrying as first visit", wid, errs[0])
-			return d.dockMove(ctl, wid, focusMain)
+			return d.dockMove(ctl, wid, focusMain, focusPane)
 		}
 		// Carve path: if the batch died after the split, don't leak the spacer.
 		for _, ln := range outs[0] {
@@ -773,212 +777,17 @@ func (d *daemon) dockMove(ctl *control, wid string, focusMain bool) error {
 	return nil
 }
 
-// A scrub commit is a two-phase HANDOFF, not a pane move. Moving the zoomed
-// TUI pane into the target shrinks its canvas-filled grid 480->40 and tmux
-// REWRAPS it — a frame of garbled billboard in the sidebar strip before the
-// repaint covers it, and pre-clearing instead renders its own blank frame
-// (probe-verified; both were reported as flicker). So the sidebar pane
-// never moves: phase 1 respawns the TARGET's spacer into a fresh TUI
-// (hidden, clean grid — respawn resets the screen, probe-verified) and
-// phase 2 switches the client only after that TUI has connected and
-// painted (its hello, or a fallback timer). The old zoomed TUI is then
-// respawned into the origin's SPACER and unzoomed while hidden — same
-// roles as the old swap, zero visible artifact frames, one TUI process per
-// view.
-type handoffState struct {
-	wid         string   // target window
-	newPane     string   // fresh TUI pane in wid (the target's ex-spacer)
-	oldPane     string   // the zoomed TUI being left; becomes origin's spacer
-	critical    []string // phase 2: switch client to the target
-	restore     []string // phase 2: hide + restore the origin
-	snapN       winSnap
-	sidN        string
-	statusN     statusSave
-	resetOrigin bool // commit resets where q returns to
-}
-
-func (d *daemon) armHandoff(after time.Duration) {
-	if d.handoffT != nil {
-		d.handoffT.Stop()
-	}
-	d.handoffT = time.NewTimer(after)
-	d.handoffC = d.handoffT.C
-}
-
-// handoffTimeout: how long phase 2 waits for the fresh TUI's hello before
-// switching anyway (blank strip beats a stuck commit).
-const handoffTimeout = 300 * time.Millisecond
-
-// dockMoveStart is phase 1. Queries and sequence shapes mirror dockMove;
-// the arrival differs: respawn (or split) a TUI instead of swapping ours in.
-func (d *daemon) dockMoveStart(ctl *control, wid string, focusPane string) error {
-	p := d.dock
-	if p == nil || wid == "" || wid == p.win {
-		return nil
-	}
-	sidN := d.sessionOf(wid)
-	if sidN == "" {
-		return fmt.Errorf("scrub target %s unknown", wid)
-	}
-	tuiCmd, err := d.tuiCommand()
-	if err != nil {
-		return err
-	}
-	// Stamp the target BEFORE the new TUI exists: its first snapshot then
-	// carries the selection, so its first paint is already correct. Phase 2
-	// switches the client onto it a millisecond after its hello — anything
-	// it has to correct afterwards is a visible flick.
-	d.h.setSelect(wid, "")
-	qlines, err := ctl.runSeq(
-		snapQuery(wid),
-		"display-message -p -t "+q(p.win)+" -F "+f("#{pane_id}", "#{window_width}", "#{window_height}"))
-	if err != nil {
-		return err
-	}
-	if len(qlines) < 1 {
-		return errors.New("scrub query came back short")
-	}
-	snapN, err := parseSnap(qlines[0])
-	if err != nil {
-		return err
-	}
-	curActive, dockW, dockH := "", 0, 0
-	if len(qlines) >= 2 {
-		if pp := strings.Split(qlines[1], sep); len(pp) == 3 {
-			curActive = pp[0]
-			dockW, _ = strconv.Atoi(pp[1])
-			dockH, _ = strconv.Atoi(pp[2])
-		}
-	}
-	tgt := p.carved[wid]
-	sizeStale := false
-	newPane := ""
-	if tgt != nil && tgt.spacer != "" {
-		snapN.layout = tgt.orig
-		snapN.autoRename = tgt.autoRename
-		if _, err := ctl.runSeq("respawn-pane -k -t " + q(tgt.spacer) + " " + q(tuiCmd)); err != nil {
-			// Spacer died under us: forget the entry, retry as first visit.
-			delete(p.carved, wid)
-			log.Printf("handoff respawn %s failed (%v), retrying as first visit", wid, err)
-			return d.dockMoveStart(ctl, wid, focusPane)
-		}
-		newPane = tgt.spacer
-	} else {
-		var seq []string
-		if tW, tH := layoutDims(snapN.layout); tW > 0 && dockW > 0 && (tW != dockW || tH != dockH) {
-			sizeStale = true
-			seq = append(seq, fmt.Sprintf("resize-window -x %d -y %d -t %s", dockW, dockH, q(wid)))
-		}
-		seq = append(seq,
-			"set-option -w -t "+q(wid)+" automatic-rename off",
-			fmt.Sprintf("split-window -d -hb -f -l %d -P -F '#{pane_id}' -t %s %s",
-				d.width(), q(wid), q(tuiCmd)))
-		outs, err := ctl.runSeq(seq...)
-		if err != nil {
-			return err
-		}
-		for _, ln := range outs {
-			if strings.HasPrefix(ln, "%") {
-				newPane = ln
-				break
-			}
-		}
-		if newPane == "" {
-			return errors.New("handoff split returned no pane id")
-		}
-	}
-	var statusN statusSave
-	if sidN != p.sess {
-		statusN = d.savedStatus(ctl, sidN)
-	}
-	focus := snapN.activePane
-	if focusPane != "" && d.paneInWindow(focusPane, wid) {
-		focus = focusPane
-	}
-	critical := []string{"select-window -t " + q(wid)}
-	if sizeStale {
-		critical = append(critical, "set-option -w -t "+q(wid)+" window-size latest")
-	}
-	if sidN != p.sess {
-		critical = append(critical, dockSessionCmds(sidN, d.width())...)
-		critical = append(critical, "switch-client -c "+q(p.client)+" -t "+q(sidN))
-	}
-	critical = append(critical, "select-pane -t "+q(focus))
-	leaveFocus := p.snap.activePane
-	if curActive != "" && curActive != p.pane {
-		leaveFocus = curActive
-	}
-	// Origin cleanup, all hidden: the old TUI becomes the spacer (respawn
-	// clears its grid at full width), THEN the unzoom shrinks a clean grid
-	// — nothing to rewrap, nothing to see.
-	restore := []string{
-		"respawn-pane -k -t " + q(p.pane) + " " + q(spacerCmd),
-		"resize-pane -Z -t " + q(p.pane),
-		"select-pane -t " + q(leaveFocus),
-	}
-	if sidN != p.sess {
-		restore = append(restore, statusRestoreCmds(p.status)...)
-		restore = append(restore, "set-option -uq -t "+q(p.sess)+" @demux_docked")
-	}
-	d.handoff = &handoffState{wid: wid, newPane: newPane, oldPane: p.pane,
-		critical: critical, restore: restore, snapN: snapN, sidN: sidN, statusN: statusN}
-	d.armHandoff(handoffTimeout)
-	d.lastScrub = time.Now()
-	if bench {
-		log.Printf("bench handoff start %s -> %s new_pane=%s carved=%v", p.win, wid, newPane, tgt != nil)
-	}
-	return nil
-}
-
-// handoffFinish is phase 2: the fresh TUI said hello (or the timer fired).
-func (d *daemon) handoffFinish(ctl *control) {
-	h := d.handoff
-	if h == nil {
-		return
-	}
-	d.handoff = nil
-	if d.handoffT != nil {
-		d.handoffT.Stop()
-		d.handoffC = nil
-	}
-	p := d.dock
-	if p == nil {
-		return
-	}
-	_, errs := ctl.runPipelined(h.critical, h.restore)
-	if errs[0] != nil {
-		// The switch failed: put the target's spacer back and stay where we
-		// are — the scrub is still live.
-		log.Printf("handoff switch %s: %v", h.wid, errs[0])
-		_, _ = ctl.run("respawn-pane -k -t " + q(h.newPane) + " " + q(spacerCmd))
-		return
-	}
-	if errs[1] != nil {
-		log.Printf("handoff restore %s: %v", p.win, errs[1])
-	}
-	d.scrubEnd(ctl, false) // zoom is gone with the origin; state only
-	p.carved[p.win] = &carveState{spacer: h.oldPane, orig: p.snap.layout, autoRename: p.snap.autoRename}
-	delete(p.carved, h.wid)
-	if h.sidN != p.sess {
-		p.status = h.statusN
-	}
-	prev := p.win
-	p.pane = h.newPane
-	p.win, p.sess, p.snap = h.wid, h.sidN, h.snapN
-	if h.resetOrigin {
-		p.originSess, p.originWin = p.sess, p.win
-	}
-	d.lastScrub = time.Now()
-	d.pushSelect(selectMsg{Type: "select", Window: p.win})
-	if bench {
-		log.Printf("bench handoff finish %s -> %s", prev, p.win)
-	}
-}
-
 // commitScrub lands a billboard scrub: on the docked window itself it is a
-// free unzoom; anywhere else the sidebar HANDS OFF to a fresh TUI in the
-// target (two-phase, see handoffState). Either way the origin resets — q
-// now returns here.
+// free unzoom, anywhere else the geometry-free swap. Either way the origin
+// resets — q now returns here.
+//
+// This used to hand off to a second TUI spawned in the target, because
+// swapping the ZOOMED sidebar shrank its canvas-filled grid 480->26 and tmux
+// rewrapped it into a wall of text. The alternate screen makes that shrink a
+// CLIP instead, and the zoomed layout already paints the list in columns
+// 1..listW, so the sidebar arrives showing exactly the list. The swap needs
+// no second process, no phase-2 timer, and no window in which the client has
+// moved but the sidebar has not painted.
 func (d *daemon) commitScrub(ctl *control, wid string, focusPane string) error {
 	p := d.dock
 	if p == nil {
@@ -988,12 +797,11 @@ func (d *daemon) commitScrub(ctl *control, wid string, focusPane string) error {
 		d.scrubEnd(ctl, true)
 		return d.dockCommit(ctl, focusPane)
 	}
-	if err := d.dockMoveStart(ctl, wid, focusPane); err != nil {
+	if err := d.dockMove(ctl, wid, true, focusPane); err != nil {
 		return err
 	}
-	if d.handoff != nil {
-		d.handoff.resetOrigin = true
-	}
+	p.originSess, p.originWin = p.sess, p.win
+	d.pushSelect(selectMsg{Type: "select", Window: p.win})
 	return nil
 }
 
@@ -1027,7 +835,7 @@ func (d *daemon) dockNav(ctl *control, dir string) error {
 		step = -1
 	}
 	target := wins[(cur+step+len(wins))%len(wins)].ID
-	if err := d.dockMove(ctl, target, true); err != nil {
+	if err := d.dockMove(ctl, target, true, ""); err != nil {
 		return err
 	}
 	d.pushSelect(selectMsg{Type: "select", Window: target})
@@ -1300,7 +1108,7 @@ func (d *daemon) checkDock(ctl *control, w world) {
 	}
 	if cur != "" && cur != p.win {
 		log.Printf("dock: follow %s -> %s (unrouted switch)", p.win, cur)
-		if err := d.dockMove(ctl, cur, true); err != nil {
+		if err := d.dockMove(ctl, cur, true, ""); err != nil {
 			log.Printf("dock follow: %v", err)
 			return
 		}
