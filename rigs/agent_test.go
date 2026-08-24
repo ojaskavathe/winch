@@ -82,8 +82,8 @@ func TestAgent(t *testing.T) {
 	sep := sepRow()
 	r.Chk("divider found", sep > 4)
 	if sep > 4 {
-		r.Mouse(s.Pane, 0, 2, sep+1, true)   // grab the rule
-		r.Mouse(s.Pane, 32, 2, sep-3, true)  // drag (motion, button held)
+		r.Mouse(s.Pane, 0, 2, sep+1, true)  // grab the rule
+		r.Mouse(s.Pane, 32, 2, sep-3, true) // drag (motion, button held)
 		r.Mouse(s.Pane, 0, 2, sep-3, false) // release
 		r.Chk("divider dragged up", r.WaitUntil(200, func() bool {
 			moved := sepRow()

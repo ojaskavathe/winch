@@ -33,6 +33,23 @@ func TestPaintCost(t *testing.T) {
 	r.await(5000, "docked", func() bool { return r.Side().Pane != "" })
 	sp := r.Side().Pane
 	sleep(700)
+
+	// World churn that changes no ROW: the list is sessions-only, so windows
+	// coming and going rebuild the rows to the same bytes. Each one still
+	// reaches the TUI as a diff and triggers a paint. (Panes would not do:
+	// tmux emits no notification for pane changes outside the attached
+	// window, so the world would never diff at all.)
+	idleMark := benchSize(r)
+	for i := 0; i < 3; i++ {
+		w := r.T("new-window", "-d", "-P", "-F", "#{window_id}", "-t", "play:")
+		sleep(300)
+		r.TQ("kill-window", "-t", w)
+		sleep(300)
+	}
+	written, skipped := listPaintCounts(r, idleMark)
+	t.Logf("idle churn: %d list paints written, %d skipped as identical", written, skipped)
+	r.Chk("row-less world churn does not rewrite the strip", skipped > 0 && written == 0)
+
 	scrubAway(r, sp) // enter the scrub (zooms)
 	sleep(700)
 
@@ -66,6 +83,9 @@ func TestPaintCost(t *testing.T) {
 
 	full, diff := paintFrameCosts(r, mark)
 	t.Logf("canvas paints: %d full %v, %d diffed %v", len(full), full, len(diff), diff)
+
+	written, skipped = listPaintCounts(r, mark)
+	t.Logf("scrub steps: %d list paints written, %d skipped", written, skipped)
 
 	// Same-shaped windows: the steps must diff, not full-repaint.
 	r.Chk("scrub steps diff instead of full-repainting", len(diff) > len(full))
@@ -103,6 +123,24 @@ func fillWindow(r *Rig, win, marker string) {
 		}
 	}
 	r.t.Fatalf("could not fill %s with %s", win, marker)
+}
+
+// listPaintCounts returns how many strip paints were emitted versus skipped
+// as byte-identical to what is already on screen.
+func listPaintCounts(r *Rig, off int64) (written, skipped int) {
+	b, err := os.ReadFile(r.Sock + ".tui-bench.log")
+	if err != nil || int64(len(b)) <= off {
+		return 0, 0
+	}
+	for _, ln := range strings.Split(string(b[off:]), "\n") {
+		switch {
+		case strings.Contains(ln, "paint_list skipped"):
+			skipped++
+		case strings.Contains(ln, "paint_list dur_us"):
+			written++
+		}
+	}
+	return written, skipped
 }
 
 var paintFrameRe = regexp.MustCompile(`paint_frame dur_us=\d+ bytes=(\d+) panes=\d+ diff=(true|false)`)

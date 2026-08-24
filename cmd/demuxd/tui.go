@@ -557,6 +557,7 @@ func cmdTui(tmuxSock, demuxSock string) {
 	paintAll := func() {
 		rows = st.rows(winPick)
 		clampSel()
+		lastListOut = "" // geometry moved: never suppress this repaint
 		paintList(rows, sel)
 		// Size/world may have shifted the regions: the screen no longer
 		// holds what we last painted, so the diff baseline goes too (the
@@ -1471,6 +1472,12 @@ func (l listLayout) rowAt(y, nRows int) int {
 // paints names exactly what was written.
 var benchListPrev []string
 
+// lastListOut is the strip exactly as last written, so an identical repaint
+// costs a string compare instead of a pty write. Cleared by paintAll, which
+// runs precisely when the pane geometry moved under us and tmux's grid can
+// no longer be assumed to hold what we last sent.
+var lastListOut string
+
 // paintList redraws the list column and border only. Fixed width, padded
 // with spaces — no clears, so unchanged cells cost nothing downstream.
 // Wrapped in synchronized output (DECSET 2026) so tmux applies it atomically.
@@ -1615,7 +1622,18 @@ func paintList(rows []row, sel int) {
 		}
 	}
 	b.WriteString("\033[?2026l")
-	os.Stdout.WriteString(b.String())
+	// Skip a write that would change nothing. Handlers paint for themselves,
+	// so one settled keystroke produced ~2.2 list paints and 38% of all list
+	// paints rewrote the strip byte-for-byte identically — tmux diffed them
+	// back to nothing, but the escapes were still built, written, and
+	// parsed. Comparing the rendered strip is far cheaper than emitting it.
+	out := b.String()
+	if out == lastListOut {
+		benchf("paint_list skipped bytes=%d", len(out))
+		return
+	}
+	lastListOut = out
+	os.Stdout.WriteString(out)
 	if benchLog != nil {
 		logged := 0
 		for y := 0; y < len(cur) || y < len(benchListPrev); y++ {
@@ -1960,6 +1978,12 @@ func paintFrame(frame, prev []framePane, curPane, prevCurPane string, borders bo
 		// Borders last: scaled-frame rounding can collapse a gap onto a
 		// pane's first column, and the border should win that cell.
 		paintBorders(&b, frame, cols, height, offX)
+	}
+	if changed == 0 && !borders && ci < 0 && pci < 0 {
+		// Nothing to say: a stream tick whose rows all matched. Emitting a
+		// bare synchronized-output pair still costs a write and a parse.
+		benchf("paint_frame skipped panes=%d", len(frame))
+		return
 	}
 	b.WriteString("\033[?2026l")
 	os.Stdout.WriteString(b.String())

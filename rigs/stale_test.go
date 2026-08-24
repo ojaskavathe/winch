@@ -1,8 +1,8 @@
 package rigs
 
 import (
-	"os"
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 )
