@@ -94,6 +94,11 @@ func (d *daemon) clientView(ctl *control, client string) (sid, wid string, cw, c
 // snapshot so the TUI paints in the right palette from its first frame.
 var uiTheme string
 
+// uiBorderLines is tmux's own pane-border-lines, read at attach so the status
+// pad can end in the same glyph tmux draws down the sidebar's border column.
+// Same lifetime as uiTheme: changing it mid-session needs a daemon restart.
+var uiBorderLines string
+
 // altScreen records whether tmux honours the TUI's alternate-screen switch
 // (the `alternate-screen` window option, on by default). It decides how a
 // scrub can be left: with the alternate screen the pane's grid is CLIPPED on

@@ -1013,6 +1013,18 @@ func (d *daemon) leaveLayout(wid string, exact string, dockedLayout string, dirt
 	return s
 }
 
+// padFlush is true exactly when the padded status row is the one ADJACENT to
+// the pane area, which is the only case where a border glyph in it continues
+// anything. status-left lives on status-format[0], and tmux draws status rows
+// 0..N-1 top to bottom: at the bottom the block's first row is the one
+// touching the panes, so any N works; at the top the LAST row touches them, so
+// only N==1 does. `on` and `1` are the same value spelt two ways.
+//
+// Kept in the format rather than resolved in Go because both options are
+// per-session and the user can change either without the daemon hearing.
+const padFlush = "#{||:#{==:#{status-position},bottom}," +
+	"#{||:#{==:#{status},on},#{==:#{status},1}}}"
+
 // dockSessionCmds marks a session as docked: the bind-routing flag M-h/M-l
 // check, plus the status pad that shifts the status line past the sidebar.
 func dockSessionCmds(sid string, width int) []string {
@@ -1025,7 +1037,20 @@ func dockSessionCmds(sid string, width int) []string {
 	if uiTheme != "terminal" {
 		padBG = "#181825" // the sidebar's own ground (tui.go pal.bg, catppuccin)
 	}
-	pad := fmt.Sprintf("#[bg=%s,fg=%s]", padBG, padBG) + strings.Repeat(" ", width+1) + "#[default]"
+	// The pad's LAST column is the border column, so it carries the border
+	// glyph rather than a space: without it the sidebar's │ stops dead at the
+	// status row. On the default theme this is the only seam there is — the
+	// sidebar ground, the pad and status-style's bg are all #181825, so the
+	// bar otherwise just runs across the top of the sidebar.
+	//
+	// pane-active-border-style, not pane-border-style: tmux colours a border
+	// segment active when it touches the active pane, and this one touches
+	// both the sidebar and the leftmost content pane. It is inactive only
+	// while focus sits on a right-hand split.
+	pad := fmt.Sprintf("#[bg=%s,fg=%s]", padBG, padBG) + strings.Repeat(" ", width) +
+		"#[#{E:pane-active-border-style}]" +
+		"#{?" + padFlush + "," + borderGlyph(uiBorderLines) + ", }" +
+		"#[default]"
 	return []string{
 		"set-option -t " + q(sid) + " @winch_docked 1",
 		"set-option -t " + q(sid) + " status-left " + q(pad),

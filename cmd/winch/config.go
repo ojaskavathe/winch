@@ -46,6 +46,7 @@ const (
 // painting a default and correcting.
 func (d *daemon) loadConfig(ctl *control) {
 	uiTheme = strings.TrimSpace(optStr(ctl, optTheme))
+	uiBorderLines = borderLines(ctl)
 
 	if s := optStr(ctl, optWidth); s != "" {
 		if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
@@ -74,6 +75,35 @@ func (d *daemon) loadConfig(ctl *control) {
 
 	if bench {
 		log.Printf("config: theme=%q width=%d split=%v", uiTheme, d.dockW, d.h.split)
+	}
+}
+
+// borderLines reads tmux's pane-border-lines. A WINDOW option, so -gw; an
+// empty answer means "assume the default" rather than "no border".
+func borderLines(ctl *control) string {
+	lines, err := ctl.run("show-options -gwqv pane-border-lines")
+	if err != nil || len(lines) != 1 {
+		return ""
+	}
+	return strings.TrimSpace(lines[0])
+}
+
+// borderGlyph is the vertical border character tmux draws for a given
+// pane-border-lines. `number` labels segment MIDPOINTS with digits and draws
+// │ everywhere else — the pad's cell is an edge, so │ is right there too.
+func borderGlyph(lines string) string {
+	switch lines {
+	case "double":
+		return "║"
+	case "heavy":
+		return "┃"
+	case "simple":
+		// ASCII on purpose: the setting exists for terminals that cannot
+		// render the box-drawing set, and the pad is a literal string in a
+		// format, so it gets none of tmux's ACS fallback.
+		return "|"
+	default:
+		return "│"
 	}
 }
 
