@@ -64,12 +64,31 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// rigProfile is the fake client's environment. Timing bugs (flicker,
+// transitions) only reproduce against the shape of the REAL terminal: a
+// 200x50 client with no synchronized-output capability redraws about a
+// quarter of the cells and batches them differently, which hides artifacts
+// that are plainly visible at 480x96 in kitty.
+type rigProfile struct {
+	cols, rows int
+	term       string
+	features   string // terminal-features to declare, "" for none
+}
+
+var (
+	stdProfile = rigProfile{cols: 200, rows: 50, term: "xterm-256color"}
+	// liveProfile mirrors Ojas's kitty window (see tmux.nix: kitty needs
+	// the sync feature declared, tmux does not auto-detect it).
+	liveProfile = rigProfile{cols: 480, rows: 96, term: "xterm-kitty", features: "xterm-kitty:sync"}
+)
+
 // Rig is one isolated tmux world. Standard shape: session work (w1 = a
 // split holding a MARKW1 loop pane, beta, gamma), session play (2 windows),
-// a fake 200x50 client attached to work:beta, daemon running.
+// a fake client attached to work:beta, daemon running.
 type Rig struct {
-	t *testing.T
-	L string // tmux socket name
+	t    *testing.T
+	L    string // tmux socket name
+	prof rigProfile
 
 	W1, W2, W3, P1 string // window ids
 	LW1, LW2, LW3  string // pre-dock layout baselines
@@ -94,10 +113,17 @@ type recChunk struct {
 	Data []byte
 }
 
-func New(t *testing.T) *Rig {
+func New(t *testing.T) *Rig { return newRig(t, stdProfile) }
+
+// NewLive is New with a client shaped like the real one: 480x96, kitty,
+// synchronized output declared. Use it for anything about what the user
+// SEES during a transition — artifacts scale with the redraw.
+func NewLive(t *testing.T) *Rig { return newRig(t, liveProfile) }
+
+func newRig(t *testing.T, prof rigProfile) *Rig {
 	t.Parallel()
 	name := regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(t.Name(), "")
-	r := &Rig{t: t, L: strings.ToLower(name) + strconv.Itoa(os.Getpid())}
+	r := &Rig{t: t, L: strings.ToLower(name) + strconv.Itoa(os.Getpid()), prof: prof}
 	t.Cleanup(r.teardown)
 	r.setup()
 	return r
@@ -200,7 +226,11 @@ func (r *Rig) setup() {
 		_, err := r.TQ("has-session")
 		return err != nil
 	})
-	r.T("-f", "/dev/null", "new-session", "-d", "-s", "work", "-x", "200", "-y", "50")
+	sx, sy := strconv.Itoa(r.prof.cols), strconv.Itoa(r.prof.rows)
+	r.T("-f", "/dev/null", "new-session", "-d", "-s", "work", "-x", sx, "-y", sy)
+	if r.prof.features != "" {
+		r.T("set-option", "-as", "terminal-features", r.prof.features)
+	}
 	r.W1 = r.T("display-message", "-p", "-t", "work:", "#{window_id}")
 	r.T("split-window", "-h", "-t", r.W1, "while :; do echo MARKW1; sleep 2; done")
 	r.T("new-window", "-t", "work:", "-n", "beta")
@@ -217,28 +247,29 @@ func (r *Rig) setup() {
 			r.W3 = f[0]
 		}
 	}
-	r.T("new-session", "-d", "-s", "play", "-x", "200", "-y", "50")
+	r.T("new-session", "-d", "-s", "play", "-x", sx, "-y", sy)
 	r.P1 = r.T("display-message", "-p", "-t", "play:", "#{window_id}")
 	r.T("new-window", "-t", "play:", "-n", "ptwo")
 	r.T("select-window", "-t", r.W2)
 	r.attachFakeClient()
 	// Attach is done when the client's status line has squeezed the current
 	// window to 49 rows and the client shows up in list-clients.
+	statusH := r.prof.rows - 1 // one row goes to the status line
 	r.await(5000, "client attached", func() bool {
-		return r.winH(r.W2) == 49 && r.realClient() != ""
+		return r.winH(r.W2) == statusH && r.realClient() != ""
 	})
 	r.CL = r.realClient()
 	// Baselines AFTER attach, each while ITS window is current — the
 	// client's status line resizes only the current window (window-size
 	// latest).
 	r.T("select-window", "-t", r.W1)
-	r.await(3000, "w1 sized", func() bool { return r.winH(r.W1) == 49 })
+	r.await(3000, "w1 sized", func() bool { return r.winH(r.W1) == statusH })
 	r.LW1 = r.T("display-message", "-p", "-t", r.W1, "#{window_layout}")
 	r.T("select-window", "-t", r.W3)
-	r.await(3000, "w3 sized", func() bool { return r.winH(r.W3) == 49 })
+	r.await(3000, "w3 sized", func() bool { return r.winH(r.W3) == statusH })
 	r.LW3 = r.T("display-message", "-p", "-t", r.W3, "#{window_layout}")
 	r.T("select-window", "-t", r.W2)
-	r.await(3000, "w2 sized", func() bool { return r.winH(r.W2) == 49 })
+	r.await(3000, "w2 sized", func() bool { return r.winH(r.W2) == statusH })
 	r.LW2 = r.T("display-message", "-p", "-t", r.W2, "#{window_layout}")
 	// ls starts the daemon and round-trips one world snapshot — its success
 	// is the ready signal.
@@ -253,12 +284,12 @@ func (r *Rig) setup() {
 // attachFakeClient attaches a real (non-control) 200x50 tmux client on a pty.
 func (r *Rig) attachFakeClient() {
 	r.t.Helper()
-	master, slave, err := openPty(50, 200)
+	master, slave, err := openPty(r.prof.rows, r.prof.cols)
 	if err != nil {
 		r.t.Fatalf("openPty: %v", err)
 	}
 	cmd := exec.Command("tmux", "-L", r.L, "attach", "-t", "work")
-	cmd.Env = append(envSansTmux(), "TERM=xterm-256color")
+	cmd.Env = append(envSansTmux(), "TERM="+r.prof.term)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
 	cmd.SysProcAttr = sysProcAttrTTY()
 	if err := cmd.Start(); err != nil {

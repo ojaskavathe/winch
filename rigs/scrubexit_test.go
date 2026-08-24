@@ -31,7 +31,7 @@ func TestScrubExitClean(t *testing.T) {
 	// commits onto the docked window itself. Which direction leaves the
 	// origin row depends on where the dock sits — at an edge one no-ops.
 	_, back := scrubAway(r, sp)
-	r.Chk("scrubbing after moving off the origin", r.Side().Width == 200)
+	r.Chk("scrubbing after moving off the origin", r.Side().Width == r.prof.cols)
 	r.SendKeys(sp, back)
 	sleep(700)
 
@@ -73,6 +73,59 @@ func TestScrubExitClean(t *testing.T) {
 	sleep(800)
 }
 
+// TestHandoffArrivesPainted: committing onto a DIFFERENT window hands off to
+// a freshly spawned TUI in that window, and phase 2 switches the client onto
+// it about a millisecond after its hello. The new TUI therefore has to be
+// born knowing the selection (the daemon stamps it into its first snapshot):
+// if it paints a default row first and corrects when the select arrives, the
+// correction happens in front of the user.
+func TestHandoffArrivesPainted(t *testing.T) {
+	// A live-shaped client (480x96, kitty, synchronized output): the artifact
+	// is a redraw race, so it only appears at the real screen size with real
+	// content to repaint.
+	r := NewLive(t)
+	for _, w := range []string{r.W1, r.W2, r.W3, r.P1} {
+		r.T("split-window", "-d", "-t", w,
+			`sh -c 'for i in $(seq 400); do echo "row $i CONTENT abcdefghijklmnopqrstuvwxyz 0123456789"; done; sleep 1000'`)
+	}
+	sleep(1200)
+
+	r.D("toggle", r.CL)
+	r.await(5000, "docked", func() bool { return r.Side().Pane != "" })
+	sp := r.Side().Pane
+	sleep(600)
+
+	// scrub to the OTHER session and commit there
+	scrubAway(r, sp)
+	mark := benchSize(r)
+	r.StartRecord()
+	r.SendKeys(sp, "Enter")
+	r.await(5000, "landed in the other session", func() bool {
+		s := r.Side()
+		return s.Pane != sp && s.Width == sideW
+	})
+	sleep(900)
+	chunks := r.StopRecordT()
+
+	r.Chk("arrived sidebar shows the list", strings.Contains(r.Capture(r.Side().Pane), "sessions"))
+	sels := selectionsPainted(r, mark)
+	r.Chk("arriving TUI paints its selection once", len(sels) <= 1)
+	if len(sels) > 1 {
+		t.Logf("selections painted: %q", sels)
+	}
+
+	// The real assertion: no PRESENTED frame may show an empty strip. The
+	// arriving TUI must have painted before phase 2 switches the client onto
+	// it — switching on its mere existence put an unpainted sidebar in front
+	// of the user for the first frames in the new window.
+	blank := blankStripFrames(chunks, r.prof.rows, r.prof.cols, sideW)
+	t.Logf("frames showing an empty strip: %d", blank)
+	r.Chk("no frame shows an empty strip", blank == 0)
+
+	r.D("toggle", r.CL)
+	sleep(800)
+}
+
 // scrubAway moves the selection off the origin row, whichever direction
 // actually leaves it (at a list edge one of them no-ops), and returns the
 // key that moved and the key that comes back.
@@ -80,7 +133,7 @@ func scrubAway(r *Rig, sp string) (away, back string) {
 	away, back = "j", "k"
 	r.SendKeys(sp, away)
 	sleep(600)
-	if r.Side().Width != 200 { // no scrub: that direction was the edge
+	if r.Side().Width != r.prof.cols { // no scrub: that direction was the edge
 		away, back = "k", "j"
 		r.SendKeys(sp, away)
 		sleep(600)

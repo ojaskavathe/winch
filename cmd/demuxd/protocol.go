@@ -48,6 +48,17 @@ type snapshotMsg struct {
 	Type  string `json:"type"`            // snapshot
 	Tmux  string `json:"tmux"`            // tmux server socket path
 	Theme string `json:"theme,omitempty"` // @demux-theme at attach; "" = default
+	// Where the selection belongs, for a sidebar that does not exist yet.
+	// A freshly spawned TUI paints the right row on its FIRST paint instead
+	// of painting a default and correcting when the select arrives — during
+	// a handoff the client switches onto that TUI within a millisecond of
+	// its hello, so a correcting repaint lands after the user can see it.
+	Select     string `json:"select,omitempty"`
+	SelectPane string `json:"selectpane,omitempty"`
+	// The sidebar's current width, for the same reason: a TUI born during a
+	// handoff must lay out at the user's dragged width on its FIRST paint,
+	// not paint at the default and jump when a widthMsg follows.
+	Width int `json:"width,omitempty"`
 	world
 }
 
@@ -111,21 +122,23 @@ type framePane struct {
 // wireMsg is the client-side decode target: one struct covering every
 // daemon push, discriminated by Type.
 type wireMsg struct {
-	Type     string      `json:"type"`
-	Sessions []session   `json:"sessions"`
-	Windows  []window    `json:"windows"`
-	Panes    []pane      `json:"panes"`
-	Ops      []wireOp    `json:"ops"`
-	Window   string      `json:"window"`
-	Pane     string      `json:"pane"`
-	Theme    string      `json:"theme"`
-	Width    int         `json:"width"`
-	Frame    []framePane `json:"frame"`
-	Gen      int         `json:"gen"`
-	Delta    bool        `json:"delta"`
-	Base     int         `json:"base"`
-	OK       *bool       `json:"ok"`
-	Err      string      `json:"err"`
+	Type       string      `json:"type"`
+	Sessions   []session   `json:"sessions"`
+	Windows    []window    `json:"windows"`
+	Panes      []pane      `json:"panes"`
+	Ops        []wireOp    `json:"ops"`
+	Window     string      `json:"window"`
+	Pane       string      `json:"pane"`
+	Theme      string      `json:"theme"`
+	Select     string      `json:"select"`
+	SelectPane string      `json:"selectpane"`
+	Width      int         `json:"width"`
+	Frame      []framePane `json:"frame"`
+	Gen        int         `json:"gen"`
+	Delta      bool        `json:"delta"`
+	Base       int         `json:"base"`
+	OK         *bool       `json:"ok"`
+	Err        string      `json:"err"`
 }
 
 // wireOp defers entity decoding until Kind is known.

@@ -147,7 +147,7 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 			if d.dock.scrubbing {
 				// q mid-scrub: unzoom — the origin panes reappear untouched.
 				d.scrubEnd(ctl, true)
-				d.h.sendRole("list", marshalLine(selectMsg{Type: "select", Window: d.dock.win}))
+				d.pushSelect(selectMsg{Type: "select", Window: d.dock.win})
 			} else {
 				err = d.dockClose(ctl, true)
 			}
@@ -162,6 +162,9 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 			d.h.send(env.sub, marshalLine(widthMsg{Type: "width", Width: d.dockW}))
 		}
 		if d.handoff != nil {
+			// The stamp in this TUI's snapshot already carried the target,
+			// so it has painted the right row; this is belt-and-braces for
+			// a TUI that connected before the handoff was armed.
 			d.h.send(env.sub, marshalLine(selectMsg{Type: "select", Window: d.handoff.wid}))
 			d.handoffFinish(ctl)
 			break
@@ -288,6 +291,6 @@ func (d *daemon) agentsOpen(ctl *control, client string) error {
 	if err := d.browseOpen(ctl, client); err != nil {
 		return err
 	}
-	d.h.sendRole("list", marshalLine(selectMsg{Type: "select", Window: pick.WindowID, Pane: pick.ID}))
+	d.pushSelect(selectMsg{Type: "select", Window: pick.WindowID, Pane: pick.ID})
 	return nil
 }

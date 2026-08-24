@@ -16,6 +16,11 @@ type hub struct {
 	world world
 	subs  map[*subscriber]struct{}
 	cmds  chan cmdEnvelope
+	// stamped into every fresh subscriber's snapshot, so a TUI is born
+	// knowing them instead of correcting after a round trip
+	selWin  string
+	selPane string
+	width   int
 }
 
 type subscriber struct {
@@ -75,6 +80,23 @@ func (h *hub) setRole(s *subscriber, role string) {
 	h.mu.Unlock()
 }
 
+// setSelect records where the sidebar's selection belongs so a TUI spawned
+// later is born knowing it (see snapshotMsg.Select). Guarded by the same
+// lock as add(), which reads it: the daemon writes from the consume loop,
+// connections arrive on their own goroutine.
+func (h *hub) setSelect(win, pane string) {
+	h.mu.Lock()
+	h.selWin, h.selPane = win, pane
+	h.mu.Unlock()
+}
+
+// setWidth records the sidebar width for the same reason as setSelect.
+func (h *hub) setWidth(w int) {
+	h.mu.Lock()
+	h.width = w
+	h.mu.Unlock()
+}
+
 // setWorld replaces the world and broadcasts: a diff when ops are known, or a
 // fresh snapshot after a reconnect (resync=true) since diffs across a gap lie.
 func (h *hub) setWorld(w world, ops []op, resync bool, tmuxSock string) {
@@ -105,7 +127,8 @@ func (h *hub) setWorld(w world, ops []op, resync bool, tmuxSock string) {
 func (h *hub) add(conn net.Conn, tmuxSock string) *subscriber {
 	s := &subscriber{conn: conn, ch: make(chan []byte, 256)}
 	h.mu.Lock()
-	s.ch <- marshalLine(snapshotMsg{V: 1, Type: "snapshot", Tmux: tmuxSock, Theme: uiTheme, world: h.world})
+	s.ch <- marshalLine(snapshotMsg{V: 1, Type: "snapshot", Tmux: tmuxSock, Theme: uiTheme,
+		Select: h.selWin, SelectPane: h.selPane, Width: h.width, world: h.world})
 	h.subs[s] = struct{}{}
 	h.mu.Unlock()
 	return s

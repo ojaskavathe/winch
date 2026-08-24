@@ -409,7 +409,19 @@ func cmdTui(tmuxSock, demuxSock string) {
 		b, _ := json.Marshal(m)
 		conn.Write(append(b, '\n'))
 	}
-	conn.Write([]byte(`{"type":"hello","role":"list"}` + "\n"))
+	// hello is sent AFTER the first paint, not on connect — it is the
+	// handoff's go signal (router.go: hello finishes phase 2 and switches
+	// the client onto this pane), so it has to mean "I am on screen". Sent
+	// on connect it meant "I exist", and the client switched onto a sidebar
+	// that had not painted yet: an empty strip for the first frames in the
+	// arriving window.
+	helloSent := false
+	sayHello := func() {
+		if !helloSent {
+			helloSent = true
+			conn.Write([]byte(`{"type":"hello","role":"list"}` + "\n"))
+		}
+	}
 
 	st := &store{}
 	sel := 0
@@ -510,6 +522,32 @@ func cmdTui(tmuxSock, demuxSock string) {
 		for sel > 0 && rows[sel].inert() {
 			sel-- // bottom edge was chrome: back up into the list
 		}
+	}
+	// applySelect moves the selection onto the row the daemon named — an
+	// agent's own row when a pane is given, otherwise the window's SESSION
+	// row (windows aren't listed; the pick remembers which window, so daemon
+	// nav keeps the billboard on the real one).
+	applySelect := func(win, pane string) bool {
+		found := false
+		for i, r := range rows {
+			if pane != "" {
+				if r.arow && !r.cont && r.pane == pane {
+					sel, found = i, true
+					break
+				}
+				continue
+			}
+			if r.session && r.sess == st.windows[win].SessionID {
+				winPick[r.sess] = win
+				rows[i].window = win
+				sel, found = i, true
+				break
+			}
+		}
+		if w, ok := st.windows[win]; ok {
+			curSess = w.SessionID
+		}
+		return found
 	}
 	paintAll := func() {
 		rows = st.rows(winPick)
@@ -672,8 +710,15 @@ func cmdTui(tmuxSock, demuxSock string) {
 					paintFrameFor(target())
 				}
 			case "snapshot", "diff":
-				if m.Type == "snapshot" && m.Theme != "" {
-					setTheme(m.Theme)
+				if m.Type == "snapshot" {
+					if m.Theme != "" {
+						setTheme(m.Theme)
+					}
+					// Width before the first paint: laying out at the default
+					// and correcting to the user's dragged width is a jump.
+					if m.Width >= 18 {
+						listW = m.Width
+					}
 				}
 				// Selection is sticky to the ROW IDENTITY, not the index:
 				// world churn (a window or session appearing/dying — agents
@@ -695,46 +740,33 @@ func cmdTui(tmuxSock, demuxSock string) {
 					sel = i
 					break
 				}
+				if selPending && m.Type == "snapshot" && m.Select != "" {
+					// The daemon stamped where the selection belongs into this
+					// TUI's very first world, so the first paint is already
+					// right — no wait, no correcting repaint.
+					applySelect(m.Select, m.SelectPane)
+					selPending = false
+				}
 				clampSel()
 				if selPending {
-					// First world, selection still unknown: hold the paint.
+					// Selection still unknown: hold the paint rather than
+					// show a default row that is about to jump.
 					break
 				}
 				paintList(rows, sel)
+				sayHello()
 			case "width":
 				if m.Width >= 18 && m.Width != listW {
 					listW = m.Width
 					paintAll()
 				}
 			case "select":
-				found := false
-				for i, r := range rows {
-					if m.Pane != "" {
-						if r.arow && !r.cont && r.pane == m.Pane {
-							sel = i
-							found = true
-							break
-						}
-						continue
-					}
-					// Windows aren't listed: a window select lands on its
-					// session's row, with the pick remembering WHICH window
-					// (daemon nav keeps the billboard on the real window).
-					if r.session && r.sess == st.windows[m.Window].SessionID {
-						winPick[r.sess] = m.Window
-						rows[i].window = m.Window
-						sel = i
-						found = true
-						break
-					}
-				}
-				if w, ok := st.windows[m.Window]; ok {
-					curSess = w.SessionID
-				}
+				found := applySelect(m.Window, m.Pane)
 				selPending = false
 				clampSel()
 				tlogf("select win=%s found=%v sel=%d rows=%d", m.Window, found, sel, len(rows))
 				paintList(rows, sel)
+				sayHello()
 				if !shrinkExpected {
 					paintFrameFor(target())
 					requestFrames()
@@ -1030,6 +1062,7 @@ func cmdTui(tmuxSock, demuxSock string) {
 				selPending = false
 				tlogf("select deadline: painting without one")
 				paintAll()
+				sayHello()
 			}
 		case <-winch:
 			shrinkExpected = false // the resize this was armed for has landed

@@ -451,7 +451,7 @@ func (d *daemon) dockOpen(ctl *control, client string) error {
 		return errors.New("dock split returned no pane id")
 	}
 	d.dock = p
-	n := d.h.sendRole("list", marshalLine(selectMsg{Type: "select", Window: wid}))
+	n := d.pushSelect(selectMsg{Type: "select", Window: wid})
 	log.Printf("dock open client=%s win=%s/%s pane=%s size=%dx%d select_receivers=%d",
 		client, sid, wid, p.pane, cw, ch, n)
 	return nil
@@ -603,6 +603,16 @@ func (d *daemon) scrubEnd(ctl *control, unzoom bool) {
 		_, _ = ctl.runSeq(fmtRestore...)
 	}
 	log.Printf("scrub end win=%s unzoom=%v", p.win, unzoom)
+}
+
+// pushSelect broadcasts the sidebar's selection AND records it, so a TUI
+// spawned afterwards is born with it (snapshotMsg.Select) instead of
+// painting a default row and correcting a beat later — during a handoff the
+// client switches onto the new TUI within a millisecond of its hello, so
+// that correction is visible.
+func (d *daemon) pushSelect(m selectMsg) int {
+	d.h.setSelect(m.Window, m.Pane)
+	return d.h.sendRole("list", marshalLine(m))
 }
 
 // dockMove moves the main area to wid FOR REAL. On a spacer-held window this
@@ -814,6 +824,11 @@ func (d *daemon) dockMoveStart(ctl *control, wid string, focusPane string) error
 	if err != nil {
 		return err
 	}
+	// Stamp the target BEFORE the new TUI exists: its first snapshot then
+	// carries the selection, so its first paint is already correct. Phase 2
+	// switches the client onto it a millisecond after its hello — anything
+	// it has to correct afterwards is a visible flick.
+	d.h.setSelect(wid, "")
 	qlines, err := ctl.runSeq(
 		snapQuery(wid),
 		"display-message -p -t "+q(p.win)+" -F "+f("#{pane_id}", "#{window_width}", "#{window_height}"))
@@ -954,7 +969,7 @@ func (d *daemon) handoffFinish(ctl *control) {
 		p.originSess, p.originWin = p.sess, p.win
 	}
 	d.lastScrub = time.Now()
-	d.h.sendRole("list", marshalLine(selectMsg{Type: "select", Window: p.win}))
+	d.pushSelect(selectMsg{Type: "select", Window: p.win})
 	if bench {
 		log.Printf("bench handoff finish %s -> %s", prev, p.win)
 	}
@@ -1015,7 +1030,7 @@ func (d *daemon) dockNav(ctl *control, dir string) error {
 	if err := d.dockMove(ctl, target, true); err != nil {
 		return err
 	}
-	d.h.sendRole("list", marshalLine(selectMsg{Type: "select", Window: target}))
+	d.pushSelect(selectMsg{Type: "select", Window: target})
 	return nil
 }
 
@@ -1271,7 +1286,7 @@ func (d *daemon) checkDock(ctl *control, w world) {
 				// stream billboards at a 40-col TUI that can't paint them.
 				log.Printf("dock: scrub unzoomed externally, ending")
 				d.scrubEnd(ctl, false)
-				d.h.sendRole("list", marshalLine(selectMsg{Type: "select", Window: p.win}))
+				d.pushSelect(selectMsg{Type: "select", Window: p.win})
 				break
 			}
 		}
@@ -1289,7 +1304,7 @@ func (d *daemon) checkDock(ctl *control, w world) {
 			log.Printf("dock follow: %v", err)
 			return
 		}
-		d.h.sendRole("list", marshalLine(selectMsg{Type: "select", Window: cur}))
+		d.pushSelect(selectMsg{Type: "select", Window: cur})
 		return
 	}
 	if p.scrubbing {
@@ -1342,6 +1357,7 @@ func (d *daemon) setWidth(ctl *control, wpx int, resizePane bool) {
 		return
 	}
 	d.dockW = wpx
+	d.h.setWidth(wpx) // a TUI spawned later lays out at this width from birth
 	if p := d.dock; p != nil {
 		for _, t := range p.carved {
 			if t.spacer != "" {
