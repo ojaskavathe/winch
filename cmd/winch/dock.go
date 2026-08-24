@@ -1025,6 +1025,13 @@ func (d *daemon) leaveLayout(wid string, exact string, dockedLayout string, dirt
 const padFlush = "#{||:#{==:#{status-position},bottom}," +
 	"#{||:#{==:#{status},on},#{==:#{status},1}}}"
 
+// padBordered is whether that column holds a border at all. A scrub zooms the
+// sidebar over the whole window and nothing re-runs dockSessionCmds for it, so
+// the pad keeps its width while the border it was continuing is gone; the same
+// goes for a content pane the user zooms with prefix-z, and for a window that
+// is briefly down to one pane. Blank columns hid all of that. A glyph does not.
+const padBordered = "#{&&:#{!=:#{window_panes},1},#{==:#{window_zoomed_flag},0}}"
+
 // padActive decides which of the two border styles the pad's glyph wears, by
 // reproducing tmux's own rule for that one cell: a border segment is active
 // when it touches the active pane. In a status format the context pane IS the
@@ -1069,7 +1076,7 @@ func dockSessionCmds(sid string, width int) []string {
 	// pane-border-style is the literal `default`, which resets bg as well and
 	// would drop this cell onto the statusline's background.
 	pad := fmt.Sprintf("#[bg=%s,fg=%s]", padBG, padBG) + strings.Repeat(" ", width) +
-		"#{?" + padFlush + "," +
+		"#{?#{&&:" + padFlush + "," + padBordered + "}," +
 		"#{?" + padActive(width) + ",#[#{E:pane-active-border-style}],#[#{E:pane-border-style}]}" +
 		"#[bg=" + padBG + "]" + borderGlyph(uiBorderLines) +
 		", }" +
