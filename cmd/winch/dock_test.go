@@ -42,10 +42,12 @@ func TestLegacyPadDetect(t *testing.T) {
 	}{
 		{"a real 27-column pad", pad(27), true},
 		{"a real 41-column pad", pad(41), true},
+		{"the glyph-era pad", pad(26) + "#{?#{==:#{status},on},│, }#[default]", true},
 		{"unset", "", false},
 		{"a themed session name", "#[fg=blue] #S #[default]", false},
 		{"spaces, but too few to be a sidebar", pad(4), false},
 		{"padding around real content", "   #S   ", false},
+		{"a visible bar that merely starts wide", "#[bg=black,fg=white]" + strings.Repeat(" ", 30) + "#S", false},
 	} {
 		if got := legacyPad(c.in); got != c.want {
 			t.Errorf("%s: legacyPad(%q) = %v, want %v", c.name, c.in, got, c.want)

@@ -282,10 +282,11 @@ func (d *daemon) sweepStatusFormat(ctl *control) {
 // the option tree explains why. Nothing else will ever clear it — the current
 // daemon has no reason to look at status-left at all.
 //
-// Recognised by shape, since those builds wrote no mark: a session-level
-// status-left whose entire visible text is spaces, at least a sidebar's worth
-// of them. That is exactly what the pad was, and not something anyone sets on
-// purpose.
+// Recognised by shape, since those builds wrote no mark: an INVISIBLE opening
+// style — foreground set to the background, which is the only way to hide a
+// run of columns — followed by at least a sidebar's worth of spaces. Both
+// stranded generations open exactly that way, the later one going on to a
+// border glyph. No theme paints bg onto fg and then holds it for 18 columns.
 func (d *daemon) sweepLegacyPad(ctl *control) {
 	sids, err := ctl.run("list-sessions -F " + f("#{session_id}"))
 	if err != nil {
@@ -305,12 +306,12 @@ func (d *daemon) sweepLegacyPad(ctl *control) {
 	}
 }
 
-var styleSeqRe = regexp.MustCompile(`#\[[^]]*\]`)
+var legacyPadRe = regexp.MustCompile(`^#\[bg=([^],]+),fg=([^],]+)\]( +)`)
 
 // legacyPad reports whether a status-left is one of those stranded pads.
 func legacyPad(v string) bool {
-	t := styleSeqRe.ReplaceAllString(v, "")
-	return len(t) >= minWidth && strings.TrimLeft(t, " ") == ""
+	m := legacyPadRe.FindStringSubmatch(v)
+	return m != nil && m[1] == m[2] && len(m[3]) >= minWidth
 }
 
 // sweepSpacers kills spacer panes a previous daemon left behind (it died or
