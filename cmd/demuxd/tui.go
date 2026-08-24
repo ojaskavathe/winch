@@ -359,8 +359,17 @@ func cmdTui(tmuxSock, demuxSock string) {
 	// events to the pane with pane-relative coordinates.
 	// 1002 (button-motion tracking), not 1000: dragging the tree/agents
 	// divider needs motion events while the button is held.
-	fmt.Print("\033[?25l\033[?7l\033[?1002h\033[?1006h")
-	defer fmt.Print("\033[?1006l\033[?1002l\033[?25h\033[?7h")
+	// 1049 (alternate screen) is load-bearing, not cosmetic: tmux reflows a
+	// pane's grid on every width change EXCEPT while the alternate screen is
+	// active (window_pane_resize passes reflow = saved_grid == NULL), and
+	// leaving a zoomed scrub shrinks this pane 480 -> 26. On the normal
+	// screen that rewraps the wide canvas into a wall of text in the strip
+	// (the "blob"), which is why unzooming used to respawn the whole process.
+	// In the alternate screen the grid is CLIPPED instead — and since the
+	// zoomed layout already paints the list in columns 1..listW, the clip
+	// leaves exactly the list. Probe-verified against tmux 3.7b.
+	fmt.Print("\033[?1049h\033[?25l\033[?7l\033[?1002h\033[?1006h")
+	defer fmt.Print("\033[?1006l\033[?1002l\033[?25h\033[?7h\033[?1049l")
 
 	msgs := make(chan wireMsg, 64)
 	go func() {

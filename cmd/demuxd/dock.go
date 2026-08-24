@@ -560,13 +560,30 @@ func (d *daemon) scrubEnd(ctl *control, unzoom bool) {
 	p.scrubbing = false
 	d.stopStream()
 	fmtRestore := d.scrubStatusCmds(p)
+	if unzoom && altScreen {
+		// The TUI holds the alternate screen, so tmux CLIPS this pane's grid
+		// on the 480->26 shrink instead of reflowing it. The zoomed layout
+		// already paints the list in columns 1..listW, so the clip leaves
+		// exactly the list: unzoom straight into a sidebar that is already
+		// correct. No respawn — killing the process blanked the strip for
+		// ~6ms, one presented frame in which the whole window came back
+		// except the sidebar, which read as a flicker on every commit that
+		// landed back on the docked window.
+		seq := append(fmtRestore,
+			"resize-pane -Z -t "+q(p.pane),
+			fmt.Sprintf("resize-pane -t %s -x %d", q(p.pane), d.width()))
+		if _, err := ctl.runSeq(seq...); err == nil {
+			log.Printf("scrub end win=%s unzoom=clip", p.win)
+			return
+		}
+		log.Printf("scrub end: clip unzoom failed, respawning")
+	}
 	if unzoom {
-		// Same rewrap hazard as commits (handoffState): unzooming the
-		// canvas-filled grid paints one garbled frame into the sidebar
-		// strip. Respawn a fresh TUI into the pane FIRST — respawn clears
-		// the grid at full width — then unzoom a clean grid in the same
-		// batch. The pane id is stable, so no dock state changes; the
-		// fresh TUI paints the list a beat after landing.
+		// alternate-screen off (or the clip path errored): tmux WILL reflow
+		// the canvas-filled grid into the strip. Respawn a fresh TUI into
+		// the pane first — respawn clears the grid at full width — then
+		// unzoom a clean grid in the same batch. The pane id is stable, so
+		// no dock state changes.
 		if tuiCmd, err := d.tuiCommand(); err == nil {
 			seq := append(fmtRestore,
 				"respawn-pane -k -t "+q(p.pane)+" "+q(tuiCmd),

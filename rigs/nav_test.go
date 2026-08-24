@@ -68,8 +68,11 @@ func TestNavFollow(t *testing.T) {
 	r.Chk("q never moved the client", r.ClientWin() == r.W3)
 	r.Chk("q unzoomed, still docked", s.Win == r.W3 && s.Width == sideW)
 	r.Chk("gamma unzoomed", !r.Zoomed(r.W3))
-	r.Chk("home unzoom went through respawn", r.LogHas("unzoom=respawn"))
-	r.Chk("fresh TUI repainted the list", strings.Contains(r.Capture(s.Pane), "work"))
+	// The alternate screen means the shrink CLIPS the grid instead of
+	// reflowing it, so the pane keeps the list it already painted — no
+	// respawn, and nothing blank in between (see TestScrubExitClean).
+	r.Chk("home unzoom clipped rather than respawned", r.LogHas("unzoom=clip"))
+	r.Chk("list intact after the unzoom", strings.Contains(r.Capture(s.Pane), "work"))
 
 	// undock keeps the pane the user is IN, not the dock-time active one:
 	// dock lands focused on w1's right main, user moves to the left main,

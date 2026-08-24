@@ -100,6 +100,14 @@ func (d *daemon) clientView(ctl *control, client string) (sid, wid string, cw, c
 // snapshot so the TUI paints in the right palette from its first frame.
 var uiTheme string
 
+// altScreen records whether tmux honours the TUI's alternate-screen switch
+// (the `alternate-screen` window option, on by default). It decides how a
+// scrub can be left: with the alternate screen the pane's grid is CLIPPED on
+// the 480->26 shrink, so unzooming keeps the already-painted list; without
+// it tmux reflows the wide canvas into the strip and the pane has to be
+// respawned to clear the grid first.
+var altScreen = true
+
 // debounce for notification bursts: long enough to coalesce a storm (a
 // session teardown emits dozens), short enough to be imperceptible.
 const debounce = 15 * time.Millisecond
@@ -144,6 +152,12 @@ func runDaemon(tmuxSock, demuxSock string) {
 		}
 		if lines, terr := ctl.run("show-options -gqv @demux-theme"); terr == nil && len(lines) == 1 {
 			uiTheme = strings.TrimSpace(lines[0])
+		}
+		if lines, aerr := ctl.run("show-options -gwqv alternate-screen"); aerr == nil && len(lines) == 1 {
+			altScreen = strings.TrimSpace(lines[0]) != "off"
+			if !altScreen {
+				log.Printf("alternate-screen off: unzoom falls back to respawn")
+			}
 		}
 		w, err := fetchWorld(ctl)
 		if err != nil {
