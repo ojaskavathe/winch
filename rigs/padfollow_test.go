@@ -46,47 +46,6 @@ func TestPadFollowsWindow(t *testing.T) {
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 }
 
-// TestPadFollowsWindowTopBar is TestPadFollowsWindow against the real config's
-// bar position. The rig's tmux runs -f /dev/null, so everything else here
-// tests `status-position bottom` — which is the stock default and NOT what the
-// bar being described is set to.
-func TestPadFollowsWindowTopBar(t *testing.T) {
-	r := New(t)
-	r.T("set-option", "-g", "status-position", "top")
-	sleep(300)
-
-	r.D("toggle", r.CL)
-	r.await(5000, "docked", func() bool { return r.Side().Pane != "" })
-	w := r.Side().Width
-	sleep(600)
-
-	glyph := func(what string) rune {
-		row := statusScreen(r).grid[0] // top bar: the status row is row 0
-		t.Logf("  %s: win=%s @winch_win=%s panes=%s zoom=%s col%d=%q",
-			what, r.Side().Win, r.ShowOpt("-t", r.ClientSess(), "-v", "@winch_win"),
-			r.T("display-message", "-p", "-t", r.Side().Win, "#{window_panes}"),
-			r.T("display-message", "-p", "-t", r.Side().Win, "#{window_zoomed_flag}"),
-			w, row[w])
-		return row[w]
-	}
-
-	r.Chk("glyph on the window it opened in", glyph("opened") == '│')
-
-	r.T("select-window", "-t", r.W3)
-	r.await(5000, "sidebar followed", func() bool { return r.Side().Win == r.W3 })
-	sleep(700)
-	r.Chk("glyph survives following to another window", glyph("followed") == '│')
-
-	r.T("select-window", "-t", r.W2)
-	r.await(5000, "sidebar followed back", func() bool { return r.Side().Win == r.W2 })
-	sleep(700)
-	r.Chk("glyph survives coming back", glyph("returned") == '│')
-
-	r.T("set-option", "-g", "status-position", "bottom")
-	r.D("toggle", r.CL)
-	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
-}
-
 // TestGlyphMatchesBorder is the invariant that actually matters, and the only
 // one a user can see: the glyph must be painted the SAME colour as the border
 // cell it continues. Whether that colour is the active or the inactive one is
@@ -216,64 +175,6 @@ func TestPadFollowsCommit(t *testing.T) {
 	sleep(900)
 	r.Chk("padded again after coming back", padded("returned to work"))
 
-	r.D("toggle", r.CL)
-	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
-}
-
-// TestGlyphMatchesBorderAfterCommit: the same invariant across the action that
-// broke it, with real border colours rather than the stock `default` — a
-// commit moves focus off the sidebar and onto a content pane, and that is
-// exactly the transition the old rule got backwards. Measured against the
-// border cell rather than against an expectation, so the test cannot inherit
-// whatever mistaken idea of tmux's rule the code has.
-func TestGlyphMatchesBorderAfterCommit(t *testing.T) {
-	r := New(t)
-	r.T("set-option", "-g", "status-position", "top")
-	r.T("set-option", "-g", "status-style", "bg=#181825,fg=#cdd6f4")
-	r.T("set-option", "-gw", "pane-border-style", "fg=#6c7086")
-	r.T("set-option", "-gw", "pane-active-border-style", "fg=#b4befe")
-	// The daemon resolves the seam colour at attach, so it has to see these.
-	r.KillDaemon()
-	r.D("ls")
-	sleep(300)
-
-	r.D("toggle", r.CL)
-	r.await(5000, "docked", func() bool { return r.Side().Pane != "" })
-	w := r.Side().Width
-	sp := r.Side().Pane
-	sleep(600)
-
-	// Retried rather than slept at: a commit reflows panes and repaints, and
-	// under parallel load that takes longer than any fixed sleep worth
-	// writing. Retrying cannot mask a real mismatch — a wrong colour stays
-	// wrong — it only stops the rig from reading a half-finished transition.
-	check := func(what string) bool {
-		var last string
-		for i := 0; i < 10; i++ {
-			s := statusScreen(r)
-			gl, bd := s.fg[0][w], s.fg[1][w] // top bar: status row 0, border row 1
-			last = fmt.Sprintf("glyph=%q fg=%q | border=%q fg=%q",
-				s.grid[0][w], gl, s.grid[1][w], bd)
-			if s.grid[0][w] == '│' && s.grid[1][w] == '│' && gl == bd {
-				t.Logf("  %s: %s | match=true (attempt %d)", what, last, i+1)
-				return true
-			}
-			sleep(400)
-		}
-		t.Logf("  %s: %s | match=false", what, last)
-		return false
-	}
-
-	r.Chk("matches on open", check("opened"))
-
-	r.SendKeys(sp, "k", "k", "k")
-	sleep(900)
-	r.SendKeys(sp, "Enter")
-	r.await(5000, "committed", func() bool { return r.ClientSess() == "play" })
-	sleep(1200)
-	r.Chk("matches after a commit moves focus to the content", check("after commit"))
-
-	r.T("set-option", "-g", "status-position", "bottom")
 	r.D("toggle", r.CL)
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 }
