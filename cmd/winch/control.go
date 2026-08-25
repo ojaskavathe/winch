@@ -220,12 +220,30 @@ func (c *control) runPipelined(lines ...[]string) ([][]string, []error) {
 	ps := make([]*pendingCmd, len(lines))
 	var buf strings.Builder
 	for i, cmds := range lines {
+		// An EMPTY command list is not a command. Sending it writes a bare
+		// newline, which tmux answers with nothing, while the waiter registered
+		// for it expects zero blocks and so consumes the NEXT command's reply —
+		// desyncing every reply after it for the life of the connection.
+		// Callers building a batch from a diff hit this whenever the diff is
+		// empty on one side.
+		if len(cmds) == 0 {
+			continue
+		}
 		ps[i] = &pendingCmd{n: len(cmds), ch: make(chan cmdReply, 1)}
 		buf.WriteString(strings.Join(cmds, " ; "))
 		buf.WriteByte('\n')
 	}
+	// Registered in send order, skipping the lines that were never written.
+	// A separate slice: compacting ps in place would renumber it out of step
+	// with lines, which the reply loop indexes by.
+	live := make([]*pendingCmd, 0, len(ps))
+	for _, p := range ps {
+		if p != nil {
+			live = append(live, p)
+		}
+	}
 	c.mu.Lock()
-	c.pending = append(c.pending, ps...)
+	c.pending = append(c.pending, live...)
 	start := time.Now()
 	_, werr := io.WriteString(c.stdin, buf.String())
 	c.mu.Unlock()
@@ -233,11 +251,17 @@ func (c *control) runPipelined(lines ...[]string) ([][]string, []error) {
 	errs := make([]error, len(lines))
 	if werr != nil {
 		for i := range errs {
-			errs[i] = werr
+			if len(lines[i]) > 0 {
+				errs[i] = werr
+			}
 		}
 		return outs, errs
 	}
-	for i, p := range ps {
+	for i := range lines {
+		if len(lines[i]) == 0 {
+			continue // never sent: no reply, no error
+		}
+		p := ps[i]
 		select {
 		case r := <-p.ch:
 			outs[i], errs[i] = r.lines, r.err
