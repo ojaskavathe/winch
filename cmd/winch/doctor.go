@@ -270,14 +270,16 @@ func (d *daemon) doctor(ctl *control) []string {
 	}
 	r.check(len(orphanPanes) == 0, "no orphan sidebar panes or spacers", orphanPanes...)
 
-	// ---- recent restore failures ----------------------------------------
+	// ---- recent errors on the paths that give things back ---------------
 	if fails := recentRestoreFailures(d.tmuxSock, 6); len(fails) > 0 {
-		r.head("recent restore failures (from the log)")
+		r.head("recent tmux errors on leave / undock (from the log)")
 		for _, ln := range fails {
 			r.add("  %s", ln)
 		}
-		r.add("  a failed restore leaves winch's write on the object with nothing")
-		r.add("  left to undo it; the next daemon's sweep is what clears it")
+		r.add("  these are cosmetic as long as the checks above pass: option")
+		r.add("  restores lead those batches, so what fails behind them is a")
+		r.add("  focus or layout restore. `scrub restore` lines older than the")
+		r.add("  leadWithRestores fix DID strand the session's bar.")
 	}
 
 	r.blank()
@@ -336,8 +338,9 @@ func recentRestoreFailures(tmuxSock string, max int) []string {
 		if !strings.Contains(ln, "tmux: ") {
 			continue
 		}
-		if strings.Contains(ln, "scrub restore") || strings.Contains(ln, "undock:") ||
-			strings.Contains(ln, "option plan") || strings.Contains(ln, "dock cleanup") {
+		if strings.Contains(ln, "scrub restore") || strings.Contains(ln, "focus restore") ||
+			strings.Contains(ln, "undock:") || strings.Contains(ln, "option plan") ||
+			strings.Contains(ln, "dock cleanup") || strings.Contains(ln, "release ") {
 			out = append(out, strings.TrimPrefix(ln, "winch: "))
 		}
 	}

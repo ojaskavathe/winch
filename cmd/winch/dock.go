@@ -894,7 +894,12 @@ func (d *daemon) dockMove(ctl *control, wid string, focusMain bool, focusPane st
 	}
 	commit()
 	if errs[1] != nil {
-		log.Printf("scrub restore %s: %v", p.win, errs[1])
+		// The option restores lead this line and are infallible; what trails
+		// them is the focus restore, and a pane the user has closed since is
+		// not worth more than a note. Before the restores were moved to the
+		// front, this same message meant the session's bar had just been
+		// stranded — hence the wording, so a log reader can tell them apart.
+		log.Printf("leave %s: focus restore only: %v", p.win, errs[1])
 	}
 	if spacerOld == "" {
 		log.Printf("scrub: no spacer id for %s — release will not restore it", p.win)
