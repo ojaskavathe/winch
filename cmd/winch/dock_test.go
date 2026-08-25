@@ -1,6 +1,8 @@
 package main
 
 import (
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -65,6 +67,73 @@ func TestPadHasNoCommaInsideAStyle(t *testing.T) {
 			}
 			rest = rest[i+j:]
 		}
+	}
+}
+
+// The pad's glyph sits directly above the divider the TUI paints while zoomed,
+// cell to cell. They are rendered in different dialects — ANSI escapes down a
+// pty, #rrggbb into a tmux format — and they used to be written out twice by
+// hand, which is exactly how the corner came apart. This pins them to one
+// source by decoding both back to numbers: a literal reintroduced on either
+// side fails here rather than in someone's peripheral vision.
+func TestSeamColoursAreOneSource(t *testing.T) {
+	saveTheme := uiTheme
+	defer func() { uiTheme = saveTheme }()
+	uiTheme = "catppuccin"
+
+	ansiRGB := regexp.MustCompile(`\033\[[34]8;2;(\d+);(\d+);(\d+)m`)
+	rgbOf := func(s string) (int, int, int) {
+		m := ansiRGB.FindStringSubmatch(s)
+		if m == nil {
+			t.Fatalf("not a truecolor escape: %q", s)
+		}
+		r, _ := strconv.Atoi(m[1])
+		g, _ := strconv.Atoi(m[2])
+		b, _ := strconv.Atoi(m[3])
+		return r, g, b
+	}
+	hexOf := func(style, key string) string {
+		i := strings.Index(style, key+"=")
+		if i < 0 {
+			t.Fatalf("%q missing %s=", style, key)
+		}
+		rest := style[i+len(key)+1:]
+		if j := strings.IndexByte(rest, ']'); j >= 0 {
+			rest = rest[:j]
+		}
+		return rest
+	}
+
+	pal := themes["catppuccin"]
+	seam := scrubSeamStyle()
+	for _, c := range []struct {
+		what      string
+		ansi, hex string
+		src       colour
+	}{
+		{"the sidebar's ground", pal.bg, hexOf(seam, "bg"), seamGround},
+		{"the divider's colour", pal.muted, hexOf(seam, "fg"), seamLine},
+	} {
+		r, g, b := rgbOf(c.ansi)
+		if (colour{r, g, b}) != c.src {
+			t.Errorf("%s: the TUI paints rgb(%d,%d,%d), the source says %v", c.what, r, g, b, c.src)
+		}
+		if c.hex != c.src.hex() {
+			t.Errorf("%s: the pad writes %s, the source says %s", c.what, c.hex, c.src.hex())
+		}
+	}
+}
+
+// tmux's bare #{>:a,b} compares STRINGS, so "200" > "28" is false and the pad's
+// width guard silently swallowed the glyph at every width. Probe-verified, and
+// invisible in review — the format still renders, just without the character.
+func TestPadWidthGuardIsArithmetic(t *testing.T) {
+	got := padPrefix(26, 0, true)
+	if !strings.Contains(got, "#{e|>:") {
+		t.Errorf("width guard is not arithmetic; a string comparison here drops the glyph:\n%s", got)
+	}
+	if strings.Contains(got, "#{>:") {
+		t.Errorf("string comparison left in the pad:\n%s", got)
 	}
 }
 

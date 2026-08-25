@@ -540,6 +540,10 @@ func (d *daemon) dockOpen(ctl *control, client string) error {
 		}
 		d.pendingRelease = nil
 	}
+	// Re-read the edge colour now rather than trusting whatever it was when the
+	// daemon attached: the pane pin below and the pad's glyph are both built
+	// from it, and a stale value shows up only as a corner that looks wrong.
+	loadSeamStyle(ctl)
 	snap, err := d.winSnapshot(ctl, wid)
 	if err != nil {
 		return err
@@ -1184,7 +1188,7 @@ func padPrefix(width, row int, scrubbing bool) string {
 	// statusline background — a no-op.)
 	padBG := "terminal"
 	if uiTheme != "terminal" {
-		padBG = "#181825" // the sidebar's own ground (tui.go pal.bg, catppuccin)
+		padBG = seamGround.hex() // the same value tui.go paints pal.bg with
 	}
 	inner := "#[bg=" + padBG + "]#[fg=" + padBG + "]" + strings.Repeat(" ", width) +
 		padCell(width, row, scrubbing) + "#[default]"
@@ -1234,7 +1238,7 @@ func padCell(width, row int, scrubbing bool) string {
 		// e|> and not >. tmux's bare #{>:a,b} compares STRINGS, so "200" > "28"
 		// is false — '0' sorts below '8' — and the guard silently suppressed
 		// the glyph at every width. The e| prefix is what makes it arithmetic.
-		wide := "#{e|>:#{window_width}," + strconv.Itoa(width+2) + "}"
+		wide := "#{e|>:#{window_width}," + strconv.Itoa(width+dividerPad) + "}"
 		return "#{?#{&&:" + padFlush + "," + wide + "}," +
 			scrubSeamStyle() + borderGlyph(uiBorderLines) + ", }"
 	}
@@ -1249,14 +1253,17 @@ func padCell(width, row int, scrubbing bool) string {
 }
 
 // scrubSeamStyle is the divider the TUI paints down the sidebar's edge while
-// the pane is zoomed — pal.bg + pal.muted in tui.go's palette. Hardcoded
-// alongside padBG for the same reason: the TUI's palette is escape sequences,
-// and this needs tmux style names. Keep the two in step.
+// the pane is zoomed, rendered as a tmux style. Built from the same seamGround
+// and seamLine the TUI's palette is built from, so the glyph and the divider it
+// continues cannot drift apart.
+//
+// The terminal theme has no hex to share — it is ANSI-16 on purpose, so it
+// inherits the host scheme — so its two values are named instead.
 func scrubSeamStyle() string {
 	if uiTheme == "terminal" {
 		return "#[bg=terminal]#[fg=brightblack]" // pal.bg "", pal.muted \e[90m
 	}
-	return "#[bg=#181825]#[fg=#6c7086]" // pal.bg rgbBG(24,24,37), pal.muted rgb(108,112,134)
+	return "#[bg=" + seamGround.hex() + "]#[fg=" + seamLine.hex() + "]"
 }
 
 // borderStyle emits the style tmux paints a border segment in — with one

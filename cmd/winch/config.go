@@ -48,10 +48,7 @@ const (
 func (d *daemon) loadConfig(ctl *control) {
 	uiTheme = strings.TrimSpace(optStr(ctl, optTheme))
 	uiBorderLines = borderLines(ctl)
-	uiSeamStyle = strings.TrimSpace(optStr(ctl, optSeam))
-	if uiSeamStyle == "" {
-		uiSeamStyle = resolveStyle(ctl, "pane-active-border-style")
-	}
+	loadSeamStyle(ctl)
 
 	if s := optStr(ctl, optWidth); s != "" {
 		if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
@@ -80,6 +77,54 @@ func (d *daemon) loadConfig(ctl *control) {
 
 	if bench {
 		log.Printf("config: theme=%q width=%d split=%v", uiTheme, d.dockW, d.h.split)
+	}
+}
+
+// A colour stored once and rendered into whichever dialect the consumer needs:
+// ANSI escapes for the TUI, which writes to a pty, and #rrggbb for the status
+// pad, which writes into a tmux format string.
+//
+// Two of them have to be exactly right in BOTH dialects at once. The pad's seam
+// glyph sits directly above the divider the TUI paints while zoomed, cell to
+// cell, so any drift between the two shows up as a broken corner — and it shows
+// up silently, because each side looks perfectly reasonable on its own. They
+// were hand-written twice, in two encodings, tied together by a comment; this is
+// that comment made load-bearing.
+type colour struct{ r, g, b int }
+
+func (c colour) fg() string  { return fmt.Sprintf("\033[38;2;%d;%d;%dm", c.r, c.g, c.b) }
+func (c colour) bg() string  { return fmt.Sprintf("\033[48;2;%d;%d;%dm", c.r, c.g, c.b) }
+func (c colour) hex() string { return fmt.Sprintf("#%02x%02x%02x", c.r, c.g, c.b) }
+
+var (
+	// seamGround is the sidebar's own ground, a step darker than the terminal
+	// (catppuccin mantle). tui.go's pal.bg and the pad's invisible columns.
+	seamGround = colour{24, 24, 37}
+	// seamLine is the chrome colour the TUI draws its divider in (catppuccin
+	// overlay0). tui.go's pal.muted and the pad's glyph while scrubbing.
+	seamLine = colour{108, 112, 134}
+)
+
+// dividerPad is the slack the TUI needs beyond the list column before it will
+// draw a divider of its own: below listW+dividerPad the list fills the pane and
+// there is no edge for the pad's glyph to continue. Named because the status
+// pad has to mirror the same test in a tmux format, and a bare +2 in two
+// dialects drifts without anything noticing.
+const dividerPad = 2
+
+// loadSeamStyle resolves the colour of the sidebar's edge: @winch-seam-style if
+// the user set one, otherwise whatever tmux would paint an active border in.
+//
+// Called at every DOCK as well as at attach. It used to be attach-only, which
+// meant changing pane-active-border-style left the seam disagreeing with the
+// border it continues until the daemon was restarted — and nothing said so; the
+// corner just looked wrong. Per dock is the right granularity: it costs one
+// round trip on a path that already makes several, and "change the theme,
+// toggle the sidebar, it is right" is what a person would expect.
+func loadSeamStyle(ctl *control) {
+	uiSeamStyle = strings.TrimSpace(optStr(ctl, optSeam))
+	if uiSeamStyle == "" {
+		uiSeamStyle = resolveStyle(ctl, "pane-active-border-style")
 	}
 }
 

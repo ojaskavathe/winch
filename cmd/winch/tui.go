@@ -149,9 +149,9 @@ func rgbBG(r, g, b int) string { return fmt.Sprintf("\033[48;2;%d;%d;%dm", r, g,
 
 var themes = map[string]palette{
 	"catppuccin": {
-		text: rgb(205, 214, 244), subtext: rgb(166, 173, 200), muted: rgb(108, 112, 134),
+		text: rgb(205, 214, 244), subtext: rgb(166, 173, 200), muted: seamLine.fg(),
 		accent: rgb(137, 180, 250), mauve: rgb(203, 166, 247),
-		bg: rgbBG(24, 24, 37), fill: rgbBG(49, 50, 68), actFill: rgbBG(30, 30, 46),
+		bg: seamGround.bg(), fill: rgbBG(49, 50, 68), actFill: rgbBG(30, 30, 46),
 		red: rgb(243, 139, 168), yellow: rgb(249, 226, 175),
 		teal: rgb(148, 226, 213), green: rgb(166, 227, 161),
 	},
@@ -664,7 +664,7 @@ func cmdTui(tmuxSock, winchSock string) {
 	click := func(x, y int, setShrink func()) bool {
 		cols, height := surfaceSize()
 		lw := listW
-		if cols <= listW+2 {
+		if cols <= listW+dividerPad {
 			lw = cols
 		}
 		if x <= lw {
@@ -683,7 +683,7 @@ func cmdTui(tmuxSock, winchSock string) {
 			sel = i
 			return true
 		}
-		if x < listW+2 || paintedWin == "" || paintedWin != target() {
+		if x < listW+dividerPad || paintedWin == "" || paintedWin != target() {
 			return false
 		}
 		cx, cy := x-(listW+1)-1, y-1
@@ -912,7 +912,7 @@ func cmdTui(tmuxSock, winchSock string) {
 							case btn&64 != 0: // wheel
 								cols, _ := surfaceSize()
 								lw := listW
-								if cols <= listW+2 {
+								if cols <= listW+dividerPad {
 									lw = cols
 								}
 								if mx <= lw {
@@ -939,12 +939,12 @@ func cmdTui(tmuxSock, winchSock string) {
 							case btn&3 == 0 && btn&32 == 0: // left press
 								cols, height := surfaceSize()
 								lw := listW
-								if cols <= listW+2 {
+								if cols <= listW+dividerPad {
 									lw = cols
 								}
 								if mx <= lw && my-1 == layoutList(rows, sel, height).sepY {
 									dragging = true // grab the agents divider
-								} else if cols > listW+2 && mx == listW+1 {
+								} else if cols > listW+dividerPad && mx == listW+1 {
 									widthDrag = true // grab the │ width border
 								} else {
 									moved = click(mx, my, setShrink) || moved
@@ -1382,7 +1382,7 @@ func surfaceSize() (int, int) {
 // separator) and the preview region simply doesn't exist.
 func narrowMode() bool {
 	cols, _ := surfaceSize()
-	return cols <= listW+2
+	return cols <= listW+dividerPad
 }
 
 // listTop is the scroll offset paintList uses; click mapping shares it so
@@ -1488,7 +1488,7 @@ func paintList(rows []row, sel int) {
 	start := time.Now()
 	cols, height := surfaceSize()
 	lw, border := listW, true
-	if cols <= listW+2 {
+	if cols <= listW+dividerPad {
 		lw, border = cols, false
 	}
 	lay := layoutList(rows, sel, height)
