@@ -209,6 +209,27 @@ func (o *owner) plan(read optReader, want []optWant) (install, restore []string,
 	return install, restore, commit
 }
 
+// leadWithRestores puts option restores at the HEAD of a batch, ahead of
+// everything that can fail.
+//
+// tmux aborts a command sequence at the first error. Everything restoreCmds
+// emits is infallible — `set-option -uq`, then replays of values tmux itself
+// printed — but the commands they used to sit behind fail routinely:
+// select-pane on a pane the user has since closed, kill-pane on a sidebar that
+// already died. Behind one of those, every restore is dropped silently, and the
+// registry has already recorded them as given back, so nothing tries again.
+//
+// That is not hypothetical. A live daemon logged
+//
+//	scrub restore @47: tmux: can't find pane: %2072
+//
+// and left a session rendering a DIFFERENT session's window list for ten
+// minutes — closing panes in it changed nothing, because its bar had stopped
+// describing it. rigs/restoreorder_test.go holds both shapes.
+func leadWithRestores(restore []string, then ...string) []string {
+	return append(append([]string(nil), restore...), then...)
+}
+
 // releaseAll gives back everything winch owns, and commits immediately: undock
 // and the sidebar-pane-died cleanup are the same question asked twice, and
 // neither has anywhere to roll back to.

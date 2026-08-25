@@ -485,8 +485,15 @@ func (d *daemon) dockPlan(ctl *control, p *dockState) (install, restore []string
 // option it already holds to say.
 func (d *daemon) applyDockPlan(ctl *control, p *dockState) {
 	install, restore, commit := d.dockPlan(ctl, p)
-	if seq := append(install, restore...); len(seq) > 0 {
-		if _, err := ctl.runSeq(seq...); err != nil {
+	if len(install) == 0 && len(restore) == 0 {
+		return
+	}
+	// Separate lines in one write: a bad value in an install can abort its own
+	// line, and a restore is not something to lose to it. runPipelined skips an
+	// empty side rather than sending a bare newline for it.
+	_, errs := ctl.runPipelined(restore, install)
+	for _, err := range errs {
+		if err != nil {
 			log.Printf("option plan: %v", err)
 			return
 		}
@@ -851,7 +858,10 @@ func (d *daemon) dockMove(ctl *control, wid string, focusMain bool, focusPane st
 	if curActive != "" && curActive != p.pane {
 		leaveFocus = curActive
 	}
-	restore = append([]string{"select-pane -t " + q(leaveFocus)}, restore...)
+	// Restores lead; the focus restore trails. leaveFocus is a pane the user
+	// may well have closed, and behind a select-pane that errors tmux drops
+	// every option restore in the line.
+	restore = leadWithRestores(restore, "select-pane -t "+q(leaveFocus))
 	outs, errs := ctl.runPipelined(critical, restore)
 	if errs[0] != nil {
 		if tgt != nil && tgt.spacer != "" {
@@ -1049,9 +1059,11 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 	// release stalls tmux reflowing scrollback and is deliberately deferred.
 	undock := d.opts.releaseAll()
 	if moving {
-		// Land first, with the session bookkeeping in the SAME batch — an
-		// unpad arriving a round trip after the switch flickers the status.
-		var seq []string
+		// The unpad rides the SAME batch as the landing — a round trip later and
+		// the status visibly flickers — but it leads the batch rather than
+		// trailing it, so a kill-pane on a dead spacer or a switch to a session
+		// that has gone cannot take it down with them.
+		seq := leadWithRestores(undock)
 		if t := p.carved[p.originWin]; t != nil && t.spacer != "" {
 			// Landing on a spacer-held window: drop the spacer and replay the
 			// original layout in the batch with the switch — one coalesced
@@ -1067,7 +1079,6 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 		seq = append(seq,
 			"select-window -t "+q(p.originWin),
 			"switch-client -c "+q(p.client)+" -t "+q(p.originSess))
-		seq = append(seq, undock...)
 		if _, err := ctl.runSeq(seq...); err != nil {
 			// Origin may have died; session alone, then keep cleaning.
 			_, _ = ctl.run("switch-client -c " + q(p.client) + " -t " + q(p.originSess))
@@ -1076,15 +1087,17 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 			}
 		}
 	}
-	seq := []string{
-		"kill-pane -t " + q(p.pane),
-		"set-option -w -uq -t " + q(p.win) + " @winch_layout_dirty",
-	}
+	// Staying put: everything (undock, unpad, layout restore) in one batch so
+	// the redraw coalesces. Leading with the restores again — kill-pane errors
+	// whenever the sidebar pane has already gone, which is exactly the case
+	// where the pad most needs removing.
+	var seq []string
 	if !moving {
-		// Staying put: everything (undock, unpad, restore) in one batch so
-		// the redraw coalesces.
-		seq = append(seq, undock...)
+		seq = leadWithRestores(undock)
 	}
+	seq = append(seq,
+		"kill-pane -t "+q(p.pane),
+		"set-option -w -uq -t "+q(p.win)+" @winch_layout_dirty")
 	if restore != "" {
 		seq = append(seq, "select-layout -t "+q(p.win)+" "+q(restore))
 	}
