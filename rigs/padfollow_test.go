@@ -1,7 +1,6 @@
 package rigs
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 )
@@ -46,92 +45,6 @@ func TestPadFollowsWindow(t *testing.T) {
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 }
 
-// TestGlyphMatchesBorder is the invariant that actually matters, and the only
-// one a user can see: the glyph must be painted the SAME colour as the border
-// cell it continues. Whether that colour is the active or the inactive one is
-// tmux's business — copying its rule is a means, not the goal, and a glyph
-// that disagrees with the border one row away reads as broken however
-// defensible the rule behind it was.
-//
-// Bar at the top, as in the real config. The daemon turns pane-border-indicators
-// off on the docked window and pins the sidebar pane's border style, so the
-// edge holds one colour whatever has focus. See TestSeamIsOneColour for why
-// both are needed.
-func TestGlyphMatchesBorder(t *testing.T) {
-	r := New(t)
-	r.T("set-option", "-g", "status-position", "top")
-	sleep(300)
-
-	r.D("toggle", r.CL)
-	r.await(5000, "docked", func() bool { return r.Side().Pane != "" })
-	side := r.Side()
-	w := side.Width
-	sleep(500)
-
-	// Find the content pane opposite the sidebar.
-	content := ""
-	for _, ln := range strings.Split(r.T("list-panes", "-t", side.Win, "-F", "#{pane_id} #{pane_left}"), "\n") {
-		if f := strings.Fields(ln); len(f) == 2 && f[1] != "0" {
-			content = f[0]
-		}
-	}
-	r.Chk("found the content pane", content != "")
-
-	t.Logf("  pinned on %s: border=%q active=%q", side.Pane,
-		r.ShowOpt("-p", "-t", side.Pane, "-v", "pane-border-style"),
-		r.ShowOpt("-p", "-t", side.Pane, "-v", "pane-active-border-style"))
-
-	// Top bar: status is row 0, so the border cell it continues is row 1.
-	// Retried: a single redraw does not always repaint the border column, so
-	// the model can hold a blank there through no fault of the daemon. Waiting
-	// for both cells to be painted cannot hide a colour mismatch.
-	seam := func(what string) string {
-		var last string
-		for i := 0; i < 10; i++ {
-			s := statusScreen(r)
-			last = fmt.Sprintf("glyph=%q fg=%q | border=%q fg=%q",
-				s.grid[0][w], s.fg[0][w], s.grid[1][w], s.fg[1][w])
-			if s.grid[0][w] == '│' && s.grid[1][w] == '│' {
-				t.Logf("  %s: %s (attempt %d)", what, last, i+1)
-				if s.fg[0][w] != s.fg[1][w] {
-					return "MISMATCH"
-				}
-				return s.fg[0][w]
-			}
-			sleep(400)
-		}
-		t.Logf("  %s: %s — never painted", what, last)
-		return "MISMATCH"
-	}
-
-	// split-window takes focus, so put it back before claiming otherwise.
-	r.T("select-pane", "-t", side.Pane)
-	sleep(700)
-	onSidebar := seam("sidebar focused")
-	r.Chk("matches with the sidebar focused", onSidebar != "MISMATCH")
-
-	r.T("select-pane", "-t", content)
-	sleep(700)
-	onContent := seam("content focused")
-	r.Chk("matches with the content focused", onContent != "MISMATCH")
-
-	// The point of pinning the sidebar's border per-pane: the whole edge is
-	// ONE colour, so it neither dims nor brightens as focus moves. Without the
-	// pin tmux dims the divider whenever the sidebar is not focused, and a
-	// single dim cell in the status row reads as no seam at all.
-	r.Chk("the seam is the same colour whatever has focus", onSidebar == onContent)
-	if onSidebar != onContent {
-		t.Logf("  sidebar-focused %q vs content-focused %q", onSidebar, onContent)
-	}
-
-	r.T("set-option", "-g", "status-position", "bottom")
-	r.D("toggle", r.CL)
-	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
-}
-
-// TestPadFollowsCommit: the same question for the path the user actually
-// takes — scrub the list and press Enter. Crossing a session boundary restores
-// the session being left and pads the one being entered, so both halves have
 // to land, and coming back has to pad again.
 func TestPadFollowsCommit(t *testing.T) {
 	r := New(t)

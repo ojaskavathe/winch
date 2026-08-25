@@ -240,6 +240,22 @@ func (o *owner) releaseAll() []string {
 	return restore
 }
 
+// forget drops every claim on an object WITHOUT restoring it, for an object
+// that is about to stop existing.
+//
+// Restoring an option on a window that has gone is an error, and tmux aborts a
+// sequence at the first error — so a dead target left in a restore list takes
+// the live ones down with it. There is nothing to put back either: the options
+// die with the object.
+func (o *owner) forget(scope optScope, target string) {
+	for k := range o.own {
+		if k.scope == scope && k.target == target {
+			delete(o.own, k)
+			delete(o.basis, k)
+		}
+	}
+}
+
 // owns reports whether a key is currently claimed. Diagnostics and tests only —
 // nothing in the daemon should be branching on this.
 func (o *owner) owns(k optKey) bool {
@@ -348,6 +364,7 @@ func markName(opt string) string {
 // sweep per kind of leftover.
 var ownedOptions = []optKey{
 	{scope: scopeSession, name: "status-format"},
+	{scope: scopeSession, name: "message-style"},
 	{scope: scopeSession, name: "@winch_docked"},
 	{scope: scopeSession, name: "@winch_win"},
 	{scope: scopeWindow, name: "automatic-rename"},
@@ -373,6 +390,12 @@ type optIntent struct {
 	// restore replays: a session inheriting the global reports nothing of its
 	// own, but the pad still has to wrap the global's text.
 	rows []string
+
+	// msgStyle is the session's own effective message-style, and clientW the
+	// width of the client the sidebar is docked into. Both feed the confinement
+	// of the command prompt — see msgStyleConfined.
+	msgStyle string
+	clientW  int
 
 	// scrubWin / scrubSess point row 0 at a billboard target instead of at the
 	// session's own format. Empty means row 0 says what it normally says.
@@ -408,6 +431,11 @@ func desiredOpts(in optIntent) []optWant {
 		want = append(want, optWant{optKey{scopeSession, in.sess, "status-format"}, rows})
 	}
 
+	if ms := msgStyleConfined(in.msgStyle, in.clientW, in.width); ms != "" {
+		want = append(want, optWant{optKey{scopeSession, in.sess, "message-style"},
+			[]string{"message-style " + q(ms)}})
+	}
+
 	// Window options apply to every window winch holds, not just the one the
 	// sidebar is in: a spacer-held window is still wearing the dock's geometry
 	// and still has the sidebar's border in it.
@@ -430,6 +458,55 @@ func desiredOpts(in optIntent) []optWant {
 			optWant{optKey{scopeWindow, wid, "pane-border-indicators"}, []string{"pane-border-indicators off"}})
 	}
 	return want
+}
+
+// msgStyleConfined keeps tmux's command prompt and its messages to the right of
+// the sidebar, so prefix-: no longer paints over it.
+//
+// The prompt does not replace the status line, it OVERLAYS it: status.c's
+// status_prompt_redraw and status_message_redraw both open with
+//
+//	screen_write_fast_copy(&ctx, &sl->screen, 0, 0, c->tty.sx, lines)
+//
+// — a copy of the real bar — and only then format_draw the message, inside an
+// area whose x and width come from status_prompt_area(). That function reads
+// the area straight off message-style's `width=` and `align=` directives:
+// width absent means the whole terminal, and align=right puts x at sx - w. So
+// a width of sx - sidebar - 1 with align=right starts the prompt in the first
+// column past the border, and everything left of it survives the fast_copy.
+//
+// The width has to be a literal. status_prompt_area calls
+// options_string_to_style with a NULL format tree, so #{client_width} would
+// never expand — which is why this is a function of clientW and gets recomputed
+// whenever either input moves. Returns "" when there is nothing sensible to
+// write, and the option is then simply not claimed.
+//
+// The user's own message-style is kept and appended to, not replaced: their
+// colours are theirs, and a directive later in the string wins.
+func msgStyleConfined(base string, clientW, sideW int) string {
+	avail := clientW - sideW - 1
+	if clientW <= 0 || sideW <= 0 || avail < 20 {
+		// Too narrow to be worth confining — the prompt needs room more than
+		// the sidebar needs its corner.
+		return ""
+	}
+	// Drop any width/align the user set, or ours would be fighting theirs; the
+	// original comes back verbatim at undock, from the registry's saved value.
+	var keep []string
+	for _, f := range strings.Split(base, ",") {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		low := strings.ToLower(f)
+		if strings.HasPrefix(low, "width=") || strings.HasPrefix(low, "align=") ||
+			low == "noalign" {
+			continue
+		}
+		keep = append(keep, f)
+	}
+	keep = append(keep, "align=right", fmt.Sprintf("width=%d", avail))
+	return strings.Join(keep, ",")
 }
 
 // ------------------------------------------------------------------
@@ -555,6 +632,23 @@ func (o *owner) statusRows(ctl *control, sid string) []string {
 	b := effectiveStatusRows(ctl, sid)
 	o.basis[k] = b
 	return b
+}
+
+// msgStyle reports a session's effective message-style — the value the
+// confinement is appended to. Cached against the message-style claim exactly as
+// statusRows is against status-format: read before winch writes, dropped the
+// moment the claim is released.
+func (o *owner) msgStyle(ctl *control, sid string) string {
+	k := optKey{scopeSession, sid, "message-style"}
+	if b, ok := o.basis[k]; ok {
+		if len(b) == 1 {
+			return b[0]
+		}
+		return ""
+	}
+	v := effPair(ctl, sid, "message-style")
+	o.basis[k] = []string{v}
+	return v
 }
 
 // effectiveStatusRows reads how many rows tmux renders for a session and the

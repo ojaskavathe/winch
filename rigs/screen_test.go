@@ -15,7 +15,9 @@ import (
 type screen struct {
 	grid     [][]rune
 	fg       [][]string // foreground SGR parameters in force when the cell was written
+	bg       [][]string // background, same
 	sgrFG    string     // current foreground, "" for default
+	sgrBG    string     // current background, "" for default
 	row, col int
 	rows     int
 	cols     int
@@ -25,37 +27,59 @@ type screen struct {
 func newScreen(rows, cols int) *screen {
 	g := make([][]rune, rows)
 	f := make([][]string, rows)
+	b := make([][]string, rows)
 	for y := range g {
 		g[y] = make([]rune, cols)
 		f[y] = make([]string, cols)
+		b[y] = make([]string, cols)
 		for x := range g[y] {
 			g[y][x] = ' '
 		}
 	}
-	return &screen{grid: g, fg: f, row: 1, col: 1, rows: rows, cols: cols}
+	return &screen{grid: g, fg: f, bg: b, row: 1, col: 1, rows: rows, cols: cols}
 }
 
-// setSGR tracks just the foreground, which is all a border is. Enough to ask
-// whether two cells were painted the same colour — the question "does this
-// glyph match the border it continues" reduces to exactly that, and no amount
-// of comparing runes can answer it.
+// setSGR tracks the foreground AND the background.
+//
+// The background was the omission that hid a real bug for days. A seam glyph
+// and the border cell below it can carry the same foreground and still look
+// wrong, because tmux draws a border with no background at all — it falls
+// through to the terminal's — while a status format can force one. Two cells,
+// same colour, different ground, one visible discontinuity. Comparing only
+// foregrounds reported a match every time.
+//
+// "" means default (39 / 49): the terminal's own colour, which is exactly what
+// an unset border style resolves to, so a cell that must match the terminal
+// ground is one whose bg is "".
 func (s *screen) setSGR(params string) {
 	if params == "" || params == "0" {
-		s.sgrFG = ""
+		s.sgrFG, s.sgrBG = "", ""
 		return
 	}
 	f := strings.Split(params, ";")
 	for i := 0; i < len(f); i++ {
 		switch {
 		case f[i] == "0":
-			s.sgrFG = ""
+			s.sgrFG, s.sgrBG = "", ""
 		case f[i] == "39":
 			s.sgrFG = ""
+		case f[i] == "49":
+			s.sgrBG = ""
 		case f[i] == "38" && i+1 < len(f):
-			s.sgrFG = strings.Join(f[i:], ";") // truecolor/256 run to the end
+			// A truecolor/256 introducer swallows its parameters; whichever of
+			// fg/bg comes second in the same sequence is lost, which is fine —
+			// tmux emits them as separate runs.
+			s.sgrFG = strings.Join(f[i:], ";")
+			return
+		case f[i] == "48" && i+1 < len(f):
+			s.sgrBG = strings.Join(f[i:], ";")
 			return
 		case len(f[i]) == 2 && f[i][0] == '3', len(f[i]) == 2 && f[i][0] == '9':
 			s.sgrFG = f[i]
+		case len(f[i]) == 2 && f[i][0] == '4':
+			s.sgrBG = f[i]
+		case len(f[i]) == 3 && strings.HasPrefix(f[i], "10"):
+			s.sgrBG = f[i]
 		}
 	}
 }
@@ -224,6 +248,7 @@ func (s *screen) write(chunk []byte) {
 		if s.row >= 1 && s.row <= s.rows && s.col >= 1 && s.col <= s.cols {
 			s.grid[s.row-1][s.col-1] = ru
 			s.fg[s.row-1][s.col-1] = s.sgrFG
+			s.bg[s.row-1][s.col-1] = s.sgrBG
 		}
 		s.col++
 		i += n

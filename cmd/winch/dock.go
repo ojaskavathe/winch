@@ -440,16 +440,18 @@ func (d *daemon) tuiCommand() (string, error) {
 // held is every window winch is holding geometry in: the one the sidebar is in
 // plus every spacer-held one, since a spacer-held window is still wearing the
 // dock's shape and still has the sidebar's border in it.
-func (d *daemon) intentFor(ctl *control, sess, win string, held []string, scrubWin string) optIntent {
+func (d *daemon) intentFor(ctl *control, sess, win string, held []string, scrubWin string, clientW int) optIntent {
 	if sess == "" {
 		return optIntent{}
 	}
 	in := optIntent{
-		sess:  sess,
-		win:   win,
-		held:  held,
-		width: d.width(),
-		rows:  d.opts.statusRows(ctl, sess),
+		sess:     sess,
+		win:      win,
+		held:     held,
+		width:    d.width(),
+		rows:     d.opts.statusRows(ctl, sess),
+		msgStyle: d.opts.msgStyle(ctl, sess),
+		clientW:  clientW,
 	}
 	if scrubWin != "" {
 		if ss := d.sessionOf(scrubWin); ss != "" {
@@ -476,7 +478,7 @@ func (d *daemon) dockPlan(ctl *control, p *dockState) (install, restore []string
 	if p == nil {
 		return nil, nil, func() {}
 	}
-	in := d.intentFor(ctl, p.sess, p.win, dockHeld(p), p.scrubWin)
+	in := d.intentFor(ctl, p.sess, p.win, dockHeld(p), p.scrubWin, p.hostW)
 	return d.opts.plan(readOpts(ctl), desiredOpts(in))
 }
 
@@ -802,7 +804,7 @@ func (d *daemon) dockMove(ctl *control, wid string, focusMain bool, focusPane st
 	// registry believing exactly what is still true.
 	held := append(dockHeld(p), wid)
 	install, restore, commit := d.opts.plan(readOpts(ctl),
-		desiredOpts(d.intentFor(ctl, sidN, wid, held, "")))
+		desiredOpts(d.intentFor(ctl, sidN, wid, held, "", p.hostW)))
 
 	// Options first in the batch: the rename freeze has to beat the swap that
 	// puts the sidebar in, or an automatic-rename window renames itself to it.
@@ -1179,14 +1181,13 @@ func padPrefix(width, row int) string {
 		padBG = "#181825" // the sidebar's own ground (tui.go pal.bg, catppuccin)
 	}
 	inner := "#[bg=" + padBG + "]#[fg=" + padBG + "]" + strings.Repeat(" ", width) +
-		padCell(width, row, padBG) + "#[default]"
+		padCell(row) + "#[default]"
 	return "#{?#{==:#{window_id}," + padWin + "}," + inner + ",}"
 }
 
-// padCell is the pad's last column — the border column. It carries the border
-// glyph rather than a space, or the sidebar's border would stop dead at the
-// status row; on the default theme that is the only seam there is, since the
-// sidebar ground, the pad and status-style's bg are all #181825.
+// padCell is the pad's last column — the BORDER column, which is the whole
+// point of it. It carries the border glyph rather than a space, or the
+// sidebar's edge would stop dead at the status row.
 //
 // Only row 0 can hold it. Rows are drawn 0..N-1 top to bottom, so with the bar
 // below the panes row 0 is the one that touches them, and with the bar above
@@ -1194,10 +1195,21 @@ func padPrefix(width, row int) string {
 // multi-row bar at the top no row gets a glyph, which is honest rather than
 // pointing one at a row of text.
 //
-// The bg is forced back after the border style because a style can reset it,
-// and this cell belongs to the pad's ground either way.
-func padCell(width, row int, padBG string) string {
+// The ground is reset to the TERMINAL's, not the pad's, and that distinction
+// cost days. tmux draws a pane border with pane-border-style, which carries no
+// background, so the border cell falls through to the terminal's own — while
+// the pad opens on the sidebar's ground, a step darker by design (#181825 vs
+// #1e1e2e on catppuccin). Forcing the pad's ground onto this cell, on the
+// reasoning that it "belongs to the pad", put one cell of discontinuity at the
+// corner in every focus state. It does not belong to the pad; it belongs to the
+// border it continues.
+//
+// bg=terminal comes BEFORE the seam style so a seam style carrying its own
+// background still wins.
+func padCell(row int) string {
 	if row != 0 {
+		// Not adjacent to the panes: a plain space on the pad's own ground,
+		// which is right — there is no border for it to continue.
 		return " "
 	}
 	// One style, matching the pinned border rather than asking tmux which of
@@ -1206,7 +1218,7 @@ func padCell(width, row int, padBG string) string {
 	// not inside #{}, and a style like "fg=red,bold" would truncate the branch.
 	seam := "#[" + strings.ReplaceAll(uiSeamStyle, ",", "]#[") + "]"
 	return "#{?#{&&:" + padFlush + "," + padBordered + "}," +
-		seam + "#[bg=" + padBG + "]" + borderGlyph(uiBorderLines) +
+		"#[bg=terminal]" + seam + borderGlyph(uiBorderLines) +
 		", }"
 }
 
@@ -1236,6 +1248,67 @@ func borderStyle(opt string) string {
 // A prefix survives the #[align=left] the stock format opens with
 // (probe-verified) and shifts whatever is inside, including their status-left,
 // without reading a byte of it. desiredOpts builds it; owned.go installs it.
+
+// reapEmptyCarves closes a window that nothing but winch is still holding open.
+//
+// Every window the sidebar visits keeps a spacer pane in the sidebar's slot
+// after the sidebar moves on — that is what makes coming back a geometry-free
+// swap rather than a resize that reflows every pane's scrollback. The cost is
+// that tmux's own rule stops applying to that window: a window closes when its
+// last pane goes, and the spacer is a pane. So the user closes their last
+// split and the window just sits there in the status line with a blank strip
+// in it, and nothing explains why. releaseOne would clear it, but that runs at
+// undock, which may be hours away.
+//
+// Killing the spacer closes the window, which is what tmux would have done.
+// The claim is FORGOTTEN rather than restored: the window is about to stop
+// existing, and a restore aimed at a dead window errors — which, since tmux
+// aborts a sequence at the first error, would take the live restores with it.
+func (d *daemon) reapEmptyCarves(ctl *control, w world) {
+	p := d.dock
+	if p == nil || p.scrubbing {
+		return // mid-scrub the world is winch's own churn, and the keyboard is
+		// in the sidebar, so the user cannot be closing anything
+	}
+	replan := false
+	for wid, t := range p.carved {
+		if t.spacer == "" {
+			continue // the sidebar itself is here; the window is in use
+		}
+		others, sawSpacer := 0, false
+		for _, pn := range w.Panes {
+			if pn.WindowID != wid {
+				continue
+			}
+			if pn.ID == t.spacer {
+				sawSpacer = true
+				continue
+			}
+			others++
+		}
+		if !sawSpacer {
+			// The spacer went without us (the user closed it, or the window
+			// did). The carve describes nothing; drop it and hand the window's
+			// options back properly, since the window may well still be there.
+			delete(p.carved, wid)
+			replan = true
+			continue
+		}
+		if others > 0 {
+			continue
+		}
+		log.Printf("dock: %s is spacer-only, closing it", wid)
+		if _, err := ctl.run("kill-pane -t " + q(t.spacer)); err != nil {
+			log.Printf("reap %s: %v", wid, err)
+			continue
+		}
+		delete(p.carved, wid)
+		d.opts.forget(scopeWindow, wid)
+	}
+	if replan {
+		d.applyDockPlan(ctl, p)
+	}
+}
 
 // checkDock runs after every re-list: follow the client when it switched
 // windows by a path we don't route (choose-tree, prefix keys), clean up when
@@ -1275,6 +1348,7 @@ func (d *daemon) checkDock(ctl *control, w world) {
 		_ = d.dockClose(ctl, false)
 		return
 	}
+	d.reapEmptyCarves(ctl, w)
 	if p.scrubbing {
 		for _, pn := range w.Panes {
 			if pn.ID == p.pane && pn.WindowID == p.win && pn.Width == d.width() {
@@ -1332,6 +1406,10 @@ func (d *daemon) checkDock(ctl *control, w world) {
 			if pn.Width != d.width() {
 				_, _ = ctl.run(fmt.Sprintf("resize-pane -t %s -x %d", q(p.pane), d.width()))
 			}
+			// The prompt's confinement is a literal column count derived from
+			// this width (msgStyleConfined), so it has to be recomputed here —
+			// tmux will not expand a format inside a style.
+			d.applyDockPlan(ctl, p)
 		case pn.Width != d.width() && pn.Width >= 18 && pn.Width <= 80:
 			log.Printf("dock: adopted width %d (border drag)", pn.Width)
 			d.setWidth(ctl, pn.Width, false)
