@@ -35,11 +35,15 @@ type cmdMsg struct {
 	Prefetch bool    `json:"prefetch,omitempty"`
 }
 
-// replyMsg answers one cmdMsg on the same connection.
+// replyMsg answers one cmdMsg on the same connection. Text carries a report
+// the client prints verbatim — `doctor` is the only command that returns one,
+// and it comes back over the wire rather than being printed daemon-side because
+// most of what it reports lives in daemon memory.
 type replyMsg struct {
-	Type string `json:"type"`
-	OK   bool   `json:"ok"`
-	Err  string `json:"err,omitempty"`
+	Type string   `json:"type"`
+	OK   bool     `json:"ok"`
+	Err  string   `json:"err,omitempty"`
+	Text []string `json:"text,omitempty"`
 }
 
 // snapshotMsg is the full world, pushed on connect and after control-mode
@@ -149,6 +153,7 @@ type wireMsg struct {
 	Fresh      bool        `json:"fresh"`
 	OK         *bool       `json:"ok"`
 	Err        string      `json:"err"`
+	Text       []string    `json:"text"`
 }
 
 // wireOp defers entity decoding until Kind is known.

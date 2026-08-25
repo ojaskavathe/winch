@@ -48,6 +48,7 @@ commands:
                          repeat invocations cycle through agents
   equalize [pane]        equalize panes, nvim splits weighted (no daemon needed)
   tui                    the sidebar TUI (spawned by the daemon)
+  doctor                 report what winch has done to this tmux, and check it
   sock                   print the tmux and winch socket paths and exit
 `)
 	os.Exit(2)
@@ -105,6 +106,8 @@ func main() {
 		cmdEqualize(tmuxSock, pane)
 	case "tui":
 		cmdTui(tmuxSock, winchSock)
+	case "doctor":
+		cmdDoctor(tmuxSock, winchSock)
 	case "sock":
 		fmt.Printf("tmux:  %s\nwinch: %s\n", tmuxSock, winchSock)
 	default:

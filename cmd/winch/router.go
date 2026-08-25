@@ -173,6 +173,12 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 			log.Printf("hello-list: replay docked select=%s spawn_ms=%d",
 				d.dock.win, time.Since(d.dock.openedAt).Milliseconds())
 		}
+	case "doctor":
+		// Read-only by contract: a tool reached for when something looks wrong
+		// must not change what you were about to look at. Replies with the
+		// report rather than an ok/err, so it returns before the shared tail.
+		d.h.send(env.sub, marshalLine(replyMsg{Type: "reply", OK: true, Text: d.doctor(ctl)}))
+		return
 	default:
 		err = fmt.Errorf("unknown cmd %q", env.msg.Cmd)
 	}
