@@ -395,19 +395,38 @@ func (d *daemon) preview(ctl *control, wid string, prefetch, stream bool) error 
 			if sizeStale {
 				seq = append(seq, fmt.Sprintf("resize-window -x %d -y %d -t %s", dockW, dockH, q(wid)))
 			}
+			seq = append(seq, "display-message -p -t "+q(wid)+" -F "+f("#{window_layout}"))
+			// A carved window is HELD: it wears the dock's geometry until it is
+			// released, so it wants the dock's window options too. Planning it
+			// here rather than when the sidebar arrives is also the fix for a
+			// window that was pre-carved and then entered — dockMove takes the
+			// swap branch for those and used to set neither option.
+			install, _, commit := d.opts.plan(readOpts(ctl), desiredOpts(
+				d.intentFor(ctl, d.dock.sess, d.dock.win, append(dockHeld(d.dock), wid), d.dock.scrubWin)))
+			seq = append(seq, install...)
 			seq = append(seq,
-				"display-message -p -t "+q(wid)+" -F "+f("#{window_layout}", "#{automatic-rename}"),
-				"set-option -w -t "+q(wid)+" automatic-rename off",
 				fmt.Sprintf("split-window -d -hb -f -l %d -P -F '#{pane_id}' -t %s %s",
 					d.width(), q(wid), q(spacerCmd)))
 			if sizeStale {
 				seq = append(seq, "set-option -w -t "+q(wid)+" window-size latest")
 			}
 			out, err := ctl.runSeq(seq...)
+			if err == nil {
+				// The batch landed, so the claims are real — even if the ids
+				// below come back short and the carve is abandoned. Not
+				// committing here would leave winch's writes on the window with
+				// nothing in memory to undo them.
+				commit()
+			}
 			if err == nil && len(out) >= 2 {
-				t := &carveState{spacer: out[1]}
-				if parts := strings.Split(out[0], sep); len(parts) == 2 {
-					t.orig, t.autoRename = parts[0], parts[1]
+				// The layout is the first line out; the spacer id is the only
+				// one tmux prefixes with %. Positional indexing would move with
+				// however many option writes the plan happened to need.
+				t := &carveState{orig: out[0]}
+				for _, ln := range out {
+					if strings.HasPrefix(ln, "%") {
+						t.spacer = ln
+					}
 				}
 				d.dock.carved[wid] = t
 				skipPane = t.spacer

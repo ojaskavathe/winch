@@ -49,41 +49,28 @@ import (
 // window gets a PROPORTIONAL give-back (layout.go: drop the sidebar leaf,
 // rescale) instead of the pre-dock snapshot, which would undo the change.
 
-// winSnap is everything to put a window back the way it was before the
-// sidebar entered it. Queried at point-of-use, never from the cached world:
+// winSnap is the GEOMETRY needed to put a window back the way it was before
+// the sidebar entered it. Queried at point-of-use, never from the cached world:
 // cross-session geometry only refreshes on re-list.
+//
+// The window OPTIONS the dock overwrites (automatic-rename,
+// pane-border-indicators) are not here — owned.go holds those, along with every
+// other option winch takes from the user.
 type winSnap struct {
 	layout     string
 	activePane string
-	autoRename string // effective automatic-rename, frozen while docked
-	borderInd  string // WINDOW-level pane-border-indicators ("" = unset), forced off while docked
 	name       string
-}
-
-// statusSave holds a session's own status-format: the raw `show-options`
-// lines, which replay verbatim for an exact restore, plus the EFFECTIVE text
-// of each rendered row, which is what the pad gets prefixed to.
-//
-// Both are needed and they are not the same thing. show-options reports only
-// what is set at SESSION level, so a session inheriting the global format
-// reports nothing — restoring it is then an unset, but building the pad still
-// needs the global's text to prefix.
-type statusSave struct {
-	sess  string
-	lines []string // raw session-level show-options lines; empty = unset there
-	base  []string // effective status-format[i], one per rendered row
 }
 
 type dockState struct {
 	client     string
 	pane       string // the sidebar TUI pane (spawned by dockOpen, dies at undock)
 	win        string // window currently hosting the sidebar
-	sess       string // session of win (tracks @winch_docked + status pad)
+	sess       string // session of win
 	originSess string // where q returns to
 	originWin  string
-	snap       winSnap    // pre-dock snapshot of win
-	status     statusSave // pre-pad status-format of sess
-	openedAt   time.Time  // dockOpen time; hello-list logs TUI spawn latency
+	snap       winSnap   // pre-dock geometry of win
+	openedAt   time.Time // dockOpen time; hello-list logs TUI spawn latency
 
 	// scrubbing: the sidebar pane is ZOOMED and the main area shows live
 	// billboards of the selection instead of real windows. Zoom leaves the
@@ -93,9 +80,11 @@ type dockState struct {
 	// landing back on the docked window is a free unzoom.
 	scrubbing bool
 
-	// scrubFmt: the scrub override currently owns status-format[0]. The row
-	// it displaced is status.base[0], so no second save is needed.
-	scrubFmt bool
+	// scrubWin: the window row 0 of the status line is describing instead of
+	// the session's own format. Empty means the bar says what it normally
+	// says. Purely an input to desiredOpts — nothing here remembers what the
+	// override displaced, because the registry does.
+	scrubWin string
 
 	// hostW: the docked window's width at the last check. Tells a border
 	// drag (window width unchanged -> adopt the new pane width) apart from
@@ -115,12 +104,12 @@ type dockState struct {
 	carved map[string]*carveState
 }
 
-// carveState is one spacer-held window's restore info.
+// carveState is one spacer-held window's restore info. Geometry only — the
+// window options frozen at carve are the registry's (owned.go), and are given
+// back when the window stops being held rather than when its spacer dies.
 type carveState struct {
-	spacer     string // spacer pane id; empty while the sidebar is in this window
-	orig       string // pre-carve full-width layout, replayed at release
-	autoRename string // effective automatic-rename, frozen at carve, restored at release
-	borderInd  string // window-level pane-border-indicators, restored at release
+	spacer string // spacer pane id; empty while the sidebar is in this window
+	orig   string // pre-carve full-width layout, replayed at release
 }
 
 // listWidth is the sidebar's DEFAULT column width; the live width is
@@ -217,10 +206,7 @@ func (d *daemon) releaseOne(ctl *control, it releaseItem) {
 	if rl := d.leaveLayout(it.wid, it.t.orig, lay, dirty, it.t.spacer); rl != "" {
 		seq = append(seq, "select-layout -t "+q(it.wid)+" "+q(rl))
 	}
-	seq = append(seq,
-		"set-option -w -t "+q(it.wid)+" automatic-rename "+it.t.autoRename,
-		borderIndRestore(it.wid, it.t.borderInd),
-		"set-option -w -uq -t "+q(it.wid)+" @winch_layout_dirty")
+	seq = append(seq, "set-option -w -uq -t "+q(it.wid)+" @winch_layout_dirty")
 	if _, err := ctl.runSeq(seq...); err != nil {
 		log.Printf("release %s: %v", it.wid, err)
 	} else if bench {
@@ -228,53 +214,47 @@ func (d *daemon) releaseOne(ctl *control, it releaseItem) {
 	}
 }
 
-// sweepDockedState clears the @winch_docked flag a previous daemon left behind
-// when it died mid-dock — M-h/M-l keep routing through `winch nav`, which
-// errors undocked. The format it wrote is swept separately, by content.
-func (d *daemon) sweepDockedState(ctl *control) {
-	lines, err := ctl.run("list-sessions -F " + f("#{session_id}", "#{@winch_docked}"))
-	if err != nil {
-		return
-	}
-	for _, ln := range lines {
-		p := strings.Split(ln, sep)
-		if len(p) != 2 || p[1] == "" {
-			continue
-		}
-		_, _ = ctl.run("set-option -u -t " + q(p[0]) + " @winch_docked")
-		log.Printf("swept stale dock state on %s", p[0])
-	}
-}
-
-// sweepStatusFormat removes status-format lines a previous daemon left behind
-// by dying while docked or mid-scrub — the originals lived only in its memory,
-// so the bar stays shifted (or pinned to whatever session a scrub was pointing
-// at) for every client that ever attaches. A session unset falls back to the
-// global format, which is the unwrapped truth.
+// sweepLegacyState removes what daemons from BEFORE the owned-option registry
+// left behind. Those builds wrote no @winch_saved_* mark, so sweepOwned cannot
+// see their leftovers at all, and nothing else ever will: the bar stays shifted
+// (or pinned to whatever session a scrub was pointing at) for every client that
+// attaches, forever.
 //
-// Keyed on CONTENT, not on @winch_docked: sweepDockedState clears that flag on
-// the first restart, and a format that outlived it would then be unreachable
-// forever. Both marks are winch's own — a pad references @winch_win, a scrub
-// override runs a filtered #{S:} loop — and nothing a theme emits looks like
-// either, so a format the user wrote is never touched.
-func (d *daemon) sweepStatusFormat(ctl *control) {
-	sids, err := ctl.run("list-sessions -F " + f("#{session_id}"))
+// Keyed on CONTENT, which is the best those builds allow. Both shapes are
+// winch's own — a pad references @winch_win, a scrub override runs a filtered
+// #{S:} loop — and nothing a theme emits looks like either, so a format the
+// user wrote is never touched. Deletable once no pre-registry daemon can still
+// be running against a live server; there is no hurry, it costs one round trip
+// per session at attach.
+func (d *daemon) sweepLegacyState(ctl *control) {
+	rows, err := ctl.run("list-sessions -F " + f("#{session_id}", "#{@winch_docked}", "#{@winch_saved_status_format}"))
 	if err != nil {
 		return
 	}
-	for _, sid := range sids {
-		cur, err := ctl.run("show-options -t " + q(sid) + " status-format")
-		if err != nil {
-			continue
+	for _, ln := range rows {
+		p := strings.Split(ln, sep)
+		if len(p) != 3 || p[2] != "" {
+			continue // marked: sweepOwned handles it exactly
 		}
-		joined := strings.Join(cur, "\n")
-		if !strings.Contains(joined, padWin) && !strings.Contains(joined, scrubFmtMark) {
-			continue
+		sid := p[0]
+		var cmds []string
+		if p[1] != "" && !d.opts.owns(optKey{scopeSession, sid, "@winch_docked"}) {
+			cmds = append(cmds, "set-option -uq -t "+q(sid)+" @winch_docked")
 		}
-		_, _ = ctl.runSeq(
-			"set-option -uq -t "+q(sid)+" status-format",
-			"set-option -uq -t "+q(sid)+" @winch_win")
-		log.Printf("swept leaked winch status-format on %s", sid)
+		if !d.opts.owns(optKey{scopeSession, sid, "status-format"}) {
+			if cur, cerr := ctl.run("show-options -q -t " + q(sid) + " status-format"); cerr == nil {
+				joined := strings.Join(cur, "\n")
+				if strings.Contains(joined, padWin) || strings.Contains(joined, scrubFmtMark) {
+					cmds = append(cmds,
+						"set-option -uq -t "+q(sid)+" status-format",
+						"set-option -uq -t "+q(sid)+" @winch_win")
+				}
+			}
+		}
+		if len(cmds) > 0 {
+			_, _ = ctl.runSeq(cmds...)
+			log.Printf("swept pre-registry winch state on %s", sid)
+		}
 	}
 }
 
@@ -342,15 +322,15 @@ func (d *daemon) sweepSpacers(ctl *control) {
 
 func snapQuery(wid string) string {
 	return "display-message -p -t " + q(wid) + " -F " +
-		f("#{window_layout}", "#{pane_id}", "#{automatic-rename}", "#{window_name}")
+		f("#{window_layout}", "#{pane_id}", "#{window_name}")
 }
 
 func parseSnap(line string) (winSnap, error) {
 	p := strings.Split(line, sep)
-	if len(p) != 4 {
+	if len(p) != 3 {
 		return winSnap{}, fmt.Errorf("bad snapshot %q", line)
 	}
-	return winSnap{layout: p[0], activePane: p[1], autoRename: p[2], name: p[3]}, nil
+	return winSnap{layout: p[0], activePane: p[1], name: p[2]}, nil
 }
 
 // layoutDims reads the window dimensions off a #{window_layout} string's
@@ -374,28 +354,14 @@ func layoutDims(layout string) (int, int) {
 }
 
 func (d *daemon) winSnapshot(ctl *control, wid string) (winSnap, error) {
-	// Two commands, one round trip. The second reads pane-border-indicators at
-	// WINDOW scope specifically: show-options -w -v does not inherit, so an
-	// empty answer means the window had none of its own and the restore is an
-	// unset. The snapQuery format would report the EFFECTIVE value instead,
-	// and writing that back would pin the window to whatever the global
-	// happened to be at dock time.
-	lines, err := ctl.runSeq(snapQuery(wid),
-		"show-options -w -t "+q(wid)+" -v pane-border-indicators")
+	lines, err := ctl.run(snapQuery(wid))
 	if err != nil {
 		return winSnap{}, err
 	}
 	if len(lines) == 0 {
 		return winSnap{}, fmt.Errorf("no snapshot for %s", wid)
 	}
-	snap, err := parseSnap(lines[0])
-	if err != nil {
-		return winSnap{}, err
-	}
-	if len(lines) > 1 {
-		snap.borderInd = strings.TrimSpace(lines[1])
-	}
-	return snap, nil
+	return parseSnap(lines[0])
 }
 
 // leaveInfo queries what restoring the window being left needs: its CURRENT
@@ -466,6 +432,68 @@ func (d *daemon) tuiCommand() (string, error) {
 	return cmd, nil
 }
 
+// intentFor describes the options a PROSPECTIVE dock state would own. Spelled
+// out rather than read off d.dock because the moves that need it build their
+// batch before they mutate any state — a batch that fails must leave the dock
+// exactly where it was.
+//
+// held is every window winch is holding geometry in: the one the sidebar is in
+// plus every spacer-held one, since a spacer-held window is still wearing the
+// dock's shape and still has the sidebar's border in it.
+func (d *daemon) intentFor(ctl *control, sess, win string, held []string, scrubWin string) optIntent {
+	if sess == "" {
+		return optIntent{}
+	}
+	in := optIntent{
+		sess:  sess,
+		win:   win,
+		held:  held,
+		width: d.width(),
+		rows:  d.opts.statusRows(ctl, sess),
+	}
+	if scrubWin != "" {
+		if ss := d.sessionOf(scrubWin); ss != "" {
+			in.scrubWin, in.scrubSess = scrubWin, ss
+		}
+	}
+	return in
+}
+
+// dockHeld is the held-window list for the dock as it stands.
+func dockHeld(p *dockState) []string {
+	held := make([]string, 0, len(p.carved)+1)
+	held = append(held, p.win)
+	for wid := range p.carved {
+		held = append(held, wid)
+	}
+	return held
+}
+
+// dockPlan is the difference between what winch owns and what the dock as it
+// stands says it should own. For the steady-state callers — a scrub starting or
+// ending, a width change — where there is no prospective state to guard.
+func (d *daemon) dockPlan(ctl *control, p *dockState) (install, restore []string, commit func()) {
+	if p == nil {
+		return nil, nil, func() {}
+	}
+	in := d.intentFor(ctl, p.sess, p.win, dockHeld(p), p.scrubWin)
+	return d.opts.plan(readOpts(ctl), desiredOpts(in))
+}
+
+// applyDockPlan reconciles the owned options with no batch to ride along with —
+// the steady-state paths, where the only thing changing is what winch wants an
+// option it already holds to say.
+func (d *daemon) applyDockPlan(ctl *control, p *dockState) {
+	install, restore, commit := d.dockPlan(ctl, p)
+	if seq := append(install, restore...); len(seq) > 0 {
+		if _, err := ctl.runSeq(seq...); err != nil {
+			log.Printf("option plan: %v", err)
+			return
+		}
+	}
+	commit()
+}
+
 // paneInWindow reports whether the world knows pid as a pane of wid.
 func (d *daemon) paneInWindow(pid, wid string) bool {
 	for _, pn := range d.h.getWorld().Panes {
@@ -512,39 +540,33 @@ func (d *daemon) dockOpen(ctl *control, client string) error {
 	}
 	p := &dockState{client: client, win: wid, sess: sid, originSess: sid, originWin: wid, snap: snap,
 		carved: adopted, openedAt: time.Now(), hostW: layoutWidth(snap.layout)}
-	p.status = d.savedStatus(ctl, sid)
-	// Freeze rename BEFORE the split: the sidebar takes focus, and an
-	// automatic-rename window would flip its name to "winch" (the sh-era
-	// bug). The new pane lands at {top-left} deterministically, so its pane
-	// option and the session cmds ride the same batch as the split.
-	seq := []string{
-		"set-option -w -t " + q(wid) + " automatic-rename off",
-		borderIndCmd(wid),
+	// The owned options go first in the batch, and the rename freeze is why:
+	// the sidebar takes focus when it lands, and an automatic-rename window
+	// would flip its name to "winch" (the sh-era bug). The new pane lands at
+	// {top-left} deterministically, so its own pane options ride here too.
+	install, _, commit := d.dockPlan(ctl, p)
+	seq := install
+	seq = append(seq,
 		fmt.Sprintf("split-window -hb -f -l %d -P -F '#{pane_id}' -t %s %s",
 			d.width(), q(wid), q(tuiCmd)),
-		"set-option -p -t " + q(wid+".{top-left}") + " @winch_sidebar 1",
+		"set-option -p -t "+q(wid+".{top-left}")+" @winch_sidebar 1",
 		// Pin the sidebar's own edge so it holds one colour through focus
 		// changes. Per PANE, so every other border in the window still
 		// highlights normally. Pane options ride the pane through swap-pane,
 		// so this is set once at spawn.
 		//
-		// Only the INACTIVE lookup actually reaches here: tmux reads
-		// pane-border-style from the pane that owns the border but
-		// pane-active-border-style from the WINDOW (rig-measured). That is why
-		// uiSeamStyle defaults to the active style — pinning the pane to it
-		// makes both lookups resolve to the same colour, which is the whole
-		// point. Setting the active one per-pane is harmless and documents
-		// the intent.
-		"set-option -p -t " + q(wid+".{top-left}") + " pane-border-style " + q(uiSeamStyle),
-		"set-option -p -t " + q(wid+".{top-left}") + " pane-active-border-style " + q(uiSeamStyle),
-	}
-	seq = append(seq, dockSessionCmds(sid)...)
-	seq = append(seq, dockWinCmd(sid, wid))
-	seq = append(seq, statusPadCmds(p.status, d.width(), 0)...)
+		// Both styles are pinned because tmux reads BOTH from the pane owning
+		// the border — screen_redraw_draw_borders_style() calls
+		// style_apply(gc, wp->options, ...) for the active and the normal case
+		// alike — so pinning only one leaves the other free to dim.
+		"set-option -p -t "+q(wid+".{top-left}")+" pane-border-style "+q(uiSeamStyle),
+		"set-option -p -t "+q(wid+".{top-left}")+" pane-active-border-style "+q(uiSeamStyle),
+	)
 	lines, err := ctl.runSeq(seq...)
 	if err != nil {
 		return err
 	}
+	commit()
 	for _, ln := range lines {
 		if strings.HasPrefix(ln, "%") {
 			p.pane = ln
@@ -592,40 +614,32 @@ func scrubStatusFormat(sid, wid string) string {
 		"#[pop-default]#[norange default]"
 }
 
-// scrubStatusSet points the origin's status line at the scrub target,
-// saving the session's real status-format lines on first use.
+// scrubStatusSet points the origin's status line at the scrub target. Nothing
+// is saved here: pointing row 0 somewhere else is a different DESIRED value for
+// an option winch already owns, so the registry rewrites it and goes on holding
+// the session's original underneath.
 func (d *daemon) scrubStatusSet(ctl *control, wid string) {
 	p := d.dock
-	if p == nil {
+	if p == nil || d.sessionOf(wid) == "" {
 		return
 	}
-	sidN := d.sessionOf(wid)
-	if sidN == "" {
-		return
-	}
-	if len(p.status.base) == 0 {
-		return // status off: no row to override
-	}
-	p.scrubFmt = true
-	// Padded like any other row — the override replaces what the row SAYS,
-	// not where it starts.
-	_, _ = ctl.run("set-option -t " + q(p.sess) + " status-format[0] " +
-		q(padPrefix(d.width(), 0)+scrubStatusFormat(sidN, wid)))
+	p.scrubWin = wid
+	d.applyDockPlan(ctl, p)
 }
 
-// scrubStatusCmds builds the restore: put row 0 back to the session's own
-// format, wrapped in the pad again — the sidebar is still docked. Clears the
-// saved state.
-func (d *daemon) scrubStatusCmds(p *dockState) []string {
-	if !p.scrubFmt {
+// scrubStatusCmds builds the restore: row 0 back to saying what the session
+// says, still wrapped in the pad — the sidebar is still docked. Returned rather
+// than run so it can ride the unzoom batch, which is one redraw.
+func (d *daemon) scrubStatusCmds(ctl *control, p *dockState) []string {
+	if p.scrubWin == "" {
 		return nil
 	}
-	p.scrubFmt = false
-	if len(p.status.base) == 0 || p.status.base[0] == "" {
-		return []string{"set-option -uq -t " + q(p.sess) + " status-format[0]"}
-	}
-	return []string{fmt.Sprintf("set-option -t %s status-format[0] %s",
-		q(p.sess), q(padPrefix(d.width(), 0)+p.status.base[0]))}
+	p.scrubWin = ""
+	install, _, commit := d.dockPlan(ctl, p)
+	// Nothing is being given up, so no failure here can strand a release:
+	// commit alongside the commands rather than after them.
+	commit()
+	return install
 }
 
 // scrubStart begins billboard scrubbing: capture the target FIRST (the TUI
@@ -667,7 +681,7 @@ func (d *daemon) scrubEnd(ctl *control, unzoom bool) {
 	}
 	p.scrubbing = false
 	d.stopStream()
-	fmtRestore := d.scrubStatusCmds(p)
+	fmtRestore := d.scrubStatusCmds(ctl, p)
 	if unzoom && altScreen {
 		// The TUI holds the alternate screen, so tmux CLIPS this pane's grid
 		// on the 480->26 shrink instead of reflowing it. The zoomed layout
@@ -769,16 +783,23 @@ func (d *daemon) dockMove(ctl *control, wid string, focusMain bool, focusPane st
 	}
 	tgt := p.carved[wid]
 	if tgt != nil {
-		// Spacer-held: the live layout is the docked one; a later release
-		// must replay the pre-carve original, and rename was frozen at carve.
+		// Spacer-held: the live layout is the docked one, so a later release
+		// must replay the pre-carve original.
 		snapN.layout = tgt.orig
-		snapN.autoRename = tgt.autoRename
 	}
-	var statusN statusSave
-	if sidN != p.sess {
-		statusN = d.savedStatus(ctl, sidN) // before the pad, or we save our own pad
-	}
-	var critical []string
+	// The options the move WILL want, computed against the prospective state:
+	// the arriving session, the arriving window, and every window winch is
+	// holding after the move — which is everything it holds now plus the one
+	// being entered, since the one being left keeps its spacer. Nothing is
+	// recorded until the batch lands (commit, below), so a failure leaves the
+	// registry believing exactly what is still true.
+	held := append(dockHeld(p), wid)
+	install, restore, commit := d.opts.plan(readOpts(ctl),
+		desiredOpts(d.intentFor(ctl, sidN, wid, held, "")))
+
+	// Options first in the batch: the rename freeze has to beat the swap that
+	// puts the sidebar in, or an automatic-rename window renames itself to it.
+	critical := append([]string(nil), install...)
 	sizeStale := false
 	if tgt != nil && tgt.spacer != "" {
 		critical = append(critical,
@@ -794,8 +815,6 @@ func (d *daemon) dockMove(ctl *control, wid string, focusMain bool, focusPane st
 				fmt.Sprintf("resize-window -x %d -y %d -t %s", dockW, dockH, q(wid)))
 		}
 		critical = append(critical,
-			"set-option -w -t "+q(wid)+" automatic-rename off",
-			borderIndCmd(wid),
 			fmt.Sprintf("split-window -d -hb -f -l %d -P -F '#{pane_id}' -t %s %s",
 				d.width(), q(wid), q(spacerCmd)),
 			"swap-pane -d -s "+q(p.pane)+" -t "+q(wid+".{top-left}"))
@@ -807,11 +826,10 @@ func (d *daemon) dockMove(ctl *control, wid string, focusMain bool, focusPane st
 		// client again from here.
 		critical = append(critical, "set-option -w -t "+q(wid)+" window-size latest")
 	}
-	// The pad follows the WINDOW, so this lands on same-session moves too.
-	critical = append(critical, dockWinCmd(sidN, wid))
 	if sidN != p.sess {
-		critical = append(critical, dockSessionCmds(sidN)...)
-		critical = append(critical, statusPadCmds(statusN, d.width(), 0)...)
+		// Last, so everything the arriving session needs is already set when
+		// the client lands on it — a pad arriving after the switch is a
+		// visible flicker.
 		critical = append(critical, "switch-client -c "+q(p.client)+" -t "+q(sidN))
 	}
 	if focusMain {
@@ -833,11 +851,7 @@ func (d *daemon) dockMove(ctl *control, wid string, focusMain bool, focusPane st
 	if curActive != "" && curActive != p.pane {
 		leaveFocus = curActive
 	}
-	restore := []string{"select-pane -t " + q(leaveFocus)}
-	if sidN != p.sess {
-		restore = append(restore, statusRestoreCmds(p.status)...)
-		restore = append(restore, "set-option -uq -t "+q(p.sess)+" @winch_docked")
-	}
+	restore = append([]string{"select-pane -t " + q(leaveFocus)}, restore...)
 	outs, errs := ctl.runPipelined(critical, restore)
 	if errs[0] != nil {
 		if tgt != nil && tgt.spacer != "" {
@@ -868,26 +882,22 @@ func (d *daemon) dockMove(ctl *control, wid string, focusMain bool, focusPane st
 			}
 		}
 	}
-	if sidN != p.sess {
-		// The restore batch just unset the OLD session's status-format
-		// wholesale, and scrubEnd still thinks it owes that session a row 0.
-		// Letting it pay would re-wrap a session the dock has left.
-		p.scrubFmt = false
-	}
-	d.scrubEnd(ctl, false) // the swap already unzoomed the sidebar on its way out
+	commit()
 	if errs[1] != nil {
 		log.Printf("scrub restore %s: %v", p.win, errs[1])
 	}
 	if spacerOld == "" {
 		log.Printf("scrub: no spacer id for %s — release will not restore it", p.win)
 	}
-	p.carved[p.win] = &carveState{spacer: spacerOld, orig: p.snap.layout, autoRename: p.snap.autoRename, borderInd: p.snap.borderInd}
+	p.carved[p.win] = &carveState{spacer: spacerOld, orig: p.snap.layout}
 	delete(p.carved, wid)
-	if sidN != p.sess {
-		p.status = statusN
-	}
 	prev := p.win
 	p.win, p.sess, p.snap = wid, sidN, snapN
+	// After the state has moved, so the scrub's own plan is computed against
+	// where the dock now IS. Run against the old state it would re-wrap the
+	// session the move has just handed back.
+	p.scrubWin = "" // the move plan already put row 0 back
+	d.scrubEnd(ctl, false)
 	d.lastScrub = time.Now()
 	if bench {
 		log.Printf("bench scrub %s -> %s focus_main=%v swap=%v", prev, wid, focusMain, tgt != nil)
@@ -1013,7 +1023,6 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 	// origin panes before a toOrigin switch lands.
 	d.scrubEnd(ctl, false)
 	d.dock = nil
-	d.statusBase = nil // re-read the user's bar on the next dock
 	d.pv.target = ""
 	d.pv.reset()
 	log.Printf("undock client=%s win=%s to_origin=%v", p.client, p.win, toOrigin)
@@ -1035,8 +1044,10 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 	}
 
 	moving := toOrigin && p.originWin != p.win
-	undock := append([]string{"set-option -uq -t " + q(p.sess) + " @winch_docked"},
-		statusRestoreCmds(p.status)...)
+	// Everything winch took, in one list. Held windows give their options back
+	// here rather than at release: an option write costs nothing, while a
+	// release stalls tmux reflowing scrollback and is deliberately deferred.
+	undock := d.opts.releaseAll()
 	if moving {
 		// Land first, with the session bookkeeping in the SAME batch — an
 		// unpad arriving a round trip after the switch flickers the status.
@@ -1050,10 +1061,7 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 			if rl := d.leaveLayout(p.originWin, t.orig, oLay, oDirty, t.spacer); rl != "" {
 				seq = append(seq, "select-layout -t "+q(p.originWin)+" "+q(rl))
 			}
-			seq = append(seq,
-				"set-option -w -t "+q(p.originWin)+" automatic-rename "+t.autoRename,
-				borderIndRestore(p.originWin, t.borderInd),
-				"set-option -w -uq -t "+q(p.originWin)+" @winch_layout_dirty")
+			seq = append(seq, "set-option -w -uq -t "+q(p.originWin)+" @winch_layout_dirty")
 			delete(p.carved, p.originWin)
 		}
 		seq = append(seq,
@@ -1070,8 +1078,6 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 	}
 	seq := []string{
 		"kill-pane -t " + q(p.pane),
-		"set-option -w -t " + q(p.win) + " automatic-rename " + p.snap.autoRename,
-		borderIndRestore(p.win, p.snap.borderInd),
 		"set-option -w -uq -t " + q(p.win) + " @winch_layout_dirty",
 	}
 	if !moving {
@@ -1125,47 +1131,10 @@ const padFlush = "#{||:#{==:#{status-position},bottom}," +
 // is briefly down to one pane. Blank columns hid all of that. A glyph does not.
 const padBordered = "#{&&:#{!=:#{window_panes},1},#{==:#{window_zoomed_flag},0}}"
 
-// dockSessionCmds marks a session as docked: the bind-routing flag M-h/M-l
-// check. The status pad is separate (statusPadCmds) — it wraps the session's
-// own format, which has to be read before it can be wrapped.
-func dockSessionCmds(sid string) []string {
-	return []string{"set-option -t " + q(sid) + " @winch_docked 1"}
-}
-
-// borderIndCmd turns off tmux's active-pane border INDICATOR for a window the
-// sidebar is entering, and borderIndRestore puts it back on the way out.
-//
-// The indicator (`pane-border-indicators`, default `colour`) colours only HALF
-// the border in a window with exactly two panes, flipping which half as focus
-// moves. Docked, that is the common shape — sidebar plus one content pane — so
-// the sidebar's edge came out half active and half inactive, with the seam
-// glyph in the status bar necessarily disagreeing with one of the halves
-// whatever colour it took. Measured on the raw client stream: rows 1-6 in one
-// colour, 7-11 in the other, inverting with focus. With the indicator off the
-// same divider draws in a single colour, and stays that way past two panes.
-//
-// Restored per window rather than set globally: it is the user's option, and
-// only the windows the sidebar actually visits have a reason to change.
-func borderIndCmd(wid string) string {
-	return "set-option -w -t " + q(wid) + " pane-border-indicators off"
-}
-
-func borderIndRestore(wid, prev string) string {
-	if prev == "" {
-		return "set-option -w -uq -t " + q(wid) + " pane-border-indicators"
-	}
-	return "set-option -w -t " + q(wid) + " pane-border-indicators " + q(prev)
-}
-
 // padWin names the option the pad gates on: the window holding the sidebar.
-// Also the mark a sweep recognises a winch-written format by — nothing a
+// Also how the pre-registry sweep recognises a winch-written format — nothing a
 // theme emits references a winch option.
 const padWin = "#{@winch_win}"
-
-// dockWinCmd points the pad at the window currently holding the sidebar.
-func dockWinCmd(sid, wid string) string {
-	return "set-option -t " + q(sid) + " @winch_win " + q(wid)
-}
 
 // padPrefix is the run of columns that pushes one status row past the sidebar:
 // the sidebar's own width, then the border column.
@@ -1241,107 +1210,14 @@ func borderStyle(opt string) string {
 	return "#[#{?" + unset + ",fg=terminal,#{E:" + opt + "}}]"
 }
 
-// statusPadCmds installs the pad by WRAPPING the session's own status-format,
-// one row at a time, starting at row `from` (1 while the scrub override owns
-// row 0).
-//
-// Prefixing the format rather than setting status-left is what makes this
-// config-agnostic. status-left is the USER's content — powerline segments live
-// there — and setting it deleted theirs for as long as the sidebar was docked.
-// Worse, a theme that rewrites status-format and never interpolates
-// status-left made the pad a silent no-op. A prefix survives the #[align=left]
-// the stock format opens with (probe-verified) and shifts whatever is inside,
-// including their status-left, without reading a byte of it.
-func statusPadCmds(s statusSave, width, from int) []string {
-	out := make([]string, 0, len(s.base))
-	for i := from; i < len(s.base); i++ {
-		if s.base[i] == "" {
-			continue
-		}
-		out = append(out, fmt.Sprintf("set-option -t %s status-format[%d] %s",
-			q(s.sess), i, q(padPrefix(width, i)+s.base[i])))
-	}
-	return out
-}
-
-// savedStatus records a session's status-format before the pad wraps it: the
-// raw session-level lines for an exact restore, and the effective text of each
-// rendered row for the wrap itself.
-func (d *daemon) savedStatus(ctl *control, sid string) statusSave {
-	if s, ok := d.statusBase[sid]; ok {
-		// Also the guard against saving our own pad: once a session is
-		// wrapped, re-reading it would capture the wrap as the base.
-		return s
-	}
-	s := statusSave{sess: sid}
-	if lines, err := ctl.run("show-options -t " + q(sid) + " status-format"); err == nil {
-		s.lines = lines
-	}
-	for i := 0; i < statusRowCount(ctl, sid); i++ {
-		s.base = append(s.base, effOpt(ctl, sid, fmt.Sprintf("status-format[%d]", i)))
-	}
-	if d.statusBase == nil {
-		d.statusBase = map[string]statusSave{}
-	}
-	d.statusBase[sid] = s
-	return s
-}
-
-// statusRowCount is how many status rows tmux renders for a session: `on` is
-// one, `off` is none, otherwise the number. Only rendered rows are worth
-// wrapping — status-format ships three entries whatever `status` says.
-func statusRowCount(ctl *control, sid string) int {
-	switch v := strings.TrimSpace(effOpt(ctl, sid, "status")); v {
-	case "off", "0":
-		return 0
-	case "", "on", "1":
-		return 1
-	default:
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 5 {
-			return n
-		}
-		return 1
-	}
-}
-
-// effOpt reads an option as the session actually sees it. show-options -v does
-// NOT inherit: a session with nothing of its own answers empty rather than the
-// global value (probe-verified), and the global is where a tmux.conf setting
-// lives.
-func effOpt(ctl *control, sid, name string) string {
-	if lines, err := ctl.run("show-options -t " + q(sid) + " -v " + name); err == nil &&
-		len(lines) == 1 && lines[0] != "" {
-		return lines[0]
-	}
-	if lines, err := ctl.run("show-options -gv " + name); err == nil && len(lines) == 1 {
-		return lines[0]
-	}
-	return ""
-}
-
-// statusRestoreCmds puts a session's status-format back: clear everything winch
-// wrote, then replay whatever the session had of its own. An unset falls back
-// to the global format, which is the unwrapped truth. All infallible, safe
-// anywhere in a sequence.
-func statusRestoreCmds(s statusSave) []string {
-	if s.sess == "" {
-		return nil
-	}
-	out := []string{
-		"set-option -uq -t " + q(s.sess) + " status-format",
-		"set-option -uq -t " + q(s.sess) + " @winch_win",
-	}
-	for _, ln := range s.lines {
-		out = append(out, "set-option -t "+q(s.sess)+" "+ln)
-	}
-	return out
-}
-
-func (d *daemon) restoreStatus(ctl *control, s statusSave) {
-	for _, c := range statusRestoreCmds(s) {
-		_, _ = ctl.run(c)
-	}
-}
+// The pad WRAPS the session's own status-format rather than setting
+// status-left, and that is what makes it config-agnostic. status-left is the
+// USER's content — powerline segments live there — and setting it deleted
+// theirs for as long as the sidebar was docked. Worse, a theme that rewrites
+// status-format and never interpolates status-left made the pad a silent no-op.
+// A prefix survives the #[align=left] the stock format opens with
+// (probe-verified) and shifts whatever is inside, including their status-left,
+// without reading a byte of it. desiredOpts builds it; owned.go installs it.
 
 // checkDock runs after every re-list: follow the client when it switched
 // windows by a path we don't route (choose-tree, prefix keys), clean up when
@@ -1358,15 +1234,14 @@ func (d *daemon) checkDock(ctl *control, w world) {
 		// whatever the user just did — skip it.
 		log.Printf("dock: sidebar pane gone, cleaning up")
 		d.dock = nil
-		d.statusBase = nil
 		d.stopStream()
 		d.pv.target = ""
 		d.pv.reset()
-		_, _ = ctl.run("set-option -u -t " + q(p.sess) + " @winch_docked")
-		for _, c := range d.scrubStatusCmds(p) {
-			_, _ = ctl.run(c)
+		if seq := d.opts.releaseAll(); len(seq) > 0 {
+			if _, err := ctl.runSeq(seq...); err != nil {
+				log.Printf("dock cleanup: %v", err)
+			}
 		}
-		d.restoreStatus(ctl, p.status)
 		d.deferReleases(p)
 		return
 	}
@@ -1474,15 +1349,10 @@ func (d *daemon) setWidth(ctl *control, wpx int, resizePane bool) {
 		if resizePane && !p.scrubbing {
 			_, _ = ctl.run(fmt.Sprintf("resize-pane -t %s -x %d", q(p.pane), wpx))
 		}
-		// Row 0 while scrubbing belongs to the override, which re-installs
-		// itself at the current width on the next scrub step.
-		from := 0
-		if p.scrubFmt {
-			from = 1
-		}
-		for _, c := range statusPadCmds(p.status, wpx, from) {
-			_, _ = ctl.run(c)
-		}
+		// The pad's width is part of the desired value, so re-planning is the
+		// whole of it — including the scrub override, which is padded like any
+		// other row.
+		d.applyDockPlan(ctl, p)
 	}
 	d.h.sendRole("list", marshalLine(widthMsg{Type: "width", Width: wpx}))
 }

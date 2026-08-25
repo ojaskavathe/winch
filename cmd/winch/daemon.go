@@ -45,13 +45,11 @@ type daemon struct {
 	releaseT       *time.Timer
 	releaseC       <-chan time.Time
 
-	// statusBase caches each session's pre-pad status-format, keyed by
-	// session id. Reading one costs several control-mode round trips, and a
-	// cross-session hand-off is the most latency-critical path there is —
-	// stalling it before the critical batch shows the user a blank sidebar
-	// strip for a frame. Nobody edits their status format mid-scrub, and an
-	// undock drops the whole cache, so a toggle picks up a changed config.
-	statusBase map[string]statusSave
+	// opts owns every option winch takes from the user (owned.go): what each
+	// one held before it was claimed, what winch last wrote over it, and the
+	// commands to put it back. Nothing else in the daemon writes an option
+	// that belongs to somebody else.
+	opts *owner
 
 	// agentCycle: per-client position in the agent switcher (M-a). Rapid
 	// re-invocations cycle down the attention-sorted list; after the tap
@@ -145,7 +143,7 @@ func runDaemon(tmuxSock, winchSock string) {
 	}
 
 	h := newHub()
-	d := &daemon{tmuxSock: tmuxSock, h: h}
+	d := &daemon{tmuxSock: tmuxSock, h: h, opts: newOwner()}
 	var ln net.Listener
 
 	sig := make(chan os.Signal, 1)
@@ -199,9 +197,12 @@ func runDaemon(tmuxSock, winchSock string) {
 		d.injectGit(&w)
 		h.setWorld(w, nil, true, tmuxSock)
 		d.armDetect(w)
+		// Order matters: sweepOwned puts back everything a dead daemon's marks
+		// describe, and it has to run before anything READS a status format —
+		// statusRows assumes nobody has wrapped the session it is reading.
 		d.sweepSpacers(ctl)
-		d.sweepDockedState(ctl)
-		d.sweepStatusFormat(ctl)
+		d.sweepOwned(ctl)
+		d.sweepLegacyState(ctl)
 		d.sweepLegacyPad(ctl)
 		if ln == nil {
 			// Bind only now, with a populated world: a subscriber must never

@@ -75,5 +75,10 @@ func TestRecovery(t *testing.T) {
 		return r.ShowOpt("-t", "work", "-v", "@winch_docked") == ""
 	}))
 	r.Chk("status pad swept", r.ShowOpt("-t", "work", "status-left") == "")
-	r.Chk("sweep logged", r.LogHas("swept stale dock state"))
+	// Swept off the @winch_saved_* marks the dead daemon wrote onto the session
+	// itself, so the restore is exact rather than a guess at what winch's own
+	// writes look like. See rigs/crashrestore_test.go for the window options,
+	// which no content-keyed sweep could ever have recognised.
+	r.Chk("sweep logged", r.LogHas(`swept leaked session .*@winch_docked`))
+	r.Chk("marks cleared", r.ShowOpt("-t", "work", "-v", "@winch_saved_status_format") == "")
 }

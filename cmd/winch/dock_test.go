@@ -29,6 +29,42 @@ func TestPadMarked(t *testing.T) {
 	}
 }
 
+// tmux splits a format conditional at the first comma not inside #{}, and it
+// does NOT count #[] — so one #[bg=x,fg=y] anywhere in a branch truncates it,
+// and the rest of the pad silently disappears. Probe-verified, and the reason
+// every style in the pad is written as separate directives.
+//
+// Cheap to state and impossible to notice by reading: the format still renders,
+// just wrong, and only in the branch that was taken.
+func TestPadHasNoCommaInsideAStyle(t *testing.T) {
+	saveTheme, saveSeam, saveLines := uiTheme, uiSeamStyle, uiBorderLines
+	defer func() { uiTheme, uiSeamStyle, uiBorderLines = saveTheme, saveSeam, saveLines }()
+	// A style with a comma in it is exactly the case that has to survive:
+	// catppuccin's border style is a whole format chain, and a user's can be
+	// anything at all.
+	uiTheme, uiSeamStyle, uiBorderLines = "catppuccin", "fg=#b4befe,bold", "single"
+
+	for _, row := range []int{0, 1} {
+		got := padPrefix(26, row)
+		rest := got
+		for {
+			i := strings.Index(rest, "#[")
+			if i < 0 {
+				break
+			}
+			j := strings.Index(rest[i:], "]")
+			if j < 0 {
+				t.Fatalf("row %d: unterminated style directive in %q", row, got)
+			}
+			if inner := rest[i+2 : i+j]; strings.Contains(inner, ",") {
+				t.Errorf("row %d: #[%s] holds a comma, which truncates the branch it is in:\n%s",
+					row, inner, got)
+			}
+			rest = rest[i+j:]
+		}
+	}
+}
+
 // legacyPad decides whether to delete a session's status-left, so it has to
 // recognise the old pad and nothing a person would write.
 func TestLegacyPadDetect(t *testing.T) {
