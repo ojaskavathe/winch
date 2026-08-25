@@ -24,7 +24,7 @@ func TestScrubFmtMarked(t *testing.T) {
 // thing the format sweep recognises. Lose the tie and a daemon that dies while
 // docked leaves the bar shifted forever.
 func TestPadMarked(t *testing.T) {
-	if got := padPrefix(26, 0); !strings.Contains(got, padWin) {
+	if got := padPrefix(26, 0, false); !strings.Contains(got, padWin) {
 		t.Fatalf("padPrefix no longer carries padWin %q:\n%s", padWin, got)
 	}
 }
@@ -44,8 +44,11 @@ func TestPadHasNoCommaInsideAStyle(t *testing.T) {
 	// anything at all.
 	uiTheme, uiSeamStyle, uiBorderLines = "catppuccin", "fg=#b4befe,bold", "single"
 
-	for _, row := range []int{0, 1} {
-		got := padPrefix(26, row)
+	for _, c := range []struct {
+		row   int
+		scrub bool
+	}{{0, false}, {1, false}, {0, true}, {1, true}} {
+		got := padPrefix(26, c.row, c.scrub)
 		rest := got
 		for {
 			i := strings.Index(rest, "#[")
@@ -54,11 +57,11 @@ func TestPadHasNoCommaInsideAStyle(t *testing.T) {
 			}
 			j := strings.Index(rest[i:], "]")
 			if j < 0 {
-				t.Fatalf("row %d: unterminated style directive in %q", row, got)
+				t.Fatalf("row %d scrub=%v: unterminated style directive in %q", c.row, c.scrub, got)
 			}
 			if inner := rest[i+2 : i+j]; strings.Contains(inner, ",") {
-				t.Errorf("row %d: #[%s] holds a comma, which truncates the branch it is in:\n%s",
-					row, inner, got)
+				t.Errorf("row %d scrub=%v: #[%s] holds a comma, which truncates the branch it is in:\n%s",
+					c.row, c.scrub, inner, got)
 			}
 			rest = rest[i+j:]
 		}

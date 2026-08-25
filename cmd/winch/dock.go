@@ -440,18 +440,19 @@ func (d *daemon) tuiCommand() (string, error) {
 // held is every window winch is holding geometry in: the one the sidebar is in
 // plus every spacer-held one, since a spacer-held window is still wearing the
 // dock's shape and still has the sidebar's border in it.
-func (d *daemon) intentFor(ctl *control, sess, win string, held []string, scrubWin string, clientW int) optIntent {
+func (d *daemon) intentFor(ctl *control, sess, win string, held []string, scrubWin string, clientW int, scrubbing bool) optIntent {
 	if sess == "" {
 		return optIntent{}
 	}
 	in := optIntent{
-		sess:     sess,
-		win:      win,
-		held:     held,
-		width:    d.width(),
-		rows:     d.opts.statusRows(ctl, sess),
-		msgStyle: d.opts.msgStyle(ctl, sess),
-		clientW:  clientW,
+		sess:      sess,
+		win:       win,
+		held:      held,
+		width:     d.width(),
+		rows:      d.opts.statusRows(ctl, sess),
+		msgStyle:  d.opts.msgStyle(ctl, sess),
+		clientW:   clientW,
+		scrubbing: scrubbing,
 	}
 	if scrubWin != "" {
 		if ss := d.sessionOf(scrubWin); ss != "" {
@@ -478,7 +479,7 @@ func (d *daemon) dockPlan(ctl *control, p *dockState) (install, restore []string
 	if p == nil {
 		return nil, nil, func() {}
 	}
-	in := d.intentFor(ctl, p.sess, p.win, dockHeld(p), p.scrubWin, p.hostW)
+	in := d.intentFor(ctl, p.sess, p.win, dockHeld(p), p.scrubWin, p.hostW, p.scrubbing)
 	return d.opts.plan(readOpts(ctl), desiredOpts(in))
 }
 
@@ -629,10 +630,15 @@ func scrubStatusFormat(sid, wid string) string {
 // the session's original underneath.
 func (d *daemon) scrubStatusSet(ctl *control, wid string) {
 	p := d.dock
-	if p == nil || d.sessionOf(wid) == "" {
+	if p == nil {
 		return
 	}
-	p.scrubWin = wid
+	if d.sessionOf(wid) != "" {
+		p.scrubWin = wid
+	}
+	// Replanned even when the target's session is unknown and row 0 keeps
+	// saying what it said: the SEAM changes on every scrub whatever the bar
+	// does, because the zoom hands the sidebar's edge from tmux to the TUI.
 	d.applyDockPlan(ctl, p)
 }
 
@@ -804,7 +810,7 @@ func (d *daemon) dockMove(ctl *control, wid string, focusMain bool, focusPane st
 	// registry believing exactly what is still true.
 	held := append(dockHeld(p), wid)
 	install, restore, commit := d.opts.plan(readOpts(ctl),
-		desiredOpts(d.intentFor(ctl, sidN, wid, held, "", p.hostW)))
+		desiredOpts(d.intentFor(ctl, sidN, wid, held, "", p.hostW, false)))
 
 	// Options first in the batch: the rename freeze has to beat the swap that
 	// puts the sidebar in, or an automatic-rename window renames itself to it.
@@ -1170,7 +1176,7 @@ const padWin = "#{@winch_win}"
 // not inside #{}, and it does NOT count #[] — so a single #[bg=x,fg=y] would
 // truncate the branch at that comma (probe-verified). Hence the separate
 // style directives.
-func padPrefix(width, row int) string {
+func padPrefix(width, row int, scrubbing bool) string {
 	// bg=terminal (tmux >= 3.4) is the TERMINAL's default background — what
 	// the sidebar paints on — so the strip above the sidebar reads as
 	// sidebar, not statusline. (bg=default would NOT work: inside the
@@ -1181,7 +1187,7 @@ func padPrefix(width, row int) string {
 		padBG = "#181825" // the sidebar's own ground (tui.go pal.bg, catppuccin)
 	}
 	inner := "#[bg=" + padBG + "]#[fg=" + padBG + "]" + strings.Repeat(" ", width) +
-		padCell(row) + "#[default]"
+		padCell(width, row, scrubbing) + "#[default]"
 	return "#{?#{==:#{window_id}," + padWin + "}," + inner + ",}"
 }
 
@@ -1206,11 +1212,31 @@ func padPrefix(width, row int) string {
 //
 // bg=terminal comes BEFORE the seam style so a seam style carrying its own
 // background still wins.
-func padCell(row int) string {
+//
+// While SCRUBBING the edge is a different object entirely, and the glyph has to
+// follow it. The sidebar is zoomed to the whole window then, so tmux draws no
+// border at all — a window with one pane has none — and the TUI's own paintList
+// takes its wide branch and paints a divider in pal.muted on pal.bg at the same
+// column. padBordered used to suppress the glyph on window_zoomed_flag, on the
+// reasoning that a zoom means there is nothing to continue; there is, it just
+// is not tmux's. The first j emptied that one cell and left the edge running up
+// to a gap.
+func padCell(width, row int, scrubbing bool) string {
 	if row != 0 {
 		// Not adjacent to the panes: a plain space on the pad's own ground,
 		// which is right — there is no border for it to continue.
 		return " "
+	}
+	if scrubbing {
+		// Mirrors paintList's own test: below listW+2 the TUI has no room for a
+		// divider and draws none, so neither does the pad.
+		//
+		// e|> and not >. tmux's bare #{>:a,b} compares STRINGS, so "200" > "28"
+		// is false — '0' sorts below '8' — and the guard silently suppressed
+		// the glyph at every width. The e| prefix is what makes it arithmetic.
+		wide := "#{e|>:#{window_width}," + strconv.Itoa(width+2) + "}"
+		return "#{?#{&&:" + padFlush + "," + wide + "}," +
+			scrubSeamStyle() + borderGlyph(uiBorderLines) + ", }"
 	}
 	// One style, matching the pinned border rather than asking tmux which of
 	// the two it would use — that question is what the pin removes. Commas
@@ -1220,6 +1246,17 @@ func padCell(row int) string {
 	return "#{?#{&&:" + padFlush + "," + padBordered + "}," +
 		"#[bg=terminal]" + seam + borderGlyph(uiBorderLines) +
 		", }"
+}
+
+// scrubSeamStyle is the divider the TUI paints down the sidebar's edge while
+// the pane is zoomed — pal.bg + pal.muted in tui.go's palette. Hardcoded
+// alongside padBG for the same reason: the TUI's palette is escape sequences,
+// and this needs tmux style names. Keep the two in step.
+func scrubSeamStyle() string {
+	if uiTheme == "terminal" {
+		return "#[bg=terminal]#[fg=brightblack]" // pal.bg "", pal.muted \e[90m
+	}
+	return "#[bg=#181825]#[fg=#6c7086]" // pal.bg rgbBG(24,24,37), pal.muted rgb(108,112,134)
 }
 
 // borderStyle emits the style tmux paints a border segment in — with one

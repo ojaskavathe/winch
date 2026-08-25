@@ -397,6 +397,11 @@ type optIntent struct {
 	msgStyle string
 	clientW  int
 
+	// scrubbing is winch holding the sidebar ZOOMED for billboards. It changes
+	// what draws the sidebar.s edge, and so what the pad.s last column has to
+	// match — see padCell.
+	scrubbing bool
+
 	// scrubWin / scrubSess point row 0 at a billboard target instead of at the
 	// session's own format. Empty means row 0 says what it normally says.
 	scrubWin  string
@@ -425,7 +430,7 @@ func desiredOpts(in optIntent) []optWant {
 		if body == "" {
 			continue
 		}
-		rows = append(rows, fmt.Sprintf("status-format[%d] %s", i, q(padPrefix(in.width, i)+body)))
+		rows = append(rows, fmt.Sprintf("status-format[%d] %s", i, q(padPrefix(in.width, i, in.scrubbing)+body)))
 	}
 	if len(rows) > 0 {
 		want = append(want, optWant{optKey{scopeSession, in.sess, "status-format"}, rows})

@@ -402,7 +402,7 @@ func (d *daemon) preview(ctl *control, wid string, prefetch, stream bool) error 
 			// window that was pre-carved and then entered — dockMove takes the
 			// swap branch for those and used to set neither option.
 			install, _, commit := d.opts.plan(readOpts(ctl), desiredOpts(
-				d.intentFor(ctl, d.dock.sess, d.dock.win, append(dockHeld(d.dock), wid), d.dock.scrubWin, d.dock.hostW)))
+				d.intentFor(ctl, d.dock.sess, d.dock.win, append(dockHeld(d.dock), wid), d.dock.scrubWin, d.dock.hostW, d.dock.scrubbing)))
 			seq = append(seq, install...)
 			seq = append(seq,
 				fmt.Sprintf("split-window -d -hb -f -l %d -P -F '#{pane_id}' -t %s %s",

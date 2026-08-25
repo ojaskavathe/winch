@@ -60,42 +60,11 @@ func TestStatusPadBorder(t *testing.T) {
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 }
 
-// TestStatusPadBorderZoomed: a scrub zooms the sidebar to the full width, so
-// the border it was continuing no longer exists — but the pad is still W+1
-// wide, because nothing re-runs dockSessionCmds on a zoom. A glyph left in
-// that column lands in the middle of the sidebar's own top edge, pointing at
-// nothing. Blank columns hid this; a visible character does not.
-func TestStatusPadBorderZoomed(t *testing.T) {
-	r := New(t)
-
-	r.D("toggle", r.CL)
-	r.await(5000, "docked", func() bool { return r.Side().Pane != "" })
-	sp := r.Side().Pane
-	w := r.Side().Width
-	sleep(600)
-
-	scrubAway(r, sp)
-	r.await(4000, "zoomed", func() bool { return r.Side().Width == r.prof.cols })
-
-	r.StartRecord()
-	r.T("refresh-client", "-t", r.CL)
-	sleep(700)
-	s := newScreen(r.prof.rows, r.prof.cols)
-	for _, c := range r.StopRecordT() {
-		s.write(c.Data)
-	}
-	st := r.prof.rows - 1
-	got := s.grid[st][w]
-	r.Chk("no glyph while the sidebar is zoomed over the border", got == ' ')
-	if got != ' ' {
-		t.Logf("  status row col %d holds %q with no border beneath it", w, got)
-	}
-
-	r.SendKeys(sp, "q")
-	sleep(600)
-	r.D("toggle", r.CL)
-	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
-}
+// TestStatusPadBorderZoomed used to live here, asserting that a zoomed sidebar
+// gets NO glyph — the border it was continuing being gone. That reasoning was
+// wrong: while zoomed the TUI paints its own divider at the same column, so the
+// glyph has to stay and match THAT instead. TestSeamSurvivesAScrub in
+// seamscrub_test.go makes the corrected claim across all three states.
 
 // TestStatusPadBorderNotAdjacent: the glyph only continues the border when the
 // padded row actually touches the pane area. status-left lives on
