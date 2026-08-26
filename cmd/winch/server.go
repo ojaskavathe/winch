@@ -91,6 +91,16 @@ func (h *hub) setSelect(win, pane string) {
 	h.mu.Unlock()
 }
 
+// getSelect reads back what setSelect recorded, for the hello-list replay.
+// That replay used to name the dock's WINDOW instead, which is the same thing
+// only when the selection is a window — so it silently discarded every pick
+// that was a pane. See router.go's hello-list case.
+func (h *hub) getSelect() (string, string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.selWin, h.selPane
+}
+
 // setWidth records the sidebar width for the same reason as setSelect.
 func (h *hub) setWidth(w int) {
 	h.mu.Lock()

@@ -165,13 +165,28 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 		}
 		// dockOpen just spawned it; replay the selection it missed (and the
 		// current frame, when browse pre-zoomed into a scrub).
+		//
+		// Replay what the hub RECORDED, not d.dock.win. Those agree whenever
+		// the selection is a window, which is every path but one: M-a docks
+		// and then picks an agent's PANE, and this replay — arriving after the
+		// snapshot that carried the pick correctly — overwrote it with a
+		// bare window, dropping the selection onto the session row. The first
+		// press of the agent switcher never landed on an agent, and because
+		// the cycle position HAD advanced, the second press showed the second
+		// agent: the top-attention one, the whole point of the feature, was
+		// unreachable. Visible as a flicker unique to M-a — the right row was
+		// painted from the snapshot, then this took it away.
 		if d.dock != nil {
-			d.h.send(env.sub, marshalLine(selectMsg{Type: "select", Window: d.dock.win}))
+			selWin, selPane := d.h.getSelect()
+			if selWin == "" {
+				selWin = d.dock.win
+			}
+			d.h.send(env.sub, marshalLine(selectMsg{Type: "select", Window: selWin, Pane: selPane}))
 			if d.dock.scrubbing && d.pv.lastPanes != nil {
 				d.h.send(env.sub, d.pv.frameBytes())
 			}
-			log.Printf("hello-list: replay docked select=%s spawn_ms=%d",
-				d.dock.win, time.Since(d.dock.openedAt).Milliseconds())
+			log.Printf("hello-list: replay docked select=%s pane=%q spawn_ms=%d",
+				selWin, selPane, time.Since(d.dock.openedAt).Milliseconds())
 		}
 	case "doctor":
 		// Read-only by contract: a tool reached for when something looks wrong

@@ -149,8 +149,20 @@ func TestAgent(t *testing.T) {
 		}
 		return false
 	}
+	// Undock first: the first tap has to work from a CLOSED sidebar, which
+	// is the only way anyone actually reaches for the switcher and the one
+	// path this test used to skip. It spawns a TUI, and the hello-list
+	// replay that follows used to overwrite the agent pick with the dock's
+	// bare window — so tap one landed on a session row, and tap two showed
+	// the SECOND agent, because the cycle had advanced anyway. The
+	// top-attention agent was unreachable. Docked-only coverage saw none of
+	// it: no spawn, no hello, no replay.
+	r.D("toggle", r.CL)
+	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
+
 	r.D("agents", r.CL)
-	r.Chk("switcher pins the blocked agent", r.WaitUntil(600, func() bool {
+	r.await(5000, "the switcher docked", func() bool { return r.Side().Pane != "" })
+	r.Chk("first tap docks AND pins the blocked agent", r.WaitUntil(1500, func() bool {
 		return filled("blocked · claude")
 	}))
 	r.D("agents", r.CL)
