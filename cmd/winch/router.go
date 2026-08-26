@@ -248,6 +248,13 @@ func (d *daemon) toggle(ctl *control, client string) error {
 			}
 			return d.dockClose(ctl, false)
 		}
+		// Docked and idle: close. This key is visibility only — REACHING the
+		// sidebar is C-h, because the sidebar is a real tmux pane and the
+		// navigator binding already treats it as one (tmux.nix sends the
+		// navigator keys into winch, and C-l from the list goes back right).
+		// Overloading M-s to focus-then-close was tried and felt wrong: it
+		// costs two presses to close from a content pane, and the same key
+		// stops meaning one thing.
 		return d.dockClose(ctl, false)
 	}
 	return d.dockOpen(ctl, client)
