@@ -167,6 +167,19 @@ func TestAgent(t *testing.T) {
 		return filled("blocked · claude")
 	}))
 
+	// ...and pinning it must not TELEPORT. The agent is in gamma, the client
+	// is on beta, so the selection lands on a row for another window — and
+	// the TUI asks for that window's frame, which the daemon turns into a
+	// scrub: sidebar zoomed to the full window, billboard of somewhere else,
+	// status bar rewritten to name the other session. Nothing has actually
+	// moved, which is precisely why it is so disorienting.
+	//
+	// Opening the sidebar is not navigation. The row is selected; Enter is
+	// what goes there.
+	sleep(700) // the frame request trails the select
+	r.Chk("pinning a remote agent does not zoom", !r.Zoomed(r.Side().Win))
+	r.Chk("pinning a remote agent leaves the client where it was", r.ClientWin() == r.W2)
+
 	// Second press CLOSES, like M-s. It used to cycle, which made the pick
 	// depend on how recently the key was last pressed — the same keystroke
 	// in the same place gave a different agent for ten seconds afterwards.

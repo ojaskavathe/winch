@@ -750,7 +750,7 @@ func (d *daemon) scrubEnd(ctl *control, unzoom bool) {
 // spawned afterwards is born with it (snapshotMsg.Select) instead of
 // painting a default row and correcting a beat later, which is visible.
 func (d *daemon) pushSelect(m selectMsg) int {
-	d.h.setSelect(m.Window, m.Pane)
+	d.h.setSelect(m.Window, m.Pane, m.Quiet)
 	return d.h.sendRole("list", marshalLine(m))
 }
 

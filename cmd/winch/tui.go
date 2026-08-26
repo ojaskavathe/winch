@@ -776,10 +776,14 @@ func cmdTui(tmuxSock, winchSock string) {
 				found := applySelect(m.Window, m.Pane)
 				selPending = false
 				clampSel()
-				tlogf("select win=%s found=%v sel=%d rows=%d", m.Window, found, sel, len(rows))
+				tlogf("select win=%s found=%v quiet=%v sel=%d rows=%d", m.Window, found, m.Quiet, sel, len(rows))
 				paintList(rows, sel)
 				sayHello()
-				if !shrinkExpected {
+				// A quiet select moves the highlight and stops there. The
+				// frame request is what makes an off-window selection scrub,
+				// and a selection the DAEMON placed has not been navigated
+				// to — it has been offered.
+				if !shrinkExpected && !m.Quiet {
 					paintFrameFor(target())
 					requestFrames()
 				}

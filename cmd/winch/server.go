@@ -18,8 +18,9 @@ type hub struct {
 	cmds  chan cmdEnvelope
 	// stamped into every fresh subscriber's snapshot, so a TUI is born
 	// knowing them instead of correcting after a round trip
-	selWin  string
-	selPane string
+	selWin   string
+	selPane  string
+	selQuiet bool
 	width   int
 	split   float64
 }
@@ -85,9 +86,12 @@ func (h *hub) setRole(s *subscriber, role string) {
 // later is born knowing it (see snapshotMsg.Select). Guarded by the same
 // lock as add(), which reads it: the daemon writes from the consume loop,
 // connections arrive on their own goroutine.
-func (h *hub) setSelect(win, pane string) {
+// quiet rides along because the replay has to be as quiet as the original:
+// it is the replay, not the first broadcast, that reaches a TUI old enough to
+// act on it.
+func (h *hub) setSelect(win, pane string, quiet bool) {
 	h.mu.Lock()
-	h.selWin, h.selPane = win, pane
+	h.selWin, h.selPane, h.selQuiet = win, pane, quiet
 	h.mu.Unlock()
 }
 
@@ -95,10 +99,10 @@ func (h *hub) setSelect(win, pane string) {
 // That replay used to name the dock's WINDOW instead, which is the same thing
 // only when the selection is a window — so it silently discarded every pick
 // that was a pane. See router.go's hello-list case.
-func (h *hub) getSelect() (string, string) {
+func (h *hub) getSelect() (win, pane string, quiet bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.selWin, h.selPane
+	return h.selWin, h.selPane, h.selQuiet
 }
 
 // setWidth records the sidebar width for the same reason as setSelect.

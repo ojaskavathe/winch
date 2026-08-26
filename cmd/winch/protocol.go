@@ -83,6 +83,13 @@ type selectMsg struct {
 	Type   string `json:"type"`
 	Window string `json:"window"`
 	Pane   string `json:"pane,omitempty"`
+	// Quiet: move the highlight, ask for nothing. A normal select requests
+	// the selected window's frame, and the daemon answers an off-window
+	// request by SCRUBBING — zoom, billboard, status bar rewritten to name
+	// the other session. That is right when the user drove the selection
+	// there; it is a teleport when the daemon did, which is what opening the
+	// switcher from a window with no agents looked like.
+	Quiet bool `json:"quiet,omitempty"`
 }
 
 // widthMsg tells the list TUI the sidebar's current width (daemon ->
@@ -141,6 +148,7 @@ type wireMsg struct {
 	Ops        []wireOp    `json:"ops"`
 	Window     string      `json:"window"`
 	Pane       string      `json:"pane"`
+	Quiet      bool        `json:"quiet"`
 	Theme      string      `json:"theme"`
 	Select     string      `json:"select"`
 	SelectPane string      `json:"selectpane"`

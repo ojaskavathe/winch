@@ -178,16 +178,17 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 		// unreachable. Visible as a flicker unique to M-a — the right row was
 		// painted from the snapshot, then this took it away.
 		if d.dock != nil {
-			selWin, selPane := d.h.getSelect()
+			selWin, selPane, selQuiet := d.h.getSelect()
 			if selWin == "" {
 				selWin = d.dock.win
 			}
-			d.h.send(env.sub, marshalLine(selectMsg{Type: "select", Window: selWin, Pane: selPane}))
+			d.h.send(env.sub, marshalLine(selectMsg{
+				Type: "select", Window: selWin, Pane: selPane, Quiet: selQuiet}))
 			if d.dock.scrubbing && d.pv.lastPanes != nil {
 				d.h.send(env.sub, d.pv.frameBytes())
 			}
-			log.Printf("hello-list: replay docked select=%s pane=%q spawn_ms=%d",
-				selWin, selPane, time.Since(d.dock.openedAt).Milliseconds())
+			log.Printf("hello-list: replay docked select=%s pane=%q quiet=%v spawn_ms=%d",
+				selWin, selPane, selQuiet, time.Since(d.dock.openedAt).Milliseconds())
 		}
 	case "doctor":
 		// Read-only by contract: a tool reached for when something looks wrong
@@ -372,6 +373,8 @@ func (d *daemon) agentsOpen(ctl *control, client string) error {
 	if err := d.dockOpen(ctl, client); err != nil {
 		return err
 	}
-	d.pushSelect(selectMsg{Type: "select", Window: pick.WindowID, Pane: pick.ID})
+	// Quiet: opening the sidebar is not navigation. The row is selected and
+	// the list scrolls to it; Enter is what goes there.
+	d.pushSelect(selectMsg{Type: "select", Window: pick.WindowID, Pane: pick.ID, Quiet: true})
 	return nil
 }
