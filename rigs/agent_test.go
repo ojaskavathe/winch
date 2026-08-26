@@ -153,50 +153,56 @@ func TestAgent(t *testing.T) {
 	// is the only way anyone actually reaches for the switcher and the one
 	// path this test used to skip. It spawns a TUI, and the hello-list
 	// replay that follows used to overwrite the agent pick with the dock's
-	// bare window — so tap one landed on a session row, and tap two showed
-	// the SECOND agent, because the cycle had advanced anyway. The
-	// top-attention agent was unreachable. Docked-only coverage saw none of
-	// it: no spawn, no hello, no replay.
+	// bare window, so the tap landed on a session row instead of an agent.
+	// Docked-only coverage saw none of it: no spawn, no hello, no replay.
+	//
+	// The client is on beta here, which holds no agent, so the anchor finds
+	// nothing and the ranking decides: blocked outranks working.
 	r.D("toggle", r.CL)
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 
 	r.D("agents", r.CL)
 	r.await(5000, "the switcher docked", func() bool { return r.Side().Pane != "" })
-	r.Chk("first tap docks AND pins the blocked agent", r.WaitUntil(1500, func() bool {
+	r.Chk("from outside an agent, the switcher pins the blocked one", r.WaitUntil(1500, func() bool {
 		return filled("blocked · claude")
 	}))
-	r.D("agents", r.CL)
-	r.Chk("second tap cycles to the working agent", r.WaitUntil(600, func() bool {
-		return filled("working · claude")
-	}))
-	r.SendKeys(r.Side().Pane, "q")
-	r.await(5000, "scrub ended", func() bool { return !r.Zoomed(r.Side().Win) })
 
-	// Anchoring: opening fresh from INSIDE an agent starts on that agent,
-	// even though a blocked one outranks it. "Show me this one, then let me
-	// step off it" — being flung to an unrelated pane reads as random no
-	// matter how sound the ranking behind it is.
+	// Second press CLOSES, like M-s. It used to cycle, which made the pick
+	// depend on how recently the key was last pressed — the same keystroke
+	// in the same place gave a different agent for ten seconds afterwards.
+	r.D("agents", r.CL)
+	r.Chk("second press closes the sidebar", r.WaitUntil(2000, func() bool {
+		return r.WinchPanes("-a") == 0
+	}))
+
+	// Anchoring: opening from INSIDE an agent starts on that agent, even
+	// though a blocked one outranks it. Being flung to an unrelated pane
+	// reads as random no matter how sound the ranking behind it is.
 	//
 	// ap is the working agent, bp the blocked one, both in gamma. The
 	// distinction only exists when the anchor and the ranking disagree, so
 	// the test parks on ap and demands the LOWER-ranked pick.
-	r.D("toggle", r.CL)
-	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 	r.T("select-window", "-t", r.W3)
 	r.T("select-pane", "-t", ap)
-	sleep(1600) // outlast agentCycleWindow: this must open fresh, not cycle
 
 	r.D("agents", r.CL)
 	r.await(5000, "the switcher docked", func() bool { return r.Side().Pane != "" })
 	r.Chk("opening from inside an agent pins THAT agent, not the blocked one",
 		r.WaitUntil(1500, func() bool { return filled("working · claude") }))
 
-	r.SendKeys(r.Side().Pane, "q")
-	r.await(5000, "scrub ended", func() bool { return !r.Zoomed(r.Side().Win) })
+	// And it does NOT zoom on the way in: the pinned agent is in the window
+	// the sidebar just docked into, so there is nothing to scrub to. Opening
+	// through browseOpen forced a zoom-and-capture here, which is the whole
+	// reason M-a felt slower than M-s.
+	r.Chk("opening on a local agent does not zoom", !r.Zoomed(r.Side().Win))
 
-	// Kill the agents: states must leave the world (glyphs gone).
-	r.D("toggle", r.CL)
+	r.D("agents", r.CL)
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
+
+	// Kill the agents: states must leave the world (glyphs gone). Back to
+	// beta first — the anchor test parked the client on gamma, and the
+	// layout assertion below wants gamma with nothing docked in it.
+	r.T("select-window", "-t", r.W2)
 	r.TQ("kill-pane", "-t", ap)
 	r.TQ("kill-pane", "-t", bp)
 	r.Chk("gamma layout intact", r.WaitUntil(300, func() bool {

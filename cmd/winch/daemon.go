@@ -51,11 +51,6 @@ type daemon struct {
 	// that belongs to somebody else.
 	opts *owner
 
-	// agentCycle: per-client position in the agent switcher (M-a). Rapid
-	// re-invocations cycle down the attention-sorted list; after the tap
-	// window it restarts at the top-attention agent.
-	agentCycle map[string]agentCyclePos
-
 	// git: per-session repo identity cache; gitC ticks the slow repoll
 	// (git.go). The ticker lives for the daemon's lifetime, across
 	// control-mode reconnects.
@@ -65,11 +60,6 @@ type daemon struct {
 	// dockW: user-tuned sidebar width (0 = listWidth default). Survives
 	// undocks; runtime-only for now.
 	dockW int
-}
-
-type agentCyclePos struct {
-	pane string
-	at   time.Time
 }
 
 // clientView: the client's current session, window, and size, from

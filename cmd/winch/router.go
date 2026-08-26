@@ -277,17 +277,6 @@ func paneNum(id string) int {
 	return n
 }
 
-// agentCycleWindow is how long a tap counts as continuing the previous
-// burst rather than opening the switcher fresh. Beyond it, M-a re-anchors on
-// the agent the user is in. Compressed under the rig harness so a test can
-// exercise both sides of it without sleeping through the real thing.
-var agentCycleWindow = func() time.Duration {
-	if testFast {
-		return 1500 * time.Millisecond
-	}
-	return 10 * time.Second
-}()
-
 // focusOf is the pane the client is looking at, and its window. Asked of
 // tmux rather than inferred from the world: the world knows each window's
 // active pane, but which window a given CLIENT is on is exactly the thing
@@ -319,11 +308,33 @@ func agentAt(agents []pane, pane, win string) int {
 	return -1
 }
 
-// agentsOpen (M-a): the agent switcher. Browse, with the selection pinned to
-// an agent row: the agent the user is already in, or failing that the
-// highest-attention one. Rapid re-invocations cycle down the list. With no
-// agents it says so instead of docking.
+// agentsOpen (M-a): the agent switcher. M-s with the selection pinned to an
+// agent row — the agent the user is already in, or failing that the
+// highest-attention one — and a second press closes it, exactly like M-s.
+// With no agents it says so instead of docking.
+//
+// It used to cycle instead of closing, and used to open through browseOpen.
+// Both were wrong, and interacted:
+//
+//   - cycling made the pick depend on how recently you last pressed the key,
+//     so the same keystroke in the same place gave a different agent for ten
+//     seconds afterwards. Every "it opened something random" in the logs was
+//     a cycle continuation, never a bad anchor.
+//   - browseOpen forced a scrub, which ZOOMS the sidebar from its 55 columns
+//     to the full window and captures a billboard. M-s pays neither unless
+//     you scroll off the current window. That was the whole speed gap.
+//
+// Now it docks and selects, nothing more. When the pinned agent is in the
+// window you are already in — the usual case, since the anchor prefers the
+// agent you are in — nothing scrubs at all. When it is elsewhere, the TUI
+// asks for that window's frame itself and the scrub starts from there, the
+// same way it would if you had scrolled onto the row by hand.
 func (d *daemon) agentsOpen(ctl *control, client string) error {
+	if d.dock != nil {
+		// Second press closes. Same call M-s makes, so the two keys dismiss
+		// identically and neither moves the client.
+		return d.dockClose(ctl, false)
+	}
 	rank := map[string]int{"blocked": 4, "done": 3, "working": 2, "idle": 1}
 	var agents []pane
 	for _, p := range d.h.getWorld().Panes {
@@ -340,48 +351,25 @@ func (d *daemon) agentsOpen(ctl *control, client string) error {
 		if ri != rj {
 			return ri > rj
 		}
-		// By pane NUMBER, so equal-attention agents cycle oldest to newest.
+		// By pane NUMBER, so equal-attention agents rank oldest to newest.
 		// A string compare here reads %1572 < %4 < %77, which is a stable
 		// order but not one anybody could predict — with every agent idle
 		// (the common case) the tie-break IS the order, and the switcher
 		// looked like it picked at random.
 		return paneNum(agents[i].ID) < paneNum(agents[j].ID)
 	})
-	if d.agentCycle == nil {
-		d.agentCycle = map[string]agentCyclePos{}
-	}
-	// A live cycle outranks the anchor, and has to: scrubbing does not move
-	// the client, so the focused pane is the SAME on every tap of a burst.
-	// Anchoring first would recompute the same index forever and the cycle
-	// would never advance.
-	next := -1
-	if last, ok := d.agentCycle[client]; ok && time.Since(last.at) < agentCycleWindow {
-		for i, p := range agents {
-			if p.ID == last.pane {
-				next = (i + 1) % len(agents)
-				break
-			}
-		}
-	}
-	if next < 0 {
-		// Opening fresh: start where the user already IS. M-a from inside an
-		// agent means "show me this one, then let me step off it" — being
-		// flung to an unrelated pane reads as random even when the ranking
-		// behind it is perfectly sound. Falls back to index 0 (the
-		// top-attention agent) when the focus is not an agent at all, which
-		// includes the case where it is already in the sidebar.
-		next = 0
-		if fp, fw := d.focusOf(ctl, client); fp != "" {
-			if i := agentAt(agents, fp, ""); i >= 0 {
-				next = i
-			} else if i := agentAt(agents, "", fw); i >= 0 {
-				next = i
-			}
+	// Start where the user already IS, falling back to the top-attention
+	// agent (index 0) when the focus is not on an agent at all.
+	next := 0
+	if fp, fw := d.focusOf(ctl, client); fp != "" {
+		if i := agentAt(agents, fp, ""); i >= 0 {
+			next = i
+		} else if i := agentAt(agents, "", fw); i >= 0 {
+			next = i
 		}
 	}
 	pick := agents[next]
-	d.agentCycle[client] = agentCyclePos{pane: pick.ID, at: time.Now()}
-	if err := d.browseOpen(ctl, client); err != nil {
+	if err := d.dockOpen(ctl, client); err != nil {
 		return err
 	}
 	d.pushSelect(selectMsg{Type: "select", Window: pick.WindowID, Pane: pick.ID})
