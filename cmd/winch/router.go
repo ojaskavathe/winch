@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -266,10 +267,62 @@ func (d *daemon) browseOpen(ctl *control, client string) error {
 	return d.scrubStart(ctl, d.dock.win)
 }
 
-// agentsOpen (M-a): the agent switcher. Browse, but the selection pins to
-// an agent row — the highest-attention agent first (the same ordering the
-// TUI's agents section shows), and rapid re-invocations cycle down the
-// list. With no agents it says so instead of docking.
+// paneNum is the numeric part of a tmux pane id ("%1572" -> 1572), for
+// ordering. Unparseable ids sort last rather than colliding on 0.
+func paneNum(id string) int {
+	n, err := strconv.Atoi(strings.TrimPrefix(id, "%"))
+	if err != nil {
+		return math.MaxInt
+	}
+	return n
+}
+
+// agentCycleWindow is how long a tap counts as continuing the previous
+// burst rather than opening the switcher fresh. Beyond it, M-a re-anchors on
+// the agent the user is in. Compressed under the rig harness so a test can
+// exercise both sides of it without sleeping through the real thing.
+var agentCycleWindow = func() time.Duration {
+	if testFast {
+		return 1500 * time.Millisecond
+	}
+	return 10 * time.Second
+}()
+
+// focusOf is the pane the client is looking at, and its window. Asked of
+// tmux rather than inferred from the world: the world knows each window's
+// active pane, but which window a given CLIENT is on is exactly the thing
+// that goes stale between re-lists.
+func (d *daemon) focusOf(ctl *control, client string) (pane, win string) {
+	lines, err := ctl.run("display-message -p -t " + q(client) + " '#{pane_id} #{window_id}'")
+	if err != nil || len(lines) != 1 {
+		return "", ""
+	}
+	f := strings.Fields(strings.TrimSpace(lines[0]))
+	if len(f) != 2 {
+		return "", ""
+	}
+	return f[0], f[1]
+}
+
+// agentAt finds an agent by pane id, or — with pane empty — the first agent
+// in a window. Returns -1 for no match. agents is already sorted, so the
+// window lookup yields the highest-attention agent sharing that window.
+func agentAt(agents []pane, pane, win string) int {
+	for i, p := range agents {
+		if pane != "" && p.ID == pane {
+			return i
+		}
+		if pane == "" && win != "" && p.WindowID == win {
+			return i
+		}
+	}
+	return -1
+}
+
+// agentsOpen (M-a): the agent switcher. Browse, with the selection pinned to
+// an agent row: the agent the user is already in, or failing that the
+// highest-attention one. Rapid re-invocations cycle down the list. With no
+// agents it says so instead of docking.
 func (d *daemon) agentsOpen(ctl *control, client string) error {
 	rank := map[string]int{"blocked": 4, "done": 3, "working": 2, "idle": 1}
 	var agents []pane
@@ -287,17 +340,42 @@ func (d *daemon) agentsOpen(ctl *control, client string) error {
 		if ri != rj {
 			return ri > rj
 		}
-		return agents[i].ID < agents[j].ID
+		// By pane NUMBER, so equal-attention agents cycle oldest to newest.
+		// A string compare here reads %1572 < %4 < %77, which is a stable
+		// order but not one anybody could predict — with every agent idle
+		// (the common case) the tie-break IS the order, and the switcher
+		// looked like it picked at random.
+		return paneNum(agents[i].ID) < paneNum(agents[j].ID)
 	})
-	next := 0
 	if d.agentCycle == nil {
 		d.agentCycle = map[string]agentCyclePos{}
 	}
-	if last, ok := d.agentCycle[client]; ok && time.Since(last.at) < 10*time.Second {
+	// A live cycle outranks the anchor, and has to: scrubbing does not move
+	// the client, so the focused pane is the SAME on every tap of a burst.
+	// Anchoring first would recompute the same index forever and the cycle
+	// would never advance.
+	next := -1
+	if last, ok := d.agentCycle[client]; ok && time.Since(last.at) < agentCycleWindow {
 		for i, p := range agents {
 			if p.ID == last.pane {
 				next = (i + 1) % len(agents)
 				break
+			}
+		}
+	}
+	if next < 0 {
+		// Opening fresh: start where the user already IS. M-a from inside an
+		// agent means "show me this one, then let me step off it" — being
+		// flung to an unrelated pane reads as random even when the ranking
+		// behind it is perfectly sound. Falls back to index 0 (the
+		// top-attention agent) when the focus is not an agent at all, which
+		// includes the case where it is already in the sidebar.
+		next = 0
+		if fp, fw := d.focusOf(ctl, client); fp != "" {
+			if i := agentAt(agents, fp, ""); i >= 0 {
+				next = i
+			} else if i := agentAt(agents, "", fw); i >= 0 {
+				next = i
 			}
 		}
 	}

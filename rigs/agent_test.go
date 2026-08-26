@@ -172,6 +172,28 @@ func TestAgent(t *testing.T) {
 	r.SendKeys(r.Side().Pane, "q")
 	r.await(5000, "scrub ended", func() bool { return !r.Zoomed(r.Side().Win) })
 
+	// Anchoring: opening fresh from INSIDE an agent starts on that agent,
+	// even though a blocked one outranks it. "Show me this one, then let me
+	// step off it" — being flung to an unrelated pane reads as random no
+	// matter how sound the ranking behind it is.
+	//
+	// ap is the working agent, bp the blocked one, both in gamma. The
+	// distinction only exists when the anchor and the ranking disagree, so
+	// the test parks on ap and demands the LOWER-ranked pick.
+	r.D("toggle", r.CL)
+	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
+	r.T("select-window", "-t", r.W3)
+	r.T("select-pane", "-t", ap)
+	sleep(1600) // outlast agentCycleWindow: this must open fresh, not cycle
+
+	r.D("agents", r.CL)
+	r.await(5000, "the switcher docked", func() bool { return r.Side().Pane != "" })
+	r.Chk("opening from inside an agent pins THAT agent, not the blocked one",
+		r.WaitUntil(1500, func() bool { return filled("working · claude") }))
+
+	r.SendKeys(r.Side().Pane, "q")
+	r.await(5000, "scrub ended", func() bool { return !r.Zoomed(r.Side().Win) })
+
 	// Kill the agents: states must leave the world (glyphs gone).
 	r.D("toggle", r.CL)
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
