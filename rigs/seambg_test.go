@@ -1,7 +1,6 @@
 package rigs
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 )
@@ -55,30 +54,29 @@ func TestSeamGroundMatchesBorder(t *testing.T) {
 	}
 	r.Chk("found the content pane", content != "")
 
-	// Retried rather than slept at: one redraw does not always repaint the
-	// border column, and a blank there is the model's problem, not the
+	// Accumulated rather than re-sampled: one redraw does not always repaint
+	// the border column, and a blank there is the model's problem, not the
 	// daemon's. Waiting for both cells to carry the glyph cannot mask a
 	// mismatch — a wrong ground stays wrong.
+	//
 	// "never painted" is reported separately from "painted wrong". Conflating
-	// them is what made the old foreground-only rig flake under parallel load:
-	// a redraw that had not reached the border column yet read as a colour bug.
+	// them is what made the old foreground-only rig flake under parallel
+	// load: a redraw that had not reached the border column yet read as a
+	// colour bug. statusScreenUntil is what makes the distinction honest —
+	// re-sampling into a FRESH screen used to discard the frame that carried
+	// the cell, so patience alone never fixed this.
 	type cell struct{ fg, bg string }
+	painted := func(s *screen) bool { return s.grid[0][w] == '│' && s.grid[1][w] == '│' }
 	seam := func(what string) (glyph, border cell, ok bool) {
-		var last string
-		for i := 0; i < 14; i++ {
-			s := statusScreen(r)
-			g := cell{s.fg[0][w], s.bg[0][w]}
-			b := cell{s.fg[1][w], s.bg[1][w]}
-			last = fmt.Sprintf("glyph=%q fg=%q bg=%q | border=%q fg=%q bg=%q",
-				s.grid[0][w], g.fg, g.bg, s.grid[1][w], b.fg, b.bg)
-			if s.grid[0][w] == '│' && s.grid[1][w] == '│' {
-				t.Logf("  %s: %s (attempt %d)", what, last, i+1)
-				return g, b, true
-			}
-			sleep(400)
+		s := statusScreenUntil(r, painted)
+		g := cell{s.fg[0][w], s.bg[0][w]}
+		b := cell{s.fg[1][w], s.bg[1][w]}
+		t.Logf("  %s: glyph=%q fg=%q bg=%q | border=%q fg=%q bg=%q painted=%v",
+			what, s.grid[0][w], g.fg, g.bg, s.grid[1][w], b.fg, b.bg, painted(s))
+		if !painted(s) {
+			return cell{}, cell{}, false
 		}
-		t.Logf("  %s: %s — never painted", what, last)
-		return cell{}, cell{}, false
+		return g, b, true
 	}
 
 	r.T("select-pane", "-t", sp)
@@ -102,7 +100,7 @@ func TestSeamGroundMatchesBorder(t *testing.T) {
 
 	// And the pad itself keeps the SIDEBAR's ground — the fix must move the one
 	// border column, not repaint the whole strip.
-	s := statusScreen(r)
+	s := statusScreenUntil(r, func(s *screen) bool { return s.bg[0][0] != "" })
 	r.Chk("the pad still sits on the sidebar's own ground",
 		s.bg[0][0] != "" && s.bg[0][0] != s.bg[1][w])
 	if s.bg[0][0] == s.bg[1][w] {

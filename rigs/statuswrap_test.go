@@ -26,6 +26,37 @@ func statusScreen(r *Rig) *screen {
 	return s
 }
 
+// statusScreenUntil feeds successive refreshes into ONE screen until cond
+// holds, or patience runs out.
+//
+// A terminal's screen is state, not a frame: a repaint rewrites only what
+// changed. statusScreen builds an EMPTY screen from a single recording
+// window, so a cell tmux did not repaint inside that window is
+// indistinguishable from a cell it never drew — and retrying by calling
+// statusScreen again DISCARDS the frame that did carry it, which is worse
+// than not retrying at all.
+//
+// That is measurable rather than theoretical: the first capture after a
+// focus change missed the border column on every single run, and enough
+// parallel load made the second miss it too. Accumulating is what a terminal
+// does, so a blank cell here means "never painted in any window", which is
+// the thing the caller actually wants to assert.
+func statusScreenUntil(r *Rig, cond func(*screen) bool) *screen {
+	s := newScreen(r.prof.rows, r.prof.cols)
+	for i := 0; i < 12; i++ {
+		r.StartRecord()
+		r.T("refresh-client", "-t", r.CL)
+		sleep(350)
+		for _, c := range r.StopRecordT() {
+			s.write(c.Data)
+		}
+		if cond(s) {
+			return s
+		}
+	}
+	return s
+}
+
 // runeCol is the COLUMN a substring sits at in a grid row. strings.Index would
 // answer in bytes, and the border glyph immediately left of the content is
 // three of them.
