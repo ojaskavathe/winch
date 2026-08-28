@@ -19,7 +19,12 @@ func TestPadFollowsWindow(t *testing.T) {
 	sleep(600)
 
 	padded := func(what string) bool {
-		row := statusScreen(r).grid[r.prof.rows-1]
+		// Wait for the glyph COLUMN to be painted, not for it to be right:
+		// an unpadded bar puts real content there, which satisfies this and
+		// then fails the assertion below, exactly as it should.
+		row := statusScreenUntil(r, func(s *screen) bool {
+			return s.grid[r.prof.rows-1][w] != ' '
+		}).grid[r.prof.rows-1]
 		blank := strings.TrimSpace(string(row[:w])) == ""
 		t.Logf("  %s: win=%s @winch_win=%s col%d=%q blankPad=%v",
 			what, r.Side().Win, r.ShowOpt("-t", r.ClientSess(), "-v", "@winch_win"),
@@ -59,7 +64,12 @@ func TestPadFollowsCommit(t *testing.T) {
 	// is the one where the pad is rewritten by the scrub restore rather than
 	// left alone.
 	padded := func(what string) bool {
-		row := statusScreen(r).grid[r.prof.rows-1]
+		// Wait for the glyph COLUMN to be painted, not for it to be right:
+		// an unpadded bar puts real content there, which satisfies this and
+		// then fails the assertion below, exactly as it should.
+		row := statusScreenUntil(r, func(s *screen) bool {
+			return s.grid[r.prof.rows-1][w] != ' '
+		}).grid[r.prof.rows-1]
 		blank := strings.TrimSpace(string(row[:w])) == ""
 		t.Logf("  %s: sess=%s win=%s @winch_win=%s panes=%s zoom=%s col%d=%q blankPad=%v",
 			what, r.ClientSess(), r.Side().Win,

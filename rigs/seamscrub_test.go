@@ -1,7 +1,6 @@
 package rigs
 
 import (
-	"fmt"
 	"testing"
 )
 
@@ -42,25 +41,25 @@ func TestSeamSurvivesAScrub(t *testing.T) {
 
 	// row 0 is the status row (bar at top); row 1 is the first row of the pane
 	// area, which holds either tmux's border or the TUI's divider.
-	joined := func(what string) bool {
-		var last string
-		for i := 0; i < 14; i++ {
-			s := statusScreen(r)
-			last = fmt.Sprintf("glyph=%q fg=%q bg=%q | below=%q fg=%q bg=%q",
-				s.grid[0][w], s.fg[0][w], s.bg[0][w],
-				s.grid[1][w], s.fg[1][w], s.bg[1][w])
-			if s.grid[0][w] == '│' && s.grid[1][w] == '│' &&
-				s.fg[0][w] == s.fg[1][w] && s.bg[0][w] == s.bg[1][w] {
-				t.Logf("  %s: %s (attempt %d)", what, last, i+1)
-				return true
-			}
-			sleep(400)
-		}
-		t.Logf("  %s: %s — never joined", what, last)
-		return false
+	// painted and joined are separate answers. Folding the colour match into
+	// the wait — as this did — means a redraw that has not reached the border
+	// column yet is reported as a colour bug, and re-sampling into a fresh
+	// screen threw away the frame that carried the cell, so waiting longer
+	// could not help. Same failure the seambg rig had; see statusScreenUntil.
+	painted := func(s *screen) bool { return s.grid[0][w] == '│' && s.grid[1][w] == '│' }
+	joined := func(what string) (ok, match bool) {
+		s := statusScreenUntil(r, painted)
+		ok = painted(s)
+		match = ok && s.fg[0][w] == s.fg[1][w] && s.bg[0][w] == s.bg[1][w]
+		t.Logf("  %s: glyph=%q fg=%q bg=%q | below=%q fg=%q bg=%q painted=%v joined=%v",
+			what, s.grid[0][w], s.fg[0][w], s.bg[0][w],
+			s.grid[1][w], s.fg[1][w], s.bg[1][w], ok, match)
+		return ok, match
 	}
 
-	r.Chk("the corner joins up when docked", joined("docked idle"))
+	p, j := joined("docked idle")
+	r.Chk("both cells painted when docked", p)
+	r.Chk("the corner joins up when docked", j)
 
 	// One step of the list: the selection leaves the real window, which starts
 	// a scrub and zooms the sidebar. This is the keystroke in the report —
@@ -68,14 +67,18 @@ func TestSeamSurvivesAScrub(t *testing.T) {
 	scrubAway(r, sp)
 	r.await(5000, "scrubbing", func() bool { return r.Side().Width == r.prof.cols })
 	sleep(900)
-	r.Chk("the corner still joins up while scrubbing", joined("scrubbing"))
+	p, j = joined("scrubbing")
+	r.Chk("both cells painted while scrubbing", p)
+	r.Chk("the corner still joins up while scrubbing", j)
 
 	// And back: q ends the scrub, the pane unzooms, tmux's border returns, and
 	// the glyph has to go back to matching THAT.
 	r.SendKeys(r.Side().Pane, "q")
 	r.await(5000, "unzoomed", func() bool { return r.Side().Width == w })
 	sleep(900)
-	r.Chk("the corner joins up again after the scrub", joined("after the scrub"))
+	p, j = joined("after the scrub")
+	r.Chk("both cells painted after the scrub", p)
+	r.Chk("the corner joins up again after the scrub", j)
 
 	r.T("set-option", "-g", "status-position", "bottom")
 	r.Undock()

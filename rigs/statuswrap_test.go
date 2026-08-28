@@ -13,34 +13,26 @@ import (
 // FORMAT instead — prefixing the pad to each rendered row, gated on the window
 // that actually holds the sidebar — removes all three. These rigs pin that.
 
-// statusScreen replays a full client redraw so the status rows can be read.
-// The status line is not a pane, so capture-pane cannot see it.
-func statusScreen(r *Rig) *screen {
-	r.StartRecord()
-	r.T("refresh-client", "-t", r.CL)
-	sleep(700)
-	s := newScreen(r.prof.rows, r.prof.cols)
-	for _, c := range r.StopRecordT() {
-		s.write(c.Data)
-	}
-	return s
-}
-
-// statusScreenUntil feeds successive refreshes into ONE screen until cond
-// holds, or patience runs out.
+// statusScreenUntil replays client redraws so the status rows can be read —
+// the status line is not a pane, so capture-pane cannot see it — feeding
+// successive refreshes into ONE screen until cond holds or patience runs out.
 //
 // A terminal's screen is state, not a frame: a repaint rewrites only what
-// changed. statusScreen builds an EMPTY screen from a single recording
-// window, so a cell tmux did not repaint inside that window is
-// indistinguishable from a cell it never drew — and retrying by calling
-// statusScreen again DISCARDS the frame that did carry it, which is worse
-// than not retrying at all.
+// changed. The single-shot version this replaces built an EMPTY screen from
+// one recording window, so a cell tmux did not repaint inside that window was
+// indistinguishable from a cell it never drew — and retrying by calling it
+// again DISCARDED the frame that did carry the cell, which is worse than not
+// retrying at all.
 //
-// That is measurable rather than theoretical: the first capture after a
-// focus change missed the border column on every single run, and enough
-// parallel load made the second miss it too. Accumulating is what a terminal
-// does, so a blank cell here means "never painted in any window", which is
-// the thing the caller actually wants to assert.
+// That is measurable rather than theoretical: the first capture after a focus
+// change missed the border column on every single run, and enough parallel
+// load made the second miss it too. Accumulating is what a terminal does, so a
+// blank cell here means "never painted in any window", which is the thing the
+// caller actually wants to assert.
+//
+// cond should test PAINTED, not CORRECT. Waiting on the assertion turns every
+// real failure into a full-patience timeout and collapses the two answers back
+// into one.
 func statusScreenUntil(r *Rig, cond func(*screen) bool) *screen {
 	s := newScreen(r.prof.rows, r.prof.cols)
 	for i := 0; i < 12; i++ {
@@ -55,6 +47,18 @@ func statusScreenUntil(r *Rig, cond func(*screen) bool) *screen {
 		}
 	}
 	return s
+}
+
+// statusRow waits for the bar to carry sub, then hands back the row it landed
+// in. The wait is for PAINTED, never for CORRECT: a bar that shifted to the
+// wrong column still contains sub, so it returns immediately and the caller's
+// assertion is what decides. Waiting on the assertion instead would turn every
+// real failure into a timeout and lose the distinction entirely.
+func statusRow(r *Rig, sub string) []rune {
+	s := statusScreenUntil(r, func(s *screen) bool {
+		return strings.Contains(string(s.grid[r.prof.rows-1]), sub)
+	})
+	return s.grid[r.prof.rows-1]
 }
 
 // runeCol is the COLUMN a substring sits at in a grid row. strings.Index would
@@ -88,7 +92,7 @@ func TestStatusLeftSurvivesDock(t *testing.T) {
 	w := r.Side().Width
 	sleep(500)
 
-	row := statusScreen(r).grid[r.prof.rows-1]
+	row := statusRow(r, "PWRLINE")
 	at := runeCol(row, "PWRLINE")
 	r.Chk("status-left survives the dock", at >= 0)
 	r.Chk("and starts just past the sidebar border", at == w+1)
@@ -98,7 +102,7 @@ func TestStatusLeftSurvivesDock(t *testing.T) {
 
 	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
-	row = statusScreen(r).grid[r.prof.rows-1]
+	row = statusRow(r, "PWRLINE")
 	r.Chk("undock puts it back at the left edge", runeCol(row, "PWRLINE") == 0)
 }
 
@@ -116,7 +120,7 @@ func TestStatusFormatRewrittenShifts(t *testing.T) {
 	w := r.Side().Width
 	sleep(500)
 
-	row := statusScreen(r).grid[r.prof.rows-1]
+	row := statusRow(r, "CUSTOMBAR")
 	at := runeCol(row, "CUSTOMBAR")
 	r.Chk("a format that ignores status-left still shifts", at == w+1)
 	if at != w+1 {
@@ -176,8 +180,7 @@ func TestStatusMultiRowShifts(t *testing.T) {
 	w := r.Side().Width
 	sleep(500)
 
-	s := statusScreen(r)
-	second := s.grid[r.prof.rows-1] // status-format[1], the lower row
+	second := statusRow(r, "SECONDROW") // status-format[1], the lower row
 	at := runeCol(second, "SECONDROW")
 	r.Chk("the second status row shifts too", at == w+1)
 	if at != w+1 {
