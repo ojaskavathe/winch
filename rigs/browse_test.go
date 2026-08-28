@@ -45,7 +45,7 @@ func TestBrowse(t *testing.T) {
 	r.Chk("q unzooms, still docked", s.Win == r.W1 && s.Width == sideW)
 
 	// undock: the TUI pane dies, everything restores
-	r.D("toggle", r.CL)
+	r.Undock()
 	sleep(1200)
 	r.Chk("TUI pane gone", r.Side().Pane == "")
 	r.Chk("no spacers remain", r.Spacers() == 0)

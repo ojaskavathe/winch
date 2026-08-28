@@ -80,7 +80,7 @@ func TestEqualize(t *testing.T) {
 	r.Chk("leave keeps equalized mains", width(m0) == we0 && width(m1) == we1)
 	r.Chk("spacer holds w1 slot", countLeftSpacer(r.T("list-panes", "-t", r.W1, "-F", "#{pane_left} #{pane_width}")) == 1)
 	r.Chk("dirty survives leave", r.ShowOpt("-wv", "-t", r.W1, "@winch_layout_dirty") == "1")
-	r.D("toggle", r.CL) // undock: release w1
+	r.Undock() // undock: release w1
 	sleep(600)
 	r.Chk("give-back full width", width(m0)+width(m1) == 199)
 	r.Chk("give-back proportional", abs(width(m0)-width(m1)) <= 1)
@@ -96,7 +96,7 @@ func TestEqualize(t *testing.T) {
 	sleep(300)
 	equalize(m0)
 	sleep(500)
-	r.D("toggle", r.CL)
+	r.Undock()
 	sleep(600)
 	r.Chk("undock give-back full width", width(m0)+width(m1) == 199)
 	r.Chk("undock give-back equal", abs(width(m0)-width(m1)) <= 1)

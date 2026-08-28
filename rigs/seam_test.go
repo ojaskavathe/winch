@@ -56,7 +56,7 @@ func TestSeamIsOneColour(t *testing.T) {
 	r.Chk("pin still on the sidebar pane after the move",
 		strings.TrimSpace(r.ShowOpt("-p", "-t", r.Side().Pane, "-v", "pane-border-style")) == pinB)
 
-	r.D("toggle", r.CL)
+	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 	sleep(500)
 

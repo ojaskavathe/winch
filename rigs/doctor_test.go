@@ -67,7 +67,7 @@ func TestDoctorReportsALeak(t *testing.T) {
 	}
 
 	r.T("set-option", "-uq", "-t", "play", "status-format")
-	r.D("toggle", r.CL)
+	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 }
 
@@ -105,6 +105,6 @@ func TestDoctorChangesNothing(t *testing.T) {
 		t.Logf("diverged after running doctor")
 	}
 
-	r.D("toggle", r.CL)
+	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 }

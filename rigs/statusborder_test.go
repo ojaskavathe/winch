@@ -56,7 +56,7 @@ func TestStatusPadBorder(t *testing.T) {
 		t.Logf("  status row col %d is %q; the row below it holds %q", w, glyph, below)
 	}
 
-	r.D("toggle", r.CL)
+	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 }
 
@@ -104,6 +104,6 @@ func TestStatusPadBorderNotAdjacent(t *testing.T) {
 
 	r.T("set-option", "-g", "status", "on")
 	r.T("set-option", "-g", "status-position", "bottom")
-	r.D("toggle", r.CL)
+	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 }

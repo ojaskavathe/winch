@@ -87,7 +87,7 @@ func TestGestureCommits(t *testing.T) {
 	sleep(1200)
 	r.Chk("right-click committed into w1", r.Side().Win == r.W1)
 	r.Chk("right-clicked split has focus", activePane() == mark)
-	r.D("toggle", r.CL)
+	r.Undock() // the commit put focus on the split, where M-s focuses first
 	sleep(1000)
 	r.Chk("w1 layout restored", r.Layout(r.W1) == tail(r.LW1))
 }

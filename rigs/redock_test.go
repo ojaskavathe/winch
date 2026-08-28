@@ -18,7 +18,11 @@ func TestRedockAdoption(t *testing.T) {
 	sleep(300)
 	r.Chk("beta spacer-held after enter", countLeftSpacer(r.T("list-panes", "-t", r.W2, "-F", "#{pane_left} #{pane_width}")) == 1)
 
-	// undock and IMMEDIATELY redock — inside the release-settle window
+	// undock and IMMEDIATELY redock — inside the release-settle window.
+	// Enter left the keyboard in w1's own pane, where M-s focuses rather
+	// than closes; focus the sidebar HERE so the two toggles below stay
+	// back to back, which is the whole point of the case.
+	r.T("select-pane", "-t", sp)
 	r.D("toggle", r.CL)
 	r.D("toggle", r.CL)
 	sleep(600)
@@ -37,7 +41,7 @@ func TestRedockAdoption(t *testing.T) {
 	r.Chk("entered adopted window", r.ClientWin() == r.W2)
 
 	// final undock: everything drains, layouts byte-exact
-	r.D("toggle", r.CL)
+	r.Undock()
 	sleep(1000)
 	r.Chk("all spacers drained", r.Spacers() == 0)
 	r.Chk("w1 layout exact", r.Layout(r.W1) == tail(r.LW1))

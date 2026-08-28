@@ -78,6 +78,6 @@ func TestSeamSurvivesAScrub(t *testing.T) {
 	r.Chk("the corner joins up again after the scrub", joined("after the scrub"))
 
 	r.T("set-option", "-g", "status-position", "bottom")
-	r.D("toggle", r.CL)
+	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 }

@@ -72,7 +72,7 @@ func TestClosingEverySplitClosesTheWindow(t *testing.T) {
 	panes, _ := r.TQ("list-panes", "-a", "-F", "#{pane_id}")
 	r.Chk("the spacer is gone too", !containsID(panes, spacer))
 
-	r.D("toggle", r.CL)
+	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 }
 

@@ -66,7 +66,9 @@ func TestHeavyHistory(t *testing.T) {
 	r.SendKeys(sp, "Enter")
 	sleep(800)
 	r.Chk("re-entered heavy", r.ClientWin() == heavy)
-	r.D("toggle", r.CL) // undock on heavy; releases drain deferred
+	// Enter committed and put the keyboard in heavy's own pane, so M-s there
+	// focuses before it closes — Undock does both.
+	r.Undock() // undock on heavy; releases drain deferred
 	r.await(6000, "deferred releases drained", func() bool {
 		return r.Spacers() == 0 && r.WinchPanes("-a") == 0
 	})

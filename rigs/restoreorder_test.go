@@ -67,7 +67,7 @@ func TestRestoreSurvivesDeadFocusPane(t *testing.T) {
 		t.Logf("  stranded on %s: %.200s", sess, left)
 	}
 
-	r.D("toggle", r.CL)
+	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 }
 

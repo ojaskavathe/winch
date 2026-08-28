@@ -65,7 +65,7 @@ func TestStatusLeftSurvivesDock(t *testing.T) {
 		t.Logf("  PWRLINE at column %d, want %d; row=%q", at, w+1, string(row[:60]))
 	}
 
-	r.D("toggle", r.CL)
+	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 	row = statusScreen(r).grid[r.prof.rows-1]
 	r.Chk("undock puts it back at the left edge", runeCol(row, "PWRLINE") == 0)
@@ -92,7 +92,7 @@ func TestStatusFormatRewrittenShifts(t *testing.T) {
 		t.Logf("  CUSTOMBAR at column %d, want %d", at, w+1)
 	}
 
-	r.D("toggle", r.CL)
+	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 }
 
@@ -127,7 +127,7 @@ func TestStatusPadOnlyOnSidebarWindow(t *testing.T) {
 		t.Logf("  window %s indented %d columns with no sidebar in it", other, off)
 	}
 
-	r.D("toggle", r.CL)
+	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 }
 
@@ -154,6 +154,6 @@ func TestStatusMultiRowShifts(t *testing.T) {
 	}
 
 	r.T("set-option", "-g", "status", "on")
-	r.D("toggle", r.CL)
+	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 }

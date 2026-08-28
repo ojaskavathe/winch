@@ -1040,6 +1040,24 @@ func (d *daemon) dockCommit(ctl *control, pane string) error {
 // window's apps see two resizes (kill-pane's give-all-to-the-neighbor, then
 // the restore) and visibly jitter. The TUI pane is killed outright — its
 // process dies with it, and the next dock spawns a fresh one.
+// lastMainPane is the window's previously-active pane, skipping the sidebar.
+// tmux tracks this itself (#{pane_last}), so it is right however focus got
+// into the sidebar — M-s, a navigator C-h, or a click — where anything the
+// daemon recorded for itself would only cover the paths it happens to see.
+func lastMainPane(ctl *control, win, sidebar string) string {
+	lines, err := ctl.run("list-panes -t " + q(win) + " -F " + f("#{pane_id}", "#{pane_last}"))
+	if err != nil {
+		return ""
+	}
+	for _, ln := range lines {
+		p := strings.Split(strings.TrimSpace(ln), sep)
+		if len(p) == 2 && p[1] == "1" && p[0] != sidebar {
+			return p[0]
+		}
+	}
+	return ""
+}
+
 func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 	p := d.dock
 	if p == nil {
@@ -1061,13 +1079,20 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 		}
 	}
 	restore := d.leaveLayout(p.win, p.snap.layout, oldLayout, oldDirty, p.pane)
-	// Focus after undock: whatever main pane the user is IN right now. Only
-	// when the sidebar itself holds focus does the dock-time snapshot apply
-	// — restoring the snapshot unconditionally yanked focus back to the
-	// pane that happened to be active when the sidebar opened.
+	// Focus after undock: whatever main pane the user is IN right now.
+	//
+	// With the sidebar itself focused, ask tmux which pane focus came FROM.
+	// That case used to be rare and the dock-time snapshot was a fine guess
+	// for it; contextual M-s made it the norm, because dismissing the
+	// sidebar now means focusing it first. Falling back to the snapshot
+	// under those conditions re-introduces exactly the yank this branch
+	// exists to prevent — back to whatever was active when the sidebar
+	// OPENED, which may be many windows ago.
 	focus := p.snap.activePane
 	if curActive != "" && curActive != p.pane {
 		focus = curActive
+	} else if lp := lastMainPane(ctl, p.win, p.pane); lp != "" {
+		focus = lp
 	}
 
 	moving := toOrigin && p.originWin != p.win

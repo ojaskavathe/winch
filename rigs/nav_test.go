@@ -45,7 +45,7 @@ func TestNavFollow(t *testing.T) {
 	r.Chk("follow focuses main", s.Active == 0)
 
 	// G: toggle off (stay, restore)
-	r.D("toggle", r.CL)
+	r.Undock()
 	sleep(600)
 	r.Chk("sidebar left user windows", r.WinchPanes("-t", r.W3) == 0)
 	r.Chk("TUI pane gone entirely", r.Side().Pane == "")
@@ -95,7 +95,11 @@ func TestNavFollow(t *testing.T) {
 	sleep(300)
 	r.T("select-pane", "-t", leftMain) // the user moves
 	sleep(300)
-	r.D("toggle", r.CL)
+	// M-s from leftMain focuses the sidebar, then closes it — so by the time
+	// the dock tears down, the keyboard is in the SIDEBAR, not on leftMain.
+	// Undock must still land on leftMain: tmux's own pane_last says focus
+	// came from there, which the dock-time snapshot (rightMain) does not.
+	r.Undock()
 	sleep(600)
 	active := r.T("display-message", "-p", "-t", r.W1, "#{pane_id}")
 	r.Chk("undock keeps the user's pane", active == leftMain)

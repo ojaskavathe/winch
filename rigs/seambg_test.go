@@ -110,6 +110,6 @@ func TestSeamGroundMatchesBorder(t *testing.T) {
 	}
 
 	r.T("set-option", "-g", "status-position", "bottom")
-	r.D("toggle", r.CL)
+	r.Undock() // the keyboard is on the content pane; M-s there focuses first
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 }

@@ -452,6 +452,31 @@ func (r *Rig) ClientWin() string {
 	return ""
 }
 
+// Undock closes the sidebar wherever the keyboard happens to be.
+//
+// M-s is contextual: from a content pane it FOCUSES the sidebar, and only
+// closes once the keyboard is in it (TestMsIsContextual). So a test that
+// moved focus — to check a border colour, or by committing with Enter —
+// cannot assume one press undocks. This says "closed" and means it.
+func (r *Rig) Undock() {
+	if sp := r.Side().Pane; sp != "" && r.ClientPane() != sp {
+		r.D("toggle", r.CL)
+		r.WaitUntil(2000, func() bool { return r.ClientPane() == sp })
+	}
+	r.D("toggle", r.CL)
+}
+
+// ClientPane is the pane the client's keyboard is in.
+func (r *Rig) ClientPane() string {
+	for _, ln := range strings.Split(r.T("list-clients", "-F", "#{client_name} #{pane_id}"), "\n") {
+		f := strings.Fields(ln)
+		if len(f) == 2 && f[0] == r.CL {
+			return f[1]
+		}
+	}
+	return ""
+}
+
 func (r *Rig) ClientSess() string {
 	for _, ln := range strings.Split(r.T("list-clients", "-F", "#{client_name} #{session_name}"), "\n") {
 		f := strings.Fields(ln)

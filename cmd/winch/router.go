@@ -214,8 +214,9 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 	d.h.send(env.sub, marshalLine(r))
 }
 
-// toggle is M-s: docked -> undock (mid-scrub: commit-and-dismiss); otherwise
-// dock the sidebar into the current window.
+// toggle is M-s: docked -> focus the sidebar, or close it if the keyboard is
+// already there (mid-scrub: commit-and-dismiss); otherwise dock the sidebar
+// into the client's current window.
 func (d *daemon) toggle(ctl *control, client string) error {
 	if client == "" {
 		return errors.New("toggle needs a client name")
@@ -248,13 +249,23 @@ func (d *daemon) toggle(ctl *control, client string) error {
 			}
 			return d.dockClose(ctl, false)
 		}
-		// Docked and idle: close. This key is visibility only — REACHING the
-		// sidebar is C-h, because the sidebar is a real tmux pane and the
-		// navigator binding already treats it as one (tmux.nix sends the
-		// navigator keys into winch, and C-l from the list goes back right).
-		// Overloading M-s to focus-then-close was tried and felt wrong: it
-		// costs two presses to close from a content pane, and the same key
-		// stops meaning one thing.
+		// Docked and idle: focus the sidebar, or close it if the keyboard is
+		// already there. JetBrains tool-window semantics (alt+1 focuses,
+		// then hides) — the shape this problem converges to, because one
+		// state (content pane, sidebar open) has two wanted outcomes and a
+		// key produces one. Closing from a content pane is the two-press
+		// case; it is the rarer one, since you close the sidebar while
+		// looking at it.
+		//
+		// A direct jump, not select-pane -L: C-h walks one pane at a time,
+		// which is several presses from the far edge of a split. Window
+		// matched because select-pane cannot move a client to another
+		// window — off-window it would report success and change nothing,
+		// so closing is the honest answer there.
+		if fp, fw := d.focusOf(ctl, client); fw == d.dock.win && fp != d.dock.pane {
+			_, err := ctl.run("select-pane -t " + q(d.dock.pane))
+			return err
+		}
 		return d.dockClose(ctl, false)
 	}
 	return d.dockOpen(ctl, client)
@@ -318,8 +329,8 @@ func agentAt(agents []pane, pane, win string) int {
 
 // agentsOpen (M-a): the agent switcher. M-s with the selection pinned to an
 // agent row — the agent the user is already in, or failing that the
-// highest-attention one — and a second press closes it, exactly like M-s.
-// With no agents it says so instead of docking.
+// highest-attention one. Once docked it IS M-s. With no agents it says so
+// instead of docking.
 //
 // It used to cycle instead of closing, and used to open through browseOpen.
 // Both were wrong, and interacted:
@@ -339,9 +350,10 @@ func agentAt(agents []pane, pane, win string) int {
 // same way it would if you had scrolled onto the row by hand.
 func (d *daemon) agentsOpen(ctl *control, client string) error {
 	if d.dock != nil {
-		// Second press closes. Same call M-s makes, so the two keys dismiss
-		// identically and neither moves the client.
-		return d.dockClose(ctl, false)
+		// Already docked: hand straight to M-s, so the two keys are the same
+		// key once the sidebar is up — focus it, or close it if the keyboard
+		// is already there. Only the opening selection differs.
+		return d.toggle(ctl, client)
 	}
 	rank := map[string]int{"blocked": 4, "done": 3, "working": 2, "idle": 1}
 	var agents []pane

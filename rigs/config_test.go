@@ -38,7 +38,7 @@ func TestConfigPersists(t *testing.T) {
 	r.Chk("drag persisted to @winch-width", strings.TrimSpace(r.ShowOpt("-gqv", "@winch-width")) == "30")
 
 	// Undock cleanly, then kill the daemon the way a deploy does.
-	r.D("toggle", r.CL)
+	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 	r.KillDaemon()
 	r.D("ls")
@@ -50,7 +50,7 @@ func TestConfigPersists(t *testing.T) {
 		t.Logf("  sidebar came back at %d, want 30", w)
 	}
 
-	r.D("toggle", r.CL)
+	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 }
 
@@ -71,7 +71,7 @@ func TestConfigRejectsGarbage(t *testing.T) {
 		if got != sideW {
 			t.Logf("  %q produced width %d, want the %d default", v, got, sideW)
 		}
-		r.D("toggle", r.CL)
+		r.Undock()
 		r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 	}
 }

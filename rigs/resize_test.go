@@ -69,7 +69,7 @@ func TestClientResize(t *testing.T) {
 	r.Chk("sidebar 40 in beta", r.Side().Width == sideW)
 
 	// undock: no spacers, no dead panes, options clean
-	r.D("toggle", r.CL)
+	r.Undock()
 	sleep(1200)
 	r.Chk("sidebar left user windows", r.WinchPanes("-s", "-t", "work") == 0)
 	r.Chk("no spacers remain", r.Spacers() == 0)

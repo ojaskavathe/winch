@@ -26,7 +26,7 @@ func TestRecovery(t *testing.T) {
 		s := r.Side()
 		return s.Left == 0 && s.Width == sideW
 	}))
-	r.D("toggle", r.CL)
+	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 
 	// J: user splits while docked; undock restore fails cleanly
@@ -39,7 +39,7 @@ func TestRecovery(t *testing.T) {
 	// "last listed" is not "the pane this test created".
 	userSplit := r.T("split-window", "-v", "-P", "-F", "#{pane_id}", "-t", cur)
 	sleep(300)
-	r.D("toggle", r.CL)
+	r.Undock()
 	r.await(5000, "undock done", func() bool { return r.WinchPanes("-t", cur) == 0 })
 	r.Chk("user split survives undock", len(strings.Split(r.T("list-panes", "-t", cur, "-F", "x"), "\n")) == np0+1)
 	r.Chk("no sidebar left behind", r.WinchPanes("-t", cur) == 0)

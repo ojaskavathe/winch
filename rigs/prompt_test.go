@@ -48,7 +48,7 @@ func TestPromptStaysPastTheSidebar(t *testing.T) {
 
 	// And it is the user's again on undock — a themed message-style is theirs,
 	// and a stranded width= would confine their prompt forever.
-	r.D("toggle", r.CL)
+	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 	after := r.ShowOpt("-t", sess, "-v", "message-style")
 	r.Chk("message-style restored on undock",
@@ -99,6 +99,6 @@ func TestPromptConfinementFollowsTheWidth(t *testing.T) {
 	r.Chk("and still matches the new width",
 		strings.Contains(after, "width="+strconv.Itoa(r.prof.cols-(w0+10)-1)))
 
-	r.D("toggle", r.CL)
+	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 }

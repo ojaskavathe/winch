@@ -158,7 +158,7 @@ func TestAgent(t *testing.T) {
 	//
 	// The client is on beta here, which holds no agent, so the anchor finds
 	// nothing and the ranking decides: blocked outranks working.
-	r.D("toggle", r.CL)
+	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 
 	r.D("agents", r.CL)

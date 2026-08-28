@@ -41,7 +41,7 @@ func TestPadFollowsWindow(t *testing.T) {
 	sleep(700)
 	r.Chk("still padded after coming back", padded("returned"))
 
-	r.D("toggle", r.CL)
+	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 }
 
@@ -88,6 +88,6 @@ func TestPadFollowsCommit(t *testing.T) {
 	sleep(900)
 	r.Chk("padded again after coming back", padded("returned to work"))
 
-	r.D("toggle", r.CL)
+	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 }
