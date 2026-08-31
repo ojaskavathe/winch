@@ -615,11 +615,20 @@ func agentAt(agents []pane, pane, win string) int {
 // asks for that window's frame itself and the scrub starts from there, the
 // same way it would if you had scrolled onto the row by hand.
 func (d *daemon) agentsOpen(ctl *control, client string) error {
+	// Where the keyboard is, read BEFORE anything moves it. This is both the
+	// toggle test and the anchor: the agent you are sitting in is the one the
+	// list should land on.
+	fp, fw := d.focusOf(ctl, client)
+
 	if d.dock != nil {
-		// Already docked: hand straight to M-s, so the two keys are the same
-		// key once the sidebar is up — focus it, or close it if the keyboard
-		// is already there. Only the opening selection differs.
-		return d.toggle(ctl, client)
+		// Mid-scrub, or with the keyboard already in the sidebar, M-a means
+		// exactly what M-s means — there is no agent to anchor on when you
+		// are looking at the list, and this press is the closing one. (Off
+		// the dock's window select-pane cannot reach anyway, so closing is
+		// the honest answer there too.)
+		if d.dock.scrubbing || fw != d.dock.win || fp == d.dock.pane {
+			return d.toggle(ctl, client)
+		}
 	}
 	rank := map[string]int{"blocked": 4, "done": 3, "working": 2, "idle": 1}
 	var agents []pane
@@ -629,6 +638,12 @@ func (d *daemon) agentsOpen(ctl *control, client string) error {
 		}
 	}
 	if len(agents) == 0 {
+		if d.dock != nil {
+			// Nothing to anchor on, but the sidebar is up and the keyboard is
+			// not in it — focus it, the way M-s would. Refusing to move would
+			// read as a dead key.
+			return d.toggle(ctl, client)
+		}
 		_, err := ctl.run("display-message -t " + q(client) + " " + q("winch: no agents"))
 		return err
 	}
@@ -650,7 +665,7 @@ func (d *daemon) agentsOpen(ctl *control, client string) error {
 	// Start where the user already IS, falling back to the top-attention
 	// agent (index 0) when the focus is not on an agent at all.
 	next := 0
-	if fp, fw := d.focusOf(ctl, client); fp != "" {
+	if fp != "" {
 		if i := agentAt(agents, fp, ""); i >= 0 {
 			next = i
 		} else if i := agentAt(agents, "", fw); i >= 0 {
@@ -658,7 +673,16 @@ func (d *daemon) agentsOpen(ctl *control, client string) error {
 		}
 	}
 	pick := agents[next]
-	if err := d.dockOpen(ctl, client); err != nil {
+	// Anchoring is the whole point of the key, so it happens whether the
+	// sidebar is being opened or merely focused. Handing an already-docked
+	// sidebar to M-s instead left the selection wherever it had been parked —
+	// press M-a from an agent with a session row selected and the session row
+	// is what you got, which is the one thing M-a is supposed to never do.
+	if d.dock == nil {
+		if err := d.dockOpen(ctl, client); err != nil {
+			return err
+		}
+	} else if _, err := ctl.run("select-pane -t " + q(d.dock.pane)); err != nil {
 		return err
 	}
 	// Quiet: opening the sidebar is not navigation. The row is selected and

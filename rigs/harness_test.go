@@ -516,6 +516,21 @@ func (r *Rig) SendKeys(pane string, keys ...string) {
 	r.T(append([]string{"send-keys", "-t", pane}, keys...)...)
 }
 
+// Type writes raw bytes to the CLIENT's pty, which is the only way to exercise
+// a root key binding. send-keys hands bytes straight to a pane and never
+// consults the key table, so a test built on it cannot tell a working bind
+// from a missing one — the very thing that decides whether C-j reaches the
+// sidebar or moves the tmux pane focus out of it.
+func (r *Rig) Type(s string) {
+	r.t.Helper()
+	if r.ptyMaster == nil {
+		r.t.Fatal("Type: no client pty")
+	}
+	if _, err := r.ptyMaster.WriteString(s); err != nil {
+		r.t.Fatalf("Type %q: %v", s, err)
+	}
+}
+
 // Mouse injects an SGR mouse report straight into a pane's stdin via
 // send-keys -H — deterministic for TUI tests, bypassing tmux's own mouse
 // routing (which needs a real client pointer).
