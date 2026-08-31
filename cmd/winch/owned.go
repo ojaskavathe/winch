@@ -391,6 +391,16 @@ var ownedOptions = []optKey{
 	{scope: scopeSession, name: "@winch_win"},
 	{scope: scopeWindow, name: "automatic-rename"},
 	{scope: scopeWindow, name: "pane-border-indicators"},
+	// Border styles are claimed only to add a BACKGROUND, so the border
+	// column carries the sidebar's ground and the corner joins up. Window
+	// scope rather than pane scope because the cell's owner is not winch's
+	// to choose: screen_redraw_check_cell walks w->z_index and takes the
+	// first pane whose border region contains it, and for the column between
+	// the sidebar and its neighbour BOTH claim it. Pinning the sidebar's own
+	// options therefore governs that column only sometimes. At window scope
+	// both panes inherit the same ground, so whoever wins paints it the same.
+	{scope: scopeWindow, name: "pane-border-style"},
+	{scope: scopeWindow, name: "pane-active-border-style"},
 }
 
 // ------------------------------------------------------------------
@@ -412,6 +422,13 @@ type optIntent struct {
 	// restore replays: a session inheriting the global reports nothing of its
 	// own, but the pad still has to wrap the global's text.
 	rows []string
+
+	// ground is the sidebar's background as a tmux colour, and borderBasis the
+	// user's own border styles per held window ([0] normal, [1] active). The
+	// ground is added to those styles so the border column stops falling
+	// through to the terminal's background; their own colours are kept.
+	ground      string
+	borderBasis map[string][2]string
 
 	// scrubbing is winch holding the sidebar ZOOMED for billboards. It changes
 	// what draws the sidebar.s edge, and so what the pad.s last column has to
@@ -476,9 +493,54 @@ func desiredOpts(in optIntent) []optWant {
 			// pane owns its divider only for py <= wp->sy/2 when it is the left
 			// pane, py > wp->sy/2 when it is the right one.
 			optWant{optKey{scopeWindow, wid, "pane-border-indicators"}, []string{"pane-border-indicators off"}})
+
+		// Give both border styles the sidebar's ground, keeping whatever
+		// colours the user chose. Only the background is winch's business
+		// here — the seam glyph sits on the same ground, so the corner joins
+		// up instead of showing one lighter column beside the status bar.
+		if in.ground != "" {
+			b := in.borderBasis[wid]
+			for j, name := range []string{"pane-border-style", "pane-active-border-style"} {
+				if s := groundedStyle(in.ground, b[j]); s != "" {
+					want = append(want, optWant{optKey{scopeWindow, wid, name},
+						[]string{name + " " + q(s)}})
+				}
+			}
+		}
 	}
 	return want
 }
+
+// groundedStyle adds a background to a border style, keeping the rest.
+//
+// The ground goes FIRST so a style naming its own background still wins — a
+// later directive beats an earlier one, and someone who set a border
+// background meant it. A bare `default` is dropped rather than kept: it resets
+// everything, so trailing it would erase the ground we just added, and for a
+// border it only ever meant "the default foreground", which is what a style
+// carrying no fg gives anyway.
+//
+// A FORMAT-valued style is left alone entirely — returning "" claims nothing.
+// Splitting one on commas is the mistake that took the prompt confinement
+// down; there is no reason to make it again one option over.
+func groundedStyle(ground, base string) string {
+	if ground == "" || isFormatStyle(base) {
+		return ""
+	}
+	var keep []string
+	for _, f := range strings.Split(base, ",") {
+		f = strings.TrimSpace(f)
+		if f == "" || strings.EqualFold(f, "default") {
+			continue
+		}
+		keep = append(keep, f)
+	}
+	return strings.Join(append([]string{"bg=" + ground}, keep...), ",")
+}
+
+// isFormatStyle reports whether a style is a FORMAT rather than a plain list of
+// directives. Its commas are not separators, so nothing here may split it.
+func isFormatStyle(s string) bool { return strings.Contains(s, "#{") }
 
 // ------------------------------------------------------------------
 // Recovery
@@ -640,6 +702,33 @@ func statusRowCount(v string) int {
 		}
 		return 1
 	}
+}
+
+// winStyleBasis reads a WINDOW option's effective value — the window's own,
+// else the global — and caches it against that option's claim, the way
+// statusRows is cached against status-format. Read before winch writes, and
+// dropped the moment the claim is released.
+func (o *owner) winStyleBasis(ctl *control, wid, name string) string {
+	k := optKey{scopeWindow, wid, name}
+	if b, ok := o.basis[k]; ok {
+		if len(b) == 1 {
+			return b[0]
+		}
+		return ""
+	}
+	v := ""
+	outs, errs := ctl.runPipelined(
+		[]string{"show-options -wqv -t " + q(wid) + " " + name},
+		[]string{"show-options -gwqv " + name},
+	)
+	for j := 0; j < 2; j++ {
+		if j < len(outs) && errs[j] == nil && len(outs[j]) == 1 && outs[j][0] != "" {
+			v = outs[j][0]
+			break
+		}
+	}
+	o.basis[k] = []string{v}
+	return v
 }
 
 func effPair(ctl *control, sid, name string) string {

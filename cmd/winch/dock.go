@@ -445,12 +445,26 @@ func (d *daemon) intentFor(ctl *control, sess, win string, held []string, scrubW
 		return optIntent{}
 	}
 	in := optIntent{
-		sess:      sess,
-		win:       win,
-		held:      held,
-		width:     d.width(),
-		rows:      d.opts.statusRows(ctl, sess),
-		scrubbing: scrubbing,
+		sess:        sess,
+		win:         win,
+		held:        held,
+		width:       d.width(),
+		rows:        d.opts.statusRows(ctl, sess),
+		ground:      padGround(),
+		borderBasis: map[string][2]string{},
+		scrubbing:   scrubbing,
+	}
+	for _, wid := range held {
+		if wid == "" {
+			continue
+		}
+		if _, seen := in.borderBasis[wid]; seen {
+			continue
+		}
+		in.borderBasis[wid] = [2]string{
+			d.opts.winStyleBasis(ctl, wid, "pane-border-style"),
+			d.opts.winStyleBasis(ctl, wid, "pane-active-border-style"),
+		}
 	}
 	if scrubWin != "" {
 		if ss := d.sessionOf(scrubWin); ss != "" {
@@ -1189,6 +1203,20 @@ const padBordered = "#{&&:#{!=:#{window_panes},1},#{==:#{window_zoomed_flag},0}}
 // theme emits references a winch option.
 const padWin = "#{@winch_win}"
 
+// padGround is the sidebar's background as a tmux colour — the one ground the
+// strip, the border column and the seam glyph all share.
+//
+// bg=terminal (tmux >= 3.4) is the TERMINAL's default background, which is what
+// a terminal-themed sidebar paints on. (bg=default would NOT work: inside the
+// status line "default" means inherit status-style, i.e. the themed statusline
+// background — a no-op.)
+func padGround() string {
+	if uiTheme == "terminal" {
+		return "terminal"
+	}
+	return seamGround.hex() // the same value tui.go paints pal.bg with
+}
+
 // padPrefix is the run of columns that pushes one status row past the sidebar:
 // the sidebar's own width, then the border column.
 //
@@ -1209,10 +1237,7 @@ func padPrefix(width, row int, scrubbing bool) string {
 	// sidebar, not statusline. (bg=default would NOT work: inside the
 	// status line "default" means inherit status-style, i.e. the themed
 	// statusline background — a no-op.)
-	padBG := "terminal"
-	if uiTheme != "terminal" {
-		padBG = seamGround.hex() // the same value tui.go paints pal.bg with
-	}
+	padBG := padGround()
 	inner := "#[bg=" + padBG + "]#[fg=" + padBG + "]" + strings.Repeat(" ", width) +
 		padCell(width, row, scrubbing) + "#[default]"
 	return "#{?#{==:#{window_id}," + padWin + "}," + inner + ",}"
@@ -1271,7 +1296,7 @@ func padCell(width, row int, scrubbing bool) string {
 	// not inside #{}, and a style like "fg=red,bold" would truncate the branch.
 	seam := "#[" + strings.ReplaceAll(uiSeamStyle, ",", "]#[") + "]"
 	return "#{?#{&&:" + padFlush + "," + padBordered + "}," +
-		"#[bg=terminal]" + seam + borderGlyph(uiBorderLines) +
+		"#[bg=" + padGround() + "]" + seam + borderGlyph(uiBorderLines) +
 		", }"
 }
 

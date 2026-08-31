@@ -98,13 +98,21 @@ func TestSeamGroundMatchesBorder(t *testing.T) {
 	// row reads as no seam at all.
 	r.Chk("the seam is the same colour whatever has focus", ok && ok2 && g.fg == g2.fg)
 
-	// And the pad itself keeps the SIDEBAR's ground — the fix must move the one
-	// border column, not repaint the whole strip.
-	s := statusScreenUntil(r, func(s *screen) bool { return s.bg[0][0] != "" })
-	r.Chk("the pad still sits on the sidebar's own ground",
-		s.bg[0][0] != "" && s.bg[0][0] != s.bg[1][w])
-	if s.bg[0][0] == s.bg[1][w] {
-		t.Logf("  pad ground %q equals the terminal ground; the shift is now invisible", s.bg[0][0])
+	// And the corner joins up HORIZONTALLY too: the strip, the glyph and the
+	// border below now share one ground.
+	//
+	// This used to demand the OPPOSITE — pad ground != border ground — because
+	// the border was whatever the terminal painted and the glyph was matched to
+	// it, which left the glyph one lighter column between the strip and the
+	// status bar. It read as a gap beside the first window cell. Both borders
+	// are now grounded at window scope (desiredOpts), so there is nothing left
+	// to trade and the old assertion was pinning the trade in place.
+	s := statusScreenUntil(r, func(s *screen) bool { return s.bg[0][0] != "" && s.bg[0][w] != "" })
+	r.Chk("the strip sits on the sidebar's ground", s.bg[0][0] != "")
+	r.Chk("and the seam glyph sits on that SAME ground — no gap beside the bar",
+		s.bg[0][0] != "" && s.bg[0][0] == s.bg[0][w])
+	if s.bg[0][0] != s.bg[0][w] {
+		t.Logf("  strip %q vs glyph %q — one column of discontinuity", s.bg[0][0], s.bg[0][w])
 	}
 
 	r.T("set-option", "-g", "status-position", "bottom")
