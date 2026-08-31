@@ -15,7 +15,7 @@ import (
 // Rules live in per-agent TOML manifests (manifest.go); this file owns the
 // polling loop, the anti-flap policy, and publishing.
 //
-// Design rules from herdr's arc (thoughts/agent-detection-research.md):
+// Design rules from herdr's arc (docs/herdr-triage.md):
 //
 //   - The SCREEN is the level-triggered authority. herdr shipped Claude
 //     hooks as state authority and REVERTED (v0.6.7): hooks are

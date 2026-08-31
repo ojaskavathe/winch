@@ -14,9 +14,9 @@ import (
 )
 
 // The agent-detection rule engine: declarative per-agent TOML manifests
-// (schema ported from herdr's, Apache 2.0 — see
-// thoughts/agent-detection-research.md) compiled into matchers evaluated
-// over a screen+title snapshot. Manifests ship as DATA: the bundled ones
+// (schema ported from herdr's, Apache 2.0 — see manifests/LICENSE-herdr for
+// the notice and docs/herdr-triage.md for the lineage) compiled into
+// matchers evaluated over a screen+title snapshot. Manifests ship as DATA: the bundled ones
 // are embedded, and a user file at <config>/winch/agents/<id>.toml
 // replaces the bundled manifest of the same id — when an agent's UI copy
 // changes, the fix is a user-editable TOML, not a release.
