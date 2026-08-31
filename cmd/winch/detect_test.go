@@ -293,7 +293,7 @@ func TestAgentCardIsNameLed(t *testing.T) {
 		row  int
 		want string
 	}{
-		{0, "main 2"},                         // workspace + tab (window has no name -> index)
+		{0, "main · 2"},                       // workspace · tab, herdr's token separator
 		{1, "Build herdr-like tool for tmux"}, // terminal_title_stripped
 		{2, "claude"},                         // agent
 	} {
@@ -326,8 +326,14 @@ func agentCardFixture(t *testing.T, p pane) []row {
 
 	st := &store{
 		sessions: map[string]session{"$1": {ID: "$1", Name: "main"}},
-		windows:  map[string]window{"@1": {ID: "@1", SessionID: "$1", Index: 2, Active: true}},
-		panes:    map[string]pane{p.ID: p},
+		windows: map[string]window{
+			"@1": {ID: "@1", SessionID: "$1", Index: 2, Active: true},
+			// A second window, so the `tab` token is not elided — herdr
+			// drops it for single-window sessions, where an index that
+			// reads the same on every card says nothing.
+			"@9": {ID: "@9", SessionID: "$1", Index: 9},
+		},
+		panes: map[string]pane{p.ID: p},
 	}
 	var out []row
 	for _, r := range st.rows(nil) {

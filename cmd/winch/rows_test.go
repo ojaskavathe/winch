@@ -43,11 +43,11 @@ func TestFitTokens(t *testing.T) {
 	}
 }
 
-// herdr's `tab` token is a name you chose or a NUMBER. tmux auto-renames
-// windows to the running command, which is the same "we made this up" state
-// but with a noisier value: every agent window here is `.claude-wrapped`,
-// which says nothing and repeats row three. So auto-named windows show their
-// index and only a deliberate name is displayed.
+// herdr's `tab` token is a name you chose or a NUMBER, and it is ELIDED when
+// it carries nothing: show_tab = multi_tab || !tab.is_auto_named(). tmux
+// auto-renames windows to the running command, which is the same "we made
+// this up" state with a noisier value — every agent window here is
+// `.claude-wrapped`, which says nothing and repeats row three.
 func TestTabLabelPrefersIndexOverCommandNoise(t *testing.T) {
 	st := &store{
 		sessions: map[string]session{"$1": {ID: "$1", Name: "main"}},
@@ -74,9 +74,28 @@ func TestTabLabelPrefersIndexOverCommandNoise(t *testing.T) {
 		{"@3", "4"},      // named after a sibling pane's command
 		{"@4", "5"},      // unnamed
 	} {
-		if got := st.tabLabel(c.win); got != c.want {
+		if got := st.tabLabel("$1", c.win); got != c.want {
 			t.Errorf("tabLabel(%s) = %q, want %q", c.win, got, c.want)
 		}
+	}
+}
+
+// A session with ONE window has nothing to distinguish, so the index — which
+// would read the same on every card — is dropped. A name someone chose still
+// shows: they named it for a reason, and that reason outlives the count.
+func TestTabLabelElidedWhenItSaysNothing(t *testing.T) {
+	lone := func(name, cmd string) *store {
+		return &store{
+			sessions: map[string]session{"$1": {ID: "$1", Name: "solo"}},
+			windows:  map[string]window{"@1": {ID: "@1", SessionID: "$1", Index: 1, Name: name}},
+			panes:    map[string]pane{"%1": {ID: "%1", WindowID: "@1", SessionID: "$1", Command: cmd}},
+		}
+	}
+	if got := lone(".claude-wrapped", ".claude-wrapped").tabLabel("$1", "@1"); got != "" {
+		t.Errorf("single auto-named window = %q, want it elided", got)
+	}
+	if got := lone("review", ".claude-wrapped").tabLabel("$1", "@1"); got != "review" {
+		t.Errorf("single deliberately-named window = %q, want %q", got, "review")
 	}
 }
 

@@ -325,10 +325,13 @@ func (st *store) rows(winPick map[string]string) []row {
 			// Row one: state_icon (painted at col 2 by paintList from
 			// row.agent) + workspace + tab.
 			sess := st.sessions[p.SessionID].Name
+			// Joined with herdr's token separator — " · " between tokens, a
+			// plain space only after the state icon (which winch paints
+			// separately at column 2, so the space is already there).
 			head, headStyled := "   "+sess, ""
-			if tab := st.tabLabel(p.WindowID); tab != "" && len([]rune(sess+" "+tab)) <= avail {
-				head = "   " + sess + " " + tab
-				headStyled = "   " + sess + pal.muted + " " + tab + "\033[39m"
+			if tab := st.tabLabel(p.SessionID, p.WindowID); tab != "" && len([]rune(sess+" · "+tab)) <= avail {
+				head = "   " + sess + " · " + tab
+				headStyled = "   " + sess + pal.muted + " · " + tab + "\033[39m"
 			}
 			out = append(out, row{
 				label: head, styled: headStyled,
@@ -407,32 +410,47 @@ func baseName(path string) string {
 	return path
 }
 
-// tabLabel is herdr's `tab` token, ported to tmux honestly.
+// tabLabel is herdr's `tab` token, ported to tmux honestly — and empty when
+// the token would say nothing, which is herdr's rule too:
 //
-// A herdr tab is either something you named or a NUMBER, and it dims the
-// auto-named ones. tmux windows auto-rename to the running command, which is
-// the same "I made this up" state — except the made-up value is noise rather
-// than a number: every agent window here is called `.claude-wrapped`, which
-// says nothing and duplicates row three. So a window still carrying a
-// command name shows its index, the way herdr shows a number, and a name a
-// person chose shows verbatim.
+//	show_tab = multi_tab || !tab.is_auto_named()
 //
-// Compared against every pane in the window, not just the agent's: tmux names
-// a window after its ACTIVE pane, which may be the editor beside the agent.
-func (st *store) tabLabel(wid string) string {
+// A herdr tab is either a name someone chose or a NUMBER. tmux windows
+// auto-rename to the running command, which is the same "I made this up"
+// state with a noisier value: every agent window here is `.claude-wrapped`,
+// which says nothing and repeats row three. So a deliberately named window
+// shows its name, an auto-named one shows its index the way herdr shows a
+// number — and a session with only ONE window shows neither, because an
+// index that is 1 on every card is a column spent on nothing.
+func (st *store) tabLabel(sid, wid string) string {
 	w, ok := st.windows[wid]
 	if !ok {
 		return ""
 	}
-	if w.Name == "" {
+	if w.Name != "" && !st.autoNamed(wid) {
+		return w.Name
+	}
+	if len(st.winsOf(sid)) > 1 {
 		return strconv.Itoa(w.Index)
+	}
+	return ""
+}
+
+// autoNamed reports whether tmux picked this window's name rather than a
+// person. Compared against every pane in the window, not just the agent's:
+// tmux names a window after its ACTIVE pane, which may be the editor sitting
+// beside the agent.
+func (st *store) autoNamed(wid string) bool {
+	w, ok := st.windows[wid]
+	if !ok || w.Name == "" {
+		return true
 	}
 	for _, p := range st.panes {
 		if p.WindowID == wid && baseCmd(w.Name) == baseCmd(p.Command) {
-			return strconv.Itoa(w.Index)
+			return true
 		}
 	}
-	return w.Name
+	return false
 }
 
 // baseCmd strips what nix and tmux add around a command name, so the
