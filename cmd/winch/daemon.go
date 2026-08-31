@@ -95,6 +95,12 @@ var uiTheme string
 // Same lifetime as uiTheme: changing it mid-session needs a daemon restart.
 var uiBorderLines string
 
+// uiNav is the sidebar's pane-navigation keys, resolved at attach from
+// @winch-nav-keys or from the user's own root bindings (config.go). Set in the
+// daemon from tmux and in the TUI from the snapshot that carries it — same
+// variable, two processes, filled from whichever source that process has.
+var uiNav = navDefault
+
 // uiSeamStyle is the colour of the sidebar's whole edge — the pane border down
 // the side and the glyph continuing it into the status bar.
 //

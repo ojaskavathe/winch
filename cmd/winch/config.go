@@ -32,7 +32,193 @@ const (
 	optWidth = "@winch-width"
 	optSplit = "@winch-agents-split"
 	optSeam  = "@winch-seam-style"
+	optNav   = "@winch-nav-keys"
 )
+
+// navKeys are the four keys the sidebar treats as pane navigation, named the
+// way tmux names them. The sidebar is a pane like any other, so the keys that
+// move between panes should move within it — and which keys those ARE is the
+// user's business, not winch's. C-hjkl was hardcoded, which is only right for
+// people who happen to share that binding.
+type navKeys struct {
+	Left  string `json:"left,omitempty"`
+	Down  string `json:"down,omitempty"`
+	Up    string `json:"up,omitempty"`
+	Right string `json:"right,omitempty"`
+}
+
+// navDefault is the vim-tmux-navigator convention, used when nothing is
+// configured and nothing could be detected.
+var navDefault = navKeys{Left: "C-h", Down: "C-j", Up: "C-k", Right: "C-l"}
+
+func (n navKeys) String() string {
+	return fmt.Sprintf("left=%s down=%s up=%s right=%s", n.Left, n.Down, n.Up, n.Right)
+}
+
+// navByte resolves a tmux key name to the single byte a terminal sends for it.
+//
+// Deliberately narrow: C-<letter> and bare printable characters, which is what
+// pane-navigation bindings realistically use. Arrow keys need no entry — the
+// TUI already reads them as CSI sequences whatever the config says — and M-
+// keys are excluded because they arrive as ESC-prefixed pairs that the escape
+// state machine would have to disambiguate from a real escape.
+func navByte(name string) (byte, bool) {
+	switch {
+	case name == "":
+		return 0, false
+	case len(name) == 3 && (name[0] == 'C' || name[0] == 'c') && name[1] == '-':
+		c := name[2] | 0x20 // lowercase
+		if c < 'a' || c > 'z' {
+			return 0, false
+		}
+		return c - 'a' + 1, true
+	case len(name) == 1 && name[0] >= 0x20 && name[0] < 0x7f:
+		return name[0], true
+	}
+	return 0, false
+}
+
+// navHit reports whether an input byte is the key named. An unset name never
+// matches — notably not byte 0, which is what an unnamed key would otherwise
+// resolve to and would swallow C-Space.
+func navHit(name string, b byte) bool {
+	want, ok := navByte(name)
+	return ok && want == b
+}
+
+// resolved drops any key winch cannot actually match on, so the TUI never
+// waits for a byte that will not come.
+func (n navKeys) resolved() navKeys {
+	keep := func(s string) string {
+		if _, ok := navByte(s); ok {
+			return s
+		}
+		return ""
+	}
+	return navKeys{Left: keep(n.Left), Down: keep(n.Down), Up: keep(n.Up), Right: keep(n.Right)}
+}
+
+// loadNavKeys resolves the sidebar's navigation keys: the explicit option if
+// there is one, otherwise whatever the user's own tmux binds move between
+// panes with, otherwise C-hjkl.
+func loadNavKeys(ctl *control) {
+	s := strings.TrimSpace(optStr(ctl, optNav))
+	if s != "" && !strings.EqualFold(s, "auto") {
+		n, err := parseNavKeys(s)
+		if err == nil {
+			uiNav = n.resolved()
+			log.Printf("config: %s=%q -> %s", optNav, s, uiNav)
+			return
+		}
+		log.Printf("config: %s=%q: %v, detecting instead", optNav, s, err)
+	}
+	det := detectNavKeys(ctl).resolved()
+	uiNav = navKeys{
+		Left:  firstNonEmpty(det.Left, navDefault.Left),
+		Down:  firstNonEmpty(det.Down, navDefault.Down),
+		Up:    firstNonEmpty(det.Up, navDefault.Up),
+		Right: firstNonEmpty(det.Right, navDefault.Right),
+	}
+	log.Printf("config: nav keys %s (detected %s)", uiNav, det)
+}
+
+// navPtr is uiNav for the wire. A pointer so an older daemon's snapshot — or
+// any snapshot built before the option was read — leaves the field absent and
+// the TUI keeps its own default, rather than receiving four empty strings and
+// concluding the user unbound everything.
+func navPtr() *navKeys {
+	n := uiNav
+	return &n
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+// parseNavKeys reads "left,down,up,right" — the order tmux itself lists the
+// directions in for select-pane. A field may be empty or "-" to leave that
+// direction unbound.
+func parseNavKeys(s string) (navKeys, error) {
+	f := strings.Split(s, ",")
+	if len(f) != 4 {
+		return navKeys{}, fmt.Errorf("want 4 comma-separated keys (left,down,up,right), got %d", len(f))
+	}
+	for i := range f {
+		f[i] = strings.TrimSpace(f[i])
+		if f[i] == "-" {
+			f[i] = ""
+		}
+		if f[i] != "" {
+			if _, ok := navByte(f[i]); !ok {
+				return navKeys{}, fmt.Errorf("key %q is not a C-<letter> or a single character", f[i])
+			}
+		}
+	}
+	return navKeys{Left: f[0], Down: f[1], Up: f[2], Right: f[3]}, nil
+}
+
+// detectNavKeys reads the user's own pane-navigation keys out of tmux's root
+// key table, by looking for what each key ultimately DOES rather than for any
+// particular plugin's spelling. vim-tmux-navigator wraps its select-pane in an
+// if-shell; a plain config binds it directly; both say "select-pane -D"
+// somewhere in the command, and that is the whole test.
+//
+// Root table only. A prefixed binding cannot reach the sidebar at all — tmux
+// swallows the prefix — so adopting one would bind the sidebar to a key that
+// never arrives.
+func detectNavKeys(ctl *control) navKeys {
+	lines, err := ctl.run("list-keys -T root")
+	if err != nil {
+		return navKeys{}
+	}
+	return navFromLines(lines)
+}
+
+// navFromLines is detectNavKeys' parsing half, split out so it can be tested
+// against real `list-keys` output without a tmux server.
+//
+// Keys winch cannot match on are still RECORDED here, and dropped later by
+// resolved(). That way `winch doctor` can report "your up key is M-Up and I
+// cannot use it" instead of silently showing the default and leaving the user
+// to wonder why their binding did nothing.
+func navFromLines(lines []string) navKeys {
+	var got navKeys
+	for _, ln := range lines {
+		key, cmd, ok := splitRootBind(ln)
+		if !ok {
+			continue
+		}
+		// First binding wins: tmux itself resolves a duplicated key to the
+		// last one loaded, but list-keys prints in table order and the
+		// realistic duplicate is a leftover, not the live one.
+		switch {
+		case strings.Contains(cmd, "select-pane -U") && got.Up == "":
+			got.Up = key
+		case strings.Contains(cmd, "select-pane -D") && got.Down == "":
+			got.Down = key
+		case strings.Contains(cmd, "select-pane -L") && got.Left == "":
+			got.Left = key
+		case strings.Contains(cmd, "select-pane -R") && got.Right == "":
+			got.Right = key
+		}
+	}
+	return got
+}
+
+// splitRootBind pulls the key and the command out of one `list-keys -T root`
+// line: `bind-key  -T root C-j  if-shell ...`.
+func splitRootBind(ln string) (key, cmd string, ok bool) {
+	f := strings.Fields(ln)
+	for i := 1; i+1 < len(f); i++ {
+		if f[i-1] == "-T" && f[i] == "root" {
+			return strings.Trim(f[i+1], `"`), strings.Join(f[i+2:], " "), true
+		}
+	}
+	return "", "", false
+}
 
 // Bounds are enforced on BOTH read and write: a hand-edited tmux.conf is as
 // likely a source of nonsense as a drag, and a 4-column sidebar or a 0.99
@@ -49,6 +235,7 @@ func (d *daemon) loadConfig(ctl *control) {
 	uiTheme = strings.TrimSpace(optStr(ctl, optTheme))
 	uiBorderLines = borderLines(ctl)
 	loadSeamStyle(ctl)
+	loadNavKeys(ctl)
 
 	if s := optStr(ctl, optWidth); s != "" {
 		if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {

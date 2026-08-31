@@ -88,7 +88,7 @@ func (d *daemon) doctor(ctl *control) []string {
 
 	// ---- config ---------------------------------------------------------
 	r.head("config")
-	for _, o := range []string{optTheme, optWidth, optSplit, optSeam} {
+	for _, o := range []string{optTheme, optWidth, optSplit, optSeam, optNav} {
 		v := optStr(ctl, o)
 		if v == "" {
 			v = "(unset)"
@@ -99,6 +99,13 @@ func (d *daemon) doctor(ctl *control) []string {
 	r.add("  %-22s %q  (glyph %s)", "seam style", uiSeamStyle, borderGlyph(uiBorderLines))
 	r.add("  %-22s %s", "pane-border-lines", uiBorderLines)
 	r.add("  %-22s %v", "alternate-screen", altScreen)
+	// The keys actually in force, which is the interesting number: unset
+	// means detected-from-your-binds, and what it detected is not otherwise
+	// visible anywhere.
+	r.add("  %-22s %s", "nav keys in use", uiNav)
+	if det := detectNavKeys(ctl).resolved(); det != (navKeys{}) {
+		r.add("  %-22s %s", "detected from binds", det)
+	}
 
 	// ---- dock -----------------------------------------------------------
 	r.head("dock")

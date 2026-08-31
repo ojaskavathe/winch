@@ -1042,6 +1042,11 @@ func cmdTui(tmuxSock, winchSock string) {
 					if m.Theme != "" {
 						setTheme(m.Theme)
 					}
+					// The daemon is the only side that can read tmux's key
+					// table, so which keys move between panes arrives here.
+					if m.Nav != nil {
+						uiNav = m.Nav.resolved()
+					}
 					// Width before the first paint: laying out at the default
 					// and correcting to the user's dragged width is a jump.
 					if m.Width >= 18 {
@@ -1395,14 +1400,22 @@ func cmdTui(tmuxSock, winchSock string) {
 				// docked idle — never "escapes" back to the docked window's
 				// hidden panes via a raw unzoom. C-j/C-k mirror j/k. C-h has
 				// nowhere left to go and is ignored.
-				case b == 'j', b == 0x0a: // j, ctrl-j
+				case b == 'j':
 					moved = moveSel(1) || moved
-				case b == 'k', b == 0x0b: // k, ctrl-k
+				case b == 'k':
 					moved = moveSel(-1) || moved
 				case b == 'h':
 					moved = cycleWin(-1) || moved
 				case b == 'l':
 					moved = cycleWin(1) || moved
+				// The user's own pane-navigation keys, whatever they are
+				// (config.go). AFTER the letters above so a config that maps a
+				// bare `l` cannot take `l` away from window paging — the
+				// literal keys are the sidebar's own and win ties.
+				case navHit(uiNav.Down, b):
+					moved = moveSel(1) || moved
+				case navHit(uiNav.Up, b):
+					moved = moveSel(-1) || moved
 				case b == 'r':
 					// Rename the selected session inline, prefilled.
 					if sel >= 0 && sel < len(rows) && rows[sel].session {
@@ -1440,18 +1453,22 @@ func cmdTui(tmuxSock, winchSock string) {
 				case b == '\r': // enter
 					shrinkExpected = !narrowMode()
 					send(cmdMsg{Cmd: "commit", Window: target(), Pane: targetPane()})
-				case b == 0x0c: // ctrl-l
+				case navHit(uiNav.Right, b):
 					if narrowMode() {
-						// Docked idle: C-l is the navigator's "pane to the
-						// right" — the pane NEXT to the sidebar, not the
-						// window's last-active one (commit would skip splits).
+						// Docked idle: "pane to the right" is the pane NEXT to
+						// the sidebar, not the window's last-active one (commit
+						// would skip splits).
 						send(cmdMsg{Cmd: "focus"})
 					} else {
-						// Zoomed billboard / full-screen browse: C-l goes INTO
+						// Zoomed billboard / full-screen browse: right goes INTO
 						// what you're looking at, like Enter.
 						shrinkExpected = true
 						send(cmdMsg{Cmd: "commit", Window: target(), Pane: targetPane()})
 					}
+				// Left has nowhere to go — the sidebar is the leftmost thing in
+				// its window — but it is swallowed rather than ignored, so it
+				// cannot fall through to `default` and reset the escape state.
+				case navHit(uiNav.Left, b):
 				case b == 'q', b == 0x03: // q, ctrl-c
 					shrinkExpected = !narrowMode()
 					send(cmdMsg{Cmd: "close"})

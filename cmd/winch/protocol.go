@@ -53,6 +53,11 @@ type snapshotMsg struct {
 	Type  string `json:"type"`            // snapshot
 	Tmux  string `json:"tmux"`            // tmux server socket path
 	Theme string `json:"theme,omitempty"` // @winch-theme at attach; "" = default
+	// The keys this user's tmux moves between panes with, so the sidebar
+	// answers to the same ones. Resolved daemon-side (it is the process that
+	// can read tmux's key table) and carried here because the TUI is a
+	// separate process with no tmux connection of its own.
+	Nav *navKeys `json:"nav,omitempty"`
 	// Where the selection belongs, for a sidebar that does not exist yet.
 	// A freshly spawned TUI paints the right row on its FIRST paint instead
 	// of painting a default and correcting when the select arrives — during
@@ -150,6 +155,7 @@ type wireMsg struct {
 	Pane       string      `json:"pane"`
 	Quiet      bool        `json:"quiet"`
 	Theme      string      `json:"theme"`
+	Nav        *navKeys    `json:"nav"`
 	Select     string      `json:"select"`
 	SelectPane string      `json:"selectpane"`
 	Width      int         `json:"width"`
