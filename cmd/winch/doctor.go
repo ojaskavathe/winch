@@ -120,7 +120,13 @@ func (d *daemon) doctor(ctl *control) []string {
 			if len(p) != 3 || p[1] == "1" {
 				continue
 			}
-			r.add("  %-22s %s", "notify "+p[0], p[2])
+			// A client's NAME is usually its tty path, so printing both
+			// reads as a bug rather than a fact.
+			if p[0] == p[2] {
+				r.add("  %-22s %s", "notify client", p[2])
+			} else {
+				r.add("  %-22s %s", "notify "+p[0], p[2])
+			}
 		}
 	}
 

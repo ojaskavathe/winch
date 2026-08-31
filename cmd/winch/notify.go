@@ -220,9 +220,23 @@ func notifyRipe(p pendingNote, cur string, now time.Time, delay time.Duration) (
 // amount of capability detection, and it needs no daemon.
 func cmdNotifyTest(tmuxSock, osc string) {
 	t := eqTmux{sock: tmuxSock}
-	tty, err := t.out("display-message", "-p", "#{client_tty}")
-	if err != nil || tty == "" {
-		fmt.Fprintf(os.Stderr, "winch notify-test: no attached client to notify (%v)\n", err)
+	// display-message resolves "the current client" from the terminal that
+	// invoked it, which is empty when this is run from OUTSIDE tmux — and
+	// running it from outside is the normal case for a one-shot check. Fall
+	// back to whichever real client is attached, since notifying is what the
+	// daemon does to all of them anyway.
+	tty, _ := t.out("display-message", "-p", "#{client_tty}")
+	if tty == "" {
+		out, _ := t.out("list-clients", "-F", "#{client_control_mode}"+sep+"#{client_tty}")
+		for _, ln := range strings.Split(out, "\n") {
+			if p := strings.Split(ln, sep); len(p) == 2 && p[0] != "1" && p[1] != "" {
+				tty = p[1]
+				break
+			}
+		}
+	}
+	if tty == "" {
+		fmt.Fprintln(os.Stderr, "winch notify-test: no attached client to notify")
 		os.Exit(1)
 	}
 	kind := parseNotifyOSC(osc)
