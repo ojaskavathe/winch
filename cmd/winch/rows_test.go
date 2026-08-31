@@ -263,9 +263,10 @@ func TestAgentsOrderByAttentionThenRecency(t *testing.T) {
 	}
 }
 
-// row_gap 0 everywhere, as herdr defaults for BOTH sections: no blank row
-// inside the agents list and none between session cards either.
-func TestNoGapRowsBetweenCards(t *testing.T) {
+// A blank row between cards, in BOTH sections. herdr defaults to 0 and
+// documents 1 as "the previous spacing"; at 26 columns, cards with nothing
+// between them read as one block of text, so winch takes the 1.
+func TestCardsAreSeparatedByAGap(t *testing.T) {
 	st := &store{
 		sessions: map[string]session{
 			"$1": {ID: "$1", Name: "one"},
@@ -279,9 +280,46 @@ func TestNoGapRowsBetweenCards(t *testing.T) {
 			"%1": {ID: "%1", WindowID: "@1", SessionID: "$1", Title: "a", Agent: "claude", AgentState: "idle"},
 		},
 	}
-	for i, r := range st.rows(nil) {
+	rows := st.rows(nil)
+	gaps := 0
+	for _, r := range rows {
 		if r.gap {
-			t.Errorf("row %d is a blank spacer; row_gap should be 0", i)
+			gaps++
+		}
+	}
+	// One before each session card, one before the agent card.
+	if gaps != 3 {
+		t.Errorf("got %d gap rows, want 3 (two sessions + one agent)", gaps)
+	}
+	// A gap never takes the selection.
+	for i, r := range rows {
+		if r.gap && !r.inert() {
+			t.Errorf("gap row %d is selectable", i)
+		}
+	}
+}
+
+// row_gap 0 only works if the glyph column always says "new card". A
+// session with no agents and no attached client had nothing there, so with
+// the blank row gone its name read as the previous card's continuation.
+// herdr never has this problem: its state_icon covers Unknown with "·".
+func TestEverySessionCardHasAMark(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		r    row
+		want string
+	}{
+		{"an agent needs you", row{session: true, agent: "blocked"}, "●"},
+		{"idle agents", row{session: true, agent: "idle"}, "○"},
+		{"no agents, but attached", row{session: true, att: true}, "●"},
+		{"no agents, not attached", row{session: true}, "·"},
+	} {
+		got, _ := rowMark(c.r, 0)
+		if got != c.want {
+			t.Errorf("%s: mark = %q, want %q", c.name, got, c.want)
+		}
+		if got == "" {
+			t.Errorf("%s: no mark at all — the card has nothing to start it", c.name)
 		}
 	}
 }

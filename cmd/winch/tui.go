@@ -267,9 +267,13 @@ func (st *store) rows(winPick map[string]string) []row {
 				target = pick
 			}
 		}
-		// No blank row between cards: herdr's row_gap defaults to 0 for
-		// spaces as well as agents, and the state dot plus the indent
-		// already separate one card from the next.
+		// A blank row between cards — herdr's row_gap = 1, which it
+		// documents as "the previous spacing". Its own default is 0, and
+		// that is the wrong trade here: herdr's sidebar is wider and its
+		// cards are single-purpose, while these stack a name over a branch
+		// in 26 columns, where cards with no rule between them read as one
+		// block of text.
+		out = append(out, row{gap: true})
 		out = append(out, row{
 			label: "   " + s.Name, window: target, sess: s.ID,
 			session: true, att: s.Attached, agent: agg[s.ID],
@@ -333,6 +337,7 @@ func (st *store) rows(winPick map[string]string) []row {
 		})
 		avail := listW - 3
 		for _, p := range agents {
+			out = append(out, row{gap: true, arow: true})
 			// Row one: state_icon (painted at col 2 by paintList) then
 			// workspace, tab, agent — herdr's tokens, joined by its
 			// separator (" · " between tokens; the plain space after the
@@ -1921,17 +1926,7 @@ func paintList(rows []row, sel int) {
 			// an attached session with no agents shows the accent dot.
 			// Painted AFTER the border write on purpose — this repositions
 			// the cursor, and the border relies on it sitting at col lw+1.
-			orn, style := agentGlyph(rows[i].agent)
-			if rows[i].arow && rows[i].agent == "working" {
-				// A working agent's dot spins, in the colour the dot would
-				// have been. Agent rows only — herdr animated its agent
-				// entries and left the workspace marks static, and a
-				// session card is an aggregate, not a turn.
-				orn = spinnerFrame(spinTick)
-			}
-			if orn == "" && rows[i].session && rows[i].att {
-				orn, style = "●", pal.accent
-			}
+			orn, style := rowMark(rows[i], spinTick)
 			if orn != "" {
 				fmt.Fprintf(&b, "\033[%d;2H%s%s\033[0m", y+1, rowBG+style, orn)
 			}
@@ -2004,6 +1999,33 @@ const spinPeriod = 125 * time.Millisecond
 var spinTick int
 
 func spinnerFrame(tick int) string { return spinners[tick%len(spinners)] }
+
+// rowMark is the glyph at column 2 and its colour: the agent state's dot,
+// spinning while a turn runs; the accent dot for an attached session with no
+// agents; and herdr's Unknown "·" for a session with neither.
+//
+// Never empty for a session row, and that is what pays for row_gap 0. With
+// no blank line between cards the glyph column is the only thing that says
+// "new card", so a session with nothing to report still needs a mark — with
+// none, its name read as the previous card's continuation.
+func rowMark(r row, tick int) (string, string) {
+	orn, style := agentGlyph(r.agent)
+	if r.arow && r.agent == "working" {
+		// Agent rows only. herdr animated its agent entries and left the
+		// workspace marks static: a session card is an aggregate, not a turn.
+		orn = spinnerFrame(tick)
+	}
+	switch {
+	case orn != "":
+		return orn, style
+	case !r.session:
+		return "", ""
+	case r.att:
+		return "●", pal.accent
+	default:
+		return "·", pal.muted
+	}
+}
 
 func agentGlyph(state string) (string, string) {
 	switch state {

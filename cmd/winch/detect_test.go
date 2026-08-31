@@ -336,7 +336,7 @@ func agentCardFixture(t *testing.T, p pane) []row {
 	}
 	var out []row
 	for _, r := range st.rows(nil) {
-		if r.arow {
+		if r.arow && !r.gap { // the card, not the blank row before it
 			out = append(out, r)
 		}
 	}
