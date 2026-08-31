@@ -515,17 +515,28 @@ func desiredOpts(in optIntent) []optWant {
 //
 // The ground goes FIRST so a style naming its own background still wins — a
 // later directive beats an earlier one, and someone who set a border
-// background meant it. A bare `default` is dropped rather than kept: it resets
-// everything, so trailing it would erase the ground we just added, and for a
-// border it only ever meant "the default foreground", which is what a style
-// carrying no fg gives anyway.
+// background meant it.
 //
-// A FORMAT-valued style is left alone entirely — returning "" claims nothing.
-// Splitting one on commas is the mistake that took the prompt confinement
-// down; there is no reason to make it again one option over.
+// A FORMAT-valued style is PREPENDED TO, never split. tmux expands the whole
+// style string with format_expand before style_parse ever sees it (options.c),
+// so `bg=X,#{?pane_in_mode,fg=a,fg=b}` resolves to `bg=X,fg=a` at draw time and
+// keeps reacting to the mode. Splitting it on commas would be the mistake that
+// took the prompt confinement down; DECLINING it, which is what this did at
+// first, was the opposite mistake — catppuccin writes pane-active-border-style
+// as exactly that conditional, so the active border silently kept the
+// terminal's ground and the gap stayed for the one theme this was fixing.
+//
+// A bare `default` is dropped on the plain path: it resets everything, so
+// trailing it would erase the ground just added, and on a border it only ever
+// meant "the default foreground" — which a style carrying no fg gives anyway.
+// It cannot be dropped from inside a format, so a format naming `default` in a
+// branch keeps whatever tmux makes of it.
 func groundedStyle(ground, base string) string {
-	if ground == "" || isFormatStyle(base) {
+	if ground == "" {
 		return ""
+	}
+	if isFormatStyle(base) {
+		return "bg=" + ground + "," + base
 	}
 	var keep []string
 	for _, f := range strings.Split(base, ",") {
