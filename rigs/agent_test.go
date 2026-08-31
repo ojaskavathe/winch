@@ -93,7 +93,12 @@ func TestAgent(t *testing.T) {
 	r.Chk("permission screen -> blocked", r.WaitUntil(7000, func() bool {
 		return r.LogHas("agent claude pane=.* state=.*->blocked")
 	}))
-	r.Chk("blocked notification sent", r.LogHas("notify blocked"))
+	// Waited for rather than asserted flat: notifications now clear a flap
+	// guard before they fire, so they land a tick after the state does even
+	// with the guard at zero.
+	r.Chk("blocked notification sent", r.WaitUntil(3000, func() bool {
+		return r.LogHas("notify blocked")
+	}))
 	blockedDot := regexp.MustCompile(`243[;:]139[;:]168m(?:\x1b\[[0-9;:]*m)*●`)
 	r.Chk("blocked glyph outranks working", r.WaitUntil(2000, func() bool {
 		raw, _ := r.TQ("capture-pane", "-p", "-e", "-t", s.Pane)

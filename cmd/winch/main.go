@@ -49,6 +49,7 @@ commands:
   equalize [pane]        equalize panes, nvim splits weighted (no daemon needed)
   tui                    the sidebar TUI (spawned by the daemon)
   doctor                 report what winch has done to this tmux, and check it
+  notify-test [777|9|99]  send one desktop notification to this terminal
   sock                   print the tmux and winch socket paths and exit
 `)
 	os.Exit(2)
@@ -108,6 +109,12 @@ func main() {
 		cmdTui(tmuxSock, winchSock)
 	case "doctor":
 		cmdDoctor(tmuxSock, winchSock)
+	case "notify-test":
+		osc := ""
+		if len(args) > 1 {
+			osc = args[1]
+		}
+		cmdNotifyTest(tmuxSock, osc)
 	case "sock":
 		fmt.Printf("tmux:  %s\nwinch: %s\n", tmuxSock, winchSock)
 	default:

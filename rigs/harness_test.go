@@ -276,6 +276,11 @@ func (r *Rig) setup() {
 	if r.prof.features != "" {
 		r.T("set-option", "-as", "terminal-features", r.prof.features)
 	}
+	// No notification flap guard by default. The guard is a real second of
+	// waiting per blocked agent, and every rig that touches detection would
+	// pay it to test something else entirely. The guard itself is covered
+	// where it belongs, by turning it back UP in notify_test.go.
+	r.T("set-option", "-g", "@winch-notify-delay", "0")
 	r.W1 = r.T("display-message", "-p", "-t", "work:", "#{window_id}")
 	r.T("split-window", "-h", "-t", r.W1, "while :; do echo MARKW1; sleep 2; done")
 	r.T("new-window", "-t", "work:", "-n", "beta")

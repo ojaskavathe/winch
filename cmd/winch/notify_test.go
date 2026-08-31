@@ -1,0 +1,166 @@
+package main
+
+import (
+	"strings"
+	"testing"
+	"time"
+)
+
+// The three dialects, byte for byte. Written out literally rather than built
+// from the same helpers the code uses, because a test that computes its
+// expectation the way the code does cannot catch the code being wrong about
+// the protocol — and the protocol is the whole feature here.
+func TestNotifyPayloadDialects(t *testing.T) {
+	const (
+		esc = "\033"
+		st  = "\033\\"
+	)
+	for _, c := range []struct {
+		osc, want string
+	}{
+		// kitty splits on the first ';' after `notify;`: title, then body.
+		{"777", esc + "]777;notify;claude needs you;work:beta" + st},
+		// No body field exists in OSC 9, so the body is folded into the text
+		// rather than thrown away.
+		{"9", esc + "]9;claude needs you — work:beta" + st},
+		// Two payloads, one identifier: d=0 says more is coming, d=1 closes.
+		{"99", esc + "]99;i=winch:d=0:p=title;claude needs you" + st +
+			esc + "]99;i=winch:d=1:p=body;work:beta" + st},
+	} {
+		if got := notifyPayload(c.osc, "claude needs you", "work:beta"); got != c.want {
+			t.Errorf("OSC %s\n got %q\nwant %q", c.osc, got, c.want)
+		}
+	}
+
+	// An unknown dialect must not produce a half-formed sequence — it falls
+	// back to the default, which is the one most terminals accept.
+	if got := notifyPayload("garbage", "a", "b"); !strings.HasPrefix(got, "\033]777;notify;") {
+		t.Errorf("unknown dialect = %q, want the 777 fallback", got)
+	}
+}
+
+// Titles and bodies are USER DATA: session names, window names, and whatever
+// an agent wrote into its terminal title. An ESC in any of them would close
+// the OSC early and hand the rest of the string to the terminal as commands.
+// This is the one place in winch where untrusted text is written straight to
+// a terminal, so it gets a test of its own.
+func TestNotifyPayloadCannotBeEscaped(t *testing.T) {
+	evil := "claude\033]0;pwned\007 and \033[31mred"
+	for _, osc := range []string{"777", "9", "99"} {
+		got := notifyPayload(osc, evil, evil)
+		// Exactly the escapes the payload itself is made of, and no more.
+		if n := strings.Count(got, "\033"); n != wantESC(osc) {
+			t.Errorf("OSC %s: %d ESC bytes in %q, want %d", osc, n, got, wantESC(osc))
+		}
+		if strings.ContainsRune(got, '\a') {
+			t.Errorf("OSC %s: BEL survived: %q", osc, got)
+		}
+	}
+
+	// 777 uses ';' as its field separator, so a session named "a;b" would
+	// otherwise push half the name into the body silently.
+	if got := notifyPayload("777", "a;b", "c;d"); got != "\033]777;notify;a,b;c,d\033\\" {
+		t.Errorf("semicolons not neutralised for 777: %q", got)
+	}
+	// The other two do not split on ';', so they must NOT mangle it.
+	if got := notifyPayload("9", "a;b", ""); got != "\033]9;a;b\033\\" {
+		t.Errorf("OSC 9 mangled a legitimate semicolon: %q", got)
+	}
+
+	// Unbounded titles are a denial of service against the notification
+	// daemon, not just ugly.
+	long := strings.Repeat("x", 500)
+	if got := notifyPayload("9", long, ""); len([]rune(got)) > 140 {
+		t.Errorf("500-char title produced %d runes", len([]rune(got)))
+	}
+}
+
+// wantESC is how many ESC bytes a well-formed payload of each dialect has:
+// one to open and one for the ST, doubled for 99's two commands.
+func wantESC(osc string) int {
+	if osc == "99" {
+		return 4
+	}
+	return 2
+}
+
+// The flap guard. herdr re-checks after a second precisely because agents
+// flicker through blocked on their own, and a notification you cannot act on
+// before it is already stale is worse than silence.
+func TestNotifyRipe(t *testing.T) {
+	base := time.Unix(1700000000, 0)
+	armed := pendingNote{state: "blocked", at: base}
+	const delay = time.Second
+
+	for _, c := range []struct {
+		name       string
+		cur        string
+		at         time.Time
+		fire, drop bool
+	}{
+		{"still blocked, guard not elapsed", "blocked", base.Add(300 * time.Millisecond), false, false},
+		{"still blocked, guard elapsed", "blocked", base.Add(delay), true, true},
+		{"answered before the guard", "idle", base.Add(300 * time.Millisecond), false, true},
+		{"answered after the guard", "idle", base.Add(2 * time.Second), false, true},
+		{"pane died", "", base.Add(2 * time.Second), false, true},
+		// A second turn of the SAME state is a different event and gets
+		// re-armed by notifyArm; ripeness never sees it as continuous.
+		{"moved on to working", "working", base.Add(2 * time.Second), false, true},
+	} {
+		fire, drop := notifyRipe(armed, c.cur, c.at, delay)
+		if fire != c.fire || drop != c.drop {
+			t.Errorf("%s: fire=%v drop=%v, want fire=%v drop=%v",
+				c.name, fire, drop, c.fire, c.drop)
+		}
+	}
+
+	// Zero delay is what the rigs run with: it must fire on the very first
+	// look, not one tick later.
+	if fire, drop := notifyRipe(armed, "blocked", base, 0); !fire || !drop {
+		t.Errorf("delay=0 did not fire immediately (fire=%v drop=%v)", fire, drop)
+	}
+}
+
+func TestNotifyConfigDefaults(t *testing.T) {
+	// Unset means blocked-only. The default has to be the notification you
+	// would have asked for, and turn-end is one per turn per agent.
+	if b, d := parseNotifyMode(""); !b || d {
+		t.Errorf("unset = blocked:%v done:%v, want blocked only", b, d)
+	}
+	if b, d := parseNotifyMode("off"); b || d {
+		t.Errorf("off = blocked:%v done:%v, want neither", b, d)
+	}
+	if b, d := parseNotifyMode("ALL"); !b || !d {
+		t.Errorf("all = blocked:%v done:%v, want both", b, d)
+	}
+	if got := parseNotifyOSC(" 9 "); got != "9" {
+		t.Errorf("osc = %q, want 9", got)
+	}
+	if got := parseNotifyOSC("nonsense"); got != "777" {
+		t.Errorf("unknown osc = %q, want the 777 default", got)
+	}
+	if got := parseNotifyDelay("250"); got != 250*time.Millisecond {
+		t.Errorf("delay = %v, want 250ms", got)
+	}
+	// Zero is legitimate (rigs, and anyone who wants no guard at all); junk
+	// and negatives are not, and must not disable the guard by accident.
+	if got := parseNotifyDelay("0"); got != 0 {
+		t.Errorf("delay 0 = %v, want 0", got)
+	}
+	for _, bad := range []string{"", "soon", "-5"} {
+		if got := parseNotifyDelay(bad); got != notifyDefaultDelay {
+			t.Errorf("delay %q = %v, want the default", bad, got)
+		}
+	}
+}
+
+// notifyTTY writes to a path taken from tmux. Refusing anything outside /dev
+// keeps a malformed or hostile client_tty from turning a notification into a
+// file write.
+func TestNotifyTTYRefusesNonDevices(t *testing.T) {
+	for _, bad := range []string{"", "/tmp/notatty", "relative/path", "/etc/passwd"} {
+		if err := notifyTTY(bad, "x"); err == nil {
+			t.Errorf("notifyTTY(%q) succeeded, want a refusal", bad)
+		}
+	}
+}

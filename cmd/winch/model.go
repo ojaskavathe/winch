@@ -41,12 +41,12 @@ type pane struct {
 	// how the sidebar knows where you came from, which matters because
 	// docking moves focus ONTO winch — at that moment the agent you were
 	// working in is not active anywhere, and Last is the only record of it.
-	Last   bool `json:"last,omitempty"`
-	Width  int  `json:"width"`
-	Height    int    `json:"height"`
-	Command   string `json:"cmd"`
-	Path      string `json:"path"`
-	Title     string `json:"title"`
+	Last    bool   `json:"last,omitempty"`
+	Width   int    `json:"width"`
+	Height  int    `json:"height"`
+	Command string `json:"cmd"`
+	Path    string `json:"path"`
+	Title   string `json:"title"`
 
 	// Daemon-computed agent detection (detect.go), injected after every
 	// fetch — never read back from tmux.
@@ -62,6 +62,10 @@ type pane struct {
 type tclient struct {
 	Name      string `json:"name"`
 	SessionID string `json:"session"`
+	// TTY is the terminal on the other side of this client — the device tmux
+	// itself writes frames to. It is how a desktop notification gets out of
+	// tmux at all (notify.go); nothing renders from it.
+	TTY string `json:"tty,omitempty"`
 }
 
 type world struct {
@@ -146,17 +150,17 @@ func fetchWorld(c *control) (world, error) {
 		})
 	}
 
-	lines, err = c.run("list-clients -F " + f("#{client_name}", "#{client_control_mode}", "#{session_id}"))
+	lines, err = c.run("list-clients -F " + f("#{client_name}", "#{client_control_mode}", "#{session_id}", "#{client_tty}"))
 	if err != nil {
 		return w, err
 	}
 	attached := map[string]bool{}
 	for _, ln := range lines {
 		p := strings.Split(ln, sep)
-		if len(p) != 3 || p[1] == "1" {
+		if len(p) != 4 || p[1] == "1" {
 			continue // skip control clients (including ourselves)
 		}
-		w.Clients = append(w.Clients, tclient{Name: p[0], SessionID: p[2]})
+		w.Clients = append(w.Clients, tclient{Name: p[0], SessionID: p[2], TTY: p[3]})
 		attached[p[2]] = true
 	}
 	for i := range w.Sessions {

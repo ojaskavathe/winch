@@ -5,6 +5,7 @@ import (
 	"log"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -83,6 +84,16 @@ type detectState struct {
 	period    time.Duration
 	lastOpt   string // last @winch_agents value pushed
 	seq       int64  // monotonic state-change counter; see applyAgentState
+	// Notifications armed but not yet earned, by pane id, plus the config
+	// they were armed under. See notifyArm.
+	pending map[string]pendingNote
+	ncfg    notifyCfg
+}
+
+// pendingNote is a state change waiting out the flap guard.
+type pendingNote struct {
+	state string    // the state that armed it; a change cancels
+	at    time.Time // when it did
 }
 
 // wrapperCmds run agents under an interpreter: pane_current_command says
@@ -211,6 +222,7 @@ func (d *daemon) detectTickRun(ctl *control, w *world) {
 	}
 	var scans []scanReq
 	var blockedNew []string // pane ids that just turned blocked
+	var doneNew []string    // pane ids that just finished a turn
 	changed := false
 	// soft: the card CHANGED but attention did not — the conversation was
 	// renamed. Published, because the sidebar shows the name, but on a
@@ -223,6 +235,13 @@ func (d *daemon) detectTickRun(ctl *control, w *world) {
 			changed = true
 			if a.state == "blocked" && prev != "blocked" {
 				blockedNew = append(blockedNew, id)
+			}
+			// "done" is idle-and-unvisited: the turn ended and nobody has
+			// looked yet. That IS the end-of-turn event, and it is already
+			// anti-flapped upstream by applyAgentState, so it needs no
+			// special-casing here beyond being a transition.
+			if a.state == "done" && prev != "done" {
+				doneNew = append(doneNew, id)
 			}
 		}
 		// The reason rides the state: set while blocked (even when the
@@ -345,7 +364,8 @@ func (d *daemon) detectTickRun(ctl *control, w *world) {
 	switch {
 	case changed:
 		d.publishAgents(ctl, w)
-		d.notifyBlocked(ctl, w, blockedNew)
+		d.notifyArm(ctl, blockedNew, "blocked", now)
+		d.notifyArm(ctl, doneNew, "done", now)
 		d.pushStatusOpt(ctl, w)
 	case soft:
 		// A frame moved and nothing else. publishAgents is a pane copy and
@@ -353,6 +373,10 @@ func (d *daemon) detectTickRun(ctl *control, w *world) {
 		// turning agent — no tmux write, no notification.
 		d.publishAgents(ctl, w)
 	}
+	// Outside the switch: an armed notification has to be reconsidered on
+	// ticks where NOTHING changed, because "nothing changed" is exactly the
+	// evidence that the state held long enough to be worth reporting.
+	d.notifyDue(ctl, w, now)
 	d.retune()
 }
 
@@ -392,44 +416,111 @@ func (d *daemon) publishAgents(ctl *control, w *world) {
 	}
 }
 
-// notifyBlocked pings attached clients that are NOT looking at the pane
-// that just blocked — the ones who can't already see it needs them.
-func (d *daemon) notifyBlocked(ctl *control, w *world, ids []string) {
+// notifyArm records a state change that MIGHT deserve a notification. It
+// does not send: notifyDue decides that once the state has held, so an agent
+// that blocks and unblocks between two ticks never reaches a terminal.
+//
+// The config is read here rather than cached at startup because this is the
+// rare path — a real transition, seconds apart at best — and reading it here
+// is what makes `set -g @winch-notify all` take effect on the next agent
+// instead of the next daemon.
+func (d *daemon) notifyArm(ctl *control, ids []string, state string, now time.Time) {
 	if len(ids) == 0 {
 		return
 	}
-	winName := map[string]string{}
-	sessOf := map[string]string{}
+	d.det.ncfg = loadNotifyCfg(ctl)
+	if !d.det.ncfg.on() {
+		return
+	}
+	if state == "done" && !d.det.ncfg.done {
+		return
+	}
+	if d.det.pending == nil {
+		d.det.pending = map[string]pendingNote{}
+	}
+	for _, id := range ids {
+		d.det.pending[id] = pendingNote{state: state, at: now}
+	}
+}
+
+// notifyDue fires the armed notifications whose state has survived the guard,
+// and quietly drops the ones that did not.
+func (d *daemon) notifyDue(ctl *control, w *world, now time.Time) {
+	if len(d.det.pending) == 0 {
+		return
+	}
+	var due []string
+	for id, p := range d.det.pending {
+		cur := ""
+		if a := d.det.agents[id]; a != nil {
+			cur = a.state
+		}
+		fire, drop := notifyRipe(p, cur, now, d.det.ncfg.delay)
+		if drop {
+			delete(d.det.pending, id)
+		}
+		if fire {
+			due = append(due, id)
+		}
+	}
+	sort.Strings(due) // stable order for logs and rigs
+	for _, id := range due {
+		d.notifyFire(ctl, w, id, d.det.agents[id])
+	}
+}
+
+// notifyFire delivers one agent's notification two ways: a tmux message to
+// attached clients that are NOT looking at the pane (they can't already see
+// it needs them), and a desktop notification to those same clients' terminals
+// (notify.go), which is the half that reaches you when tmux is not on screen.
+func (d *daemon) notifyFire(ctl *control, w *world, id string, a *agentInfo) {
+	if a == nil {
+		return
+	}
+	sessOf, winName := map[string]string{}, map[string]string{}
 	sessName := map[string]string{}
+	cur := map[string]string{}
 	for _, win := range w.Windows {
 		winName[win.ID] = win.Name
 		sessOf[win.ID] = win.SessionID
-	}
-	for _, s := range w.Sessions {
-		sessName[s.ID] = s.Name
-	}
-	cur := map[string]string{}
-	for _, win := range w.Windows {
 		if win.Active {
 			cur[win.SessionID] = win.ID
 		}
 	}
+	for _, s := range w.Sessions {
+		sessName[s.ID] = s.Name
+	}
+	where := sessName[sessOf[a.win]] + ":" + winName[a.win]
+
+	title, body := a.kind+" needs you", where
+	if a.state == "done" {
+		title = a.kind + " finished"
+	}
+	if a.reason != "" {
+		body += " — " + a.reason
+	}
+	if a.title != "" {
+		body += " — " + a.title
+	}
+
 	var cmds []string
-	for _, id := range ids {
-		a := d.det.agents[id]
-		if a == nil {
+	sent := 0
+	for _, c := range w.Clients {
+		if cur[c.SessionID] == a.win {
+			continue // already looking at it
+		}
+		cmds = append(cmds, "display-message -c "+q(c.Name)+" "+q("winch: "+title+" in "+where))
+		if c.TTY == "" {
 			continue
 		}
-		msg := fmt.Sprintf("winch: %s needs attention in %s:%s", a.kind, sessName[sessOf[a.win]], winName[a.win])
-		for _, c := range w.Clients {
-			if cur[c.SessionID] == a.win {
-				continue // already looking at it
-			}
-			cmds = append(cmds, "display-message -c "+q(c.Name)+" "+q(msg))
+		if err := notifyTTY(c.TTY, notifyPayload(d.det.ncfg.osc, title, body)); err != nil {
+			log.Printf("notify %s: %v", c.Name, err)
+			continue
 		}
+		sent++
 	}
 	if len(cmds) > 0 {
-		log.Printf("notify blocked panes=%d msgs=%d", len(ids), len(cmds))
+		log.Printf("notify %s pane=%s clients=%d desktop=%d", a.state, id, len(cmds), sent)
 		_, _ = ctl.runSeq(cmds...)
 	}
 }

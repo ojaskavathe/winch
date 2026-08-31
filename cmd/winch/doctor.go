@@ -88,7 +88,8 @@ func (d *daemon) doctor(ctl *control) []string {
 
 	// ---- config ---------------------------------------------------------
 	r.head("config")
-	for _, o := range []string{optTheme, optWidth, optSplit, optSeam, optNav} {
+	for _, o := range []string{optTheme, optWidth, optSplit, optSeam, optNav,
+		optNotify, optNotifyOSC, optNotifyDelay} {
 		v := optStr(ctl, o)
 		if v == "" {
 			v = "(unset)"
@@ -105,6 +106,22 @@ func (d *daemon) doctor(ctl *control) []string {
 	r.add("  %-22s %s", "nav keys in use", uiNav)
 	if det := detectNavKeys(ctl).resolved(); det != (navKeys{}) {
 		r.add("  %-22s %s", "detected from binds", det)
+	}
+	// Notifications leave the tmux server entirely, so the only thing worth
+	// reporting here is what winch WOULD send and where — whether the
+	// terminal on the far end acts on it is what `winch notify-test` is for.
+	r.add("  %-22s %s", "notifications", loadNotifyCfg(ctl))
+	// Asked of tmux rather than the cached world: this is the address a
+	// notification would actually be written to, and a stale one reads as
+	// working right up until it silently is not.
+	if cls, err := ctl.run("list-clients -F " + f("#{client_name}", "#{client_control_mode}", "#{client_tty}")); err == nil {
+		for _, ln := range cls {
+			p := strings.Split(ln, sep)
+			if len(p) != 3 || p[1] == "1" {
+				continue
+			}
+			r.add("  %-22s %s", "notify "+p[0], p[2])
+		}
 	}
 
 	// ---- dock -----------------------------------------------------------
