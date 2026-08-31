@@ -82,6 +82,43 @@ func TestPromptAreaClearsItself(t *testing.T) {
 	}
 }
 
+// TestCommandPromptStyleGetsTheFillToo: prefix-: is painted from a DIFFERENT
+// option than the one that positions it.
+//
+// status_prompt_redraw picks message-command-style when the prompt mode is
+// PROMPT_COMMAND and message-style otherwise, while status_prompt_area reads
+// message-style either way. So filling message-style alone gave prefix-: an
+// area it never erased — the fix looked right in the option and changed
+// nothing on screen, because prefix-: is exactly the command-prompt case.
+func TestCommandPromptStyleGetsTheFillToo(t *testing.T) {
+	r := New(t)
+	r.T("set-option", "-g", "status-style", "bg=#181825,fg=#cdd6f4")
+	r.T("set-option", "-g", "message-style", "fg=#94e2d5,bg=default,align=centre")
+	r.T("set-option", "-g", "message-command-style", "fg=#94e2d5,bg=default,align=centre")
+
+	r.D("toggle", r.CL)
+	r.await(5000, "docked", func() bool { return r.Side().Pane != "" })
+	sleep(800)
+	sess := r.ClientSess()
+
+	cs := r.ShowOpt("-t", sess, "-v", "message-command-style")
+	t.Logf("  message-command-style while docked: %q", cs)
+	r.Chk("the command prompt's own style is filled", strings.Contains(cs, "fill=#181825"))
+	r.Chk("their colours survive there too", strings.Contains(cs, "#94e2d5"))
+	// Width and align belong to message-style alone — status_prompt_area reads
+	// them from there — so putting them here would be dead weight that still
+	// has to be saved and restored.
+	r.Chk("no width= on the command style", !strings.Contains(cs, "width="))
+
+	r.Undock()
+	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
+	after := r.ShowOpt("-t", sess, "-v", "message-command-style")
+	r.Chk("message-command-style restored on undock", !strings.Contains(after, "fill="))
+	if strings.Contains(after, "fill=") {
+		t.Logf("  stranded: %q", after)
+	}
+}
+
 // The fill comes from the user's own message background when they picked one,
 // and only falls back to the bar's when they did not.
 func TestPromptFillPrefersTheUsersOwnBackground(t *testing.T) {

@@ -452,7 +452,8 @@ func (d *daemon) intentFor(ctl *control, sess, win string, held []string, scrubW
 		width:     d.width(),
 		rows:      d.opts.statusRows(ctl, sess),
 		msgStyle:  ms,
-		msgFill:   promptFill(ctl, ms),
+		cmdStyle:  d.opts.styleBasis(ctl, sess, "message-command-style"),
+		statusBG:  statusBG(ctl),
 		clientW:   clientW,
 		scrubbing: scrubbing,
 	}

@@ -365,6 +365,7 @@ func markName(opt string) string {
 var ownedOptions = []optKey{
 	{scope: scopeSession, name: "status-format"},
 	{scope: scopeSession, name: "message-style"},
+	{scope: scopeSession, name: "message-command-style"},
 	{scope: scopeSession, name: "@winch_docked"},
 	{scope: scopeSession, name: "@winch_win"},
 	{scope: scopeWindow, name: "automatic-rename"},
@@ -396,10 +397,14 @@ type optIntent struct {
 	// of the command prompt — see msgStyleConfined.
 	msgStyle string
 	clientW  int
-	// msgFill is the colour the confined prompt area is cleared to. Empty
-	// leaves it uncleared, which is only right when nothing sensible resolves:
-	// the bar then shows through under the prompt.
-	msgFill string
+	// cmdStyle is the session's effective message-command-style — what tmux
+	// paints prefix-: with, as opposed to message-style which only decides
+	// where it goes.
+	cmdStyle string
+	// statusBG is the status bar's own background, the last resort for the
+	// fill that clears the prompt area. Passed in rather than looked up so
+	// desiredOpts stays a pure function of its intent.
+	statusBG string
 
 	// scrubbing is winch holding the sidebar ZOOMED for billboards. It changes
 	// what draws the sidebar.s edge, and so what the pad.s last column has to
@@ -440,9 +445,20 @@ func desiredOpts(in optIntent) []optWant {
 		want = append(want, optWant{optKey{scopeSession, in.sess, "status-format"}, rows})
 	}
 
-	if ms := msgStyleConfined(in.msgStyle, in.msgFill, in.clientW, in.width); ms != "" {
+	if ms := msgStyleConfined(in.msgStyle, fillFor(in.msgStyle, in.statusBG), in.clientW, in.width); ms != "" {
 		want = append(want, optWant{optKey{scopeSession, in.sess, "message-style"},
 			[]string{"message-style " + q(ms)}})
+		// The command prompt — prefix-: — is painted from a DIFFERENT option.
+		// status_prompt_redraw picks message-command-style when the mode is
+		// PROMPT_COMMAND and message-style otherwise, while status_prompt_area
+		// reads message-style either way. So the two options split the job: one
+		// says where the prompt goes, the other says what colour it is, and the
+		// fill that clears the area has to be on BOTH or prefix-: sets an area
+		// it never erases.
+		if cs := cmdStyleFilled(in.cmdStyle, fillFor(in.cmdStyle, in.statusBG)); cs != "" {
+			want = append(want, optWant{optKey{scopeSession, in.sess, "message-command-style"},
+				[]string{"message-command-style " + q(cs)}})
+		}
 	}
 
 	// Window options apply to every window winch holds, not just the one the
@@ -536,6 +552,53 @@ func msgStyleConfined(base, fill string, clientW, sideW int) string {
 		keep = append(keep, "fill="+fill)
 	}
 	return strings.Join(keep, ",")
+}
+
+// fillFor is the colour a prompt drawn in this style should clear its area to.
+//
+// The style's own `fill=` first, which is a direct statement about this exact
+// thing — and not a rare one: tmux's DEFAULT message-style is
+// `bg=yellow,fg=black,fill=yellow`, and that fill is why an unconfigured tmux
+// looks like it replaces the whole status bar on prefix-:. It is the fill doing
+// that, not the bg.
+//
+// Then the style's own background, then the status bar's. `bg=default` is the
+// common answer and names no colour, so the bar's background stands in: the
+// point is to erase what was underneath, and erasing to the bar's colour is
+// what an emptied status line looks like.
+func fillFor(style, statusBG string) string {
+	if c := styleField(style, "fill"); c != "" {
+		return c
+	}
+	if c := styleField(style, "bg"); c != "" {
+		return c
+	}
+	return statusBG
+}
+
+// cmdStyleFilled gives message-command-style the same fill as the confined
+// message-style, and nothing else.
+//
+// No width or align: status_prompt_area reads those off message-style alone, so
+// putting them here would be dead weight that still has to be saved, restored
+// and reasoned about. Only the fill matters, because only this option supplies
+// the cell the command prompt is drawn with.
+//
+// Returns "" when there is no fill to add — claiming an option in order to
+// write it back unchanged is pure risk.
+func cmdStyleFilled(base, fill string) string {
+	if fill == "" {
+		return ""
+	}
+	var keep []string
+	for _, f := range strings.Split(base, ",") {
+		f = strings.TrimSpace(f)
+		if f == "" || strings.HasPrefix(strings.ToLower(f), "fill=") {
+			continue
+		}
+		keep = append(keep, f)
+	}
+	return strings.Join(append(keep, "fill="+fill), ",")
 }
 
 // styleField pulls one `name=value` directive out of a style string. Empty when
@@ -686,14 +749,21 @@ func (o *owner) statusRows(ctl *control, sid string) []string {
 // statusRows is against status-format: read before winch writes, dropped the
 // moment the claim is released.
 func (o *owner) msgStyle(ctl *control, sid string) string {
-	k := optKey{scopeSession, sid, "message-style"}
+	return o.styleBasis(ctl, sid, "message-style")
+}
+
+// styleBasis reads a session's effective value for one style option and caches
+// it against that option's claim, exactly as msgStyle always did — generalised
+// because the command prompt needs TWO of them (see cmdStyleFilled).
+func (o *owner) styleBasis(ctl *control, sid, name string) string {
+	k := optKey{scopeSession, sid, name}
 	if b, ok := o.basis[k]; ok {
 		if len(b) == 1 {
 			return b[0]
 		}
 		return ""
 	}
-	v := effPair(ctl, sid, "message-style")
+	v := effPair(ctl, sid, name)
 	o.basis[k] = []string{v}
 	return v
 }
