@@ -117,7 +117,6 @@ type row struct {
 	cont    bool   // continuation line of a multi-row entry (herdr's model)
 	create  bool   // the `n` field: a session that does not exist yet
 	agent   string // worst agent state (window rows) / the state (agent rows)
-	orn     string // the agent's own spinner frame, when it is turning
 	styled  string // optional pre-styled label (only fg/dim codes, self-closing);
 	// used when it fits — truncation falls back to the plain label
 }
@@ -334,16 +333,13 @@ func (st *store) rows(winPick map[string]string) []row {
 				head = "   " + sess + " · " + tab
 				headStyled = "   " + sess + pal.muted + " · " + tab + "\033[39m"
 			}
-			// The agent's own spinner replaces the state dot while it turns.
-			// Only for `working`: the other states publish a static ✳, and a
-			// spinner that is not spinning is worse than a dot.
-			spin := ""
-			if p.AgentState == "working" {
-				spin = spinFrame(p.Spin)
-			}
+			// The dot itself is paintList's business: a working row spins
+			// there, off the sidebar's own clock. Baking a frame into the
+			// row would mean rebuilding every row eight times a second to
+			// animate one cell.
 			out = append(out, row{
 				label: head, styled: headStyled,
-				window: p.WindowID, pane: p.ID, agent: p.AgentState, orn: spin, arow: true,
+				window: p.WindowID, pane: p.ID, agent: p.AgentState, arow: true,
 			})
 
 			// Row two: terminal_title_stripped — the agent's own name for
@@ -738,8 +734,40 @@ func cmdTui(tmuxSock, winchSock string) {
 		}
 		return found
 	}
+	// The spinner's clock. Armed only while some agent is working, so an
+	// idle server never wakes for it — that is the whole reason herdr's
+	// version was expensive enough to delete: it drove a 60fps repaint of
+	// the entire UI, always on. This repaints one narrow strip, 8 times a
+	// second, only when there is something to animate.
+	var spinT *time.Ticker
+	var spinC <-chan time.Time
+	armSpin := func(rows []row) {
+		want := false
+		for _, r := range rows {
+			if r.arow && r.agent == "working" {
+				want = true
+				break
+			}
+		}
+		switch {
+		case want && spinT == nil:
+			spinT = time.NewTicker(spinPeriod)
+			spinC = spinT.C
+		case !want && spinT != nil:
+			spinT.Stop()
+			spinT, spinC = nil, nil
+			spinTick = 0 // next turn starts at frame one, not mid-rotation
+		}
+	}
+	defer func() {
+		if spinT != nil {
+			spinT.Stop()
+		}
+	}()
+
 	paintAll := func() {
 		rows = st.rows(winPick)
+		armSpin(rows)
 		clampSel()
 		lastListOut = "" // geometry moved: never suppress this repaint
 		paintList(rows, sel)
@@ -761,6 +789,7 @@ func cmdTui(tmuxSock, winchSock string) {
 			prev = rows[sel]
 		}
 		rows = st.rows(winPick)
+		armSpin(rows)
 		for i, r := range rows {
 			switch {
 			case prev.session && r.session && r.sess == prev.sess:
@@ -953,6 +982,7 @@ func cmdTui(tmuxSock, winchSock string) {
 				}
 				st.apply(m)
 				rows = st.rows(winPick)
+				armSpin(rows) // a world change is how an agent starts working
 				for i, r := range rows {
 					switch {
 					case prev.session && r.session && r.sess == prev.sess:
@@ -1328,6 +1358,12 @@ func cmdTui(tmuxSock, winchSock string) {
 					requestFrames()
 				}
 			}
+		case <-spinC:
+			// One frame on. Repaints the strip without rebuilding rows —
+			// the frame is chosen inside paintList, so animating one cell
+			// costs a paint, not a re-model.
+			spinTick++
+			paintList(rows, sel)
 		case <-selDeadline:
 			// No select arrived (a TUI spawned outside the docked flow):
 			// paint what we have rather than sitting blank.
@@ -1863,10 +1899,12 @@ func paintList(rows []row, sel int) {
 			// Painted AFTER the border write on purpose — this repositions
 			// the cursor, and the border relies on it sitting at col lw+1.
 			orn, style := agentGlyph(rows[i].agent)
-			if rows[i].orn != "" {
-				// A turning agent shows its OWN frame in place of the dot,
-				// in the same colour the dot would have been.
-				orn = rows[i].orn
+			if rows[i].arow && rows[i].agent == "working" {
+				// A working agent's dot spins, in the colour the dot would
+				// have been. Agent rows only — herdr animated its agent
+				// entries and left the workspace marks static, and a
+				// session card is an aggregate, not a turn.
+				orn = spinnerFrame(spinTick)
 			}
 			if orn == "" && rows[i].session && rows[i].att {
 				orn, style = "●", pal.accent
@@ -1918,22 +1956,31 @@ func paintList(rows []row, sel int) {
 // herdr's dot language: attention states share ● and differ by hue
 // (red needs you, yellow is live, teal finished unseen); confirmed idle
 // hollows out to a green ○.
-// spinFrame is the ornament when it is an animation FRAME — braille, or the
-// quarter-circle set claude 2.1.228 moved to — and empty otherwise. ✳ is a
-// static marker, not a frame: standing it in for the working dot would read
-// as a spinner that has seized. Blank braille (U+2800) is excluded for the
-// same reason in the other direction — it would blink the dot out entirely.
-func spinFrame(orn string) string {
-	r := []rune(orn)
-	if len(r) != 1 {
-		return ""
-	}
-	switch c := r[0]; {
-	case c > 0x2800 && c <= 0x28FF, c >= 0x25D0 && c <= 0x25D3:
-		return orn
-	}
-	return ""
-}
+// spinners: herdr's frames, verbatim. The ten trace the perimeter of the
+// braille cell, which is what makes it read as a rectangle being drawn
+// rather than dots blinking.
+//
+//	const SPINNERS: &[&str] = &["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
+//
+// herdr later deleted this (81f355fa, "replace agent spinners with static
+// status marks") to stop rendering continuously — but herdr was repainting
+// its whole UI at 60fps to drive it. winch repaints one 26-column strip at
+// 8fps and only while an agent is actually working, which is a different
+// bill entirely.
+var spinners = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// spinPeriod is herdr's cadence: it ticked at 60fps and advanced a frame
+// every 8th tick, so ~8 frames a second. Driven here by a timer of its own
+// rather than by the agent's title, which the detector only samples every
+// 300ms — subsampling someone else's animation gives you neither their
+// smoothness nor your own.
+const spinPeriod = 125 * time.Millisecond
+
+// spinTick advances only while the ticker runs, which is only while some
+// agent is working.
+var spinTick int
+
+func spinnerFrame(tick int) string { return spinners[tick%len(spinners)] }
 
 func agentGlyph(state string) (string, string) {
 	switch state {

@@ -196,39 +196,28 @@ func TestSpinnerFrameIsNotAWorldChange(t *testing.T) {
 	}
 }
 
-// Only real spinner frames stand in for the working dot. ✳ is a static
-// marker; showing it in place of the dot would read as a spinner that has
-// seized, and blank braille would blink the dot out of existence entirely.
-func TestSpinFrameRejectsNonFrames(t *testing.T) {
-	for _, orn := range []string{"⠂", "⠐", "⠋", "⣿", "◐", "◓"} {
-		if spinFrame(orn) != orn {
-			t.Errorf("spinFrame(%q) = %q, want it kept", orn, spinFrame(orn))
-		}
+// The spinner is winch's own, on winch's own clock: herdr's ten frames,
+// which trace the perimeter of the braille cell, advanced 8 times a second.
+// Mirroring the agent's title instead gives neither their smoothness nor a
+// rate winch controls, because the detector samples titles every 300ms.
+func TestSpinnerFrames(t *testing.T) {
+	if len(spinners) != 10 {
+		t.Fatalf("want herdr's ten frames, got %d", len(spinners))
 	}
-	for _, orn := range []string{"✳", "", "⠀" /* U+2800, blank */, "ab", "●"} {
-		if got := spinFrame(orn); got != "" {
-			t.Errorf("spinFrame(%q) = %q, want it rejected", orn, got)
-		}
+	// No frame repeats inside one rotation, and the rotation closes.
+	seen := map[string]bool{}
+	for i := range spinners {
+		seen[spinnerFrame(i)] = true
 	}
-}
-
-// The frame reaches the row that paints the dot, and only while working:
-// the other states publish a static ✳, and a still spinner is worse than a
-// dot because it looks like a stall.
-func TestWorkingRowCarriesTheSpinnerFrame(t *testing.T) {
-	rows := agentCardFixture(t, pane{
-		ID: "%1", WindowID: "@1", SessionID: "$1", Title: "Build herdr-like tool for tmux",
-		Spin: "⠙", Agent: "claude", AgentState: "working",
-	})
-	if rows[0].orn != "⠙" {
-		t.Errorf("working row orn = %q, want the agent's frame", rows[0].orn)
+	if len(seen) != len(spinners) {
+		t.Errorf("a frame repeats within one rotation: %d distinct", len(seen))
 	}
-
-	idle := agentCardFixture(t, pane{
-		ID: "%1", WindowID: "@1", SessionID: "$1", Title: "Ready",
-		Spin: "✳", Agent: "claude", AgentState: "idle",
-	})
-	if idle[0].orn != "" {
-		t.Errorf("idle row orn = %q, want the static dot", idle[0].orn)
+	if spinnerFrame(0) != spinnerFrame(len(spinners)) {
+		t.Error("the rotation does not close")
+	}
+	// Wraps rather than panicking far past the frame count: the counter runs
+	// for as long as an agent keeps working.
+	if spinnerFrame(1_000_003) == "" {
+		t.Error("a large tick produced no frame")
 	}
 }

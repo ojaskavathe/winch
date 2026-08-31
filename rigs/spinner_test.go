@@ -6,14 +6,14 @@ import (
 	"testing"
 )
 
-// TestSpinnerAnimates: the dot beside a working agent turns.
+// TestSpinnerAnimates: the dot beside a working agent turns on winch's own
+// clock, not the agent's.
 //
-// End to end because every link in this chain can break silently and still
-// render a perfectly reasonable static dot: the detection tick has to notice
-// a title whose only change is its ornament, publish it WITHOUT taking the
-// state-change path (which writes the statusline and fires notifications),
-// carry it through the world diff, and reach the cell paintList draws at
-// column 2. A unit test proves the plumbing; only this proves it moves.
+// The agent's title is set ONCE and never touched again. Anything that moves
+// after that is winch animating; a passthrough of the agent's own spinner
+// would sit still here, which is exactly the bug this replaced — the
+// detector samples titles every 300ms, so mirroring them gave a subsampled,
+// irregular 3fps instead of a smooth 8.
 func TestSpinnerAnimates(t *testing.T) {
 	r := New(t)
 
@@ -21,6 +21,7 @@ func TestSpinnerAnimates(t *testing.T) {
 	ap := r.T("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", r.W2, fake+" 100000")
 	sleep(1700) // discovery + startup grace
 
+	// One title, one frame in it, never updated again.
 	r.T("select-pane", "-T", "⠋ Spinning up", "-t", ap)
 	r.await(5000, "agent working", func() bool {
 		return r.LogHas("agent claude pane=.* state=.*->working")
@@ -31,56 +32,59 @@ func TestSpinnerAnimates(t *testing.T) {
 	sp := r.Side().Pane
 	sleep(600)
 
-	// The frame the agent is publishing must be what the sidebar shows —
-	// winch mirrors the agent's spinner rather than running a timer, so a
-	// wedged agent shows a STOPPED spinner, which is information.
-	frameOnRow := func() string {
+	// herdr's ten, tracing the braille cell's perimeter.
+	braille := regexp.MustCompile(`[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]`)
+	frameNow := func() string {
 		for _, ln := range strings.Split(r.Capture(sp), "\n") {
 			if !strings.Contains(ln, "Spinning up") {
 				continue
 			}
-			return ln
+			// The dot sits on the row ABOVE the name (the card leads with
+			// workspace+tab), so scan the strip rather than this one line.
+			break
+		}
+		if m := braille.FindString(r.Capture(sp)); m != "" {
+			return m
 		}
 		return ""
 	}
-	braille := regexp.MustCompile(`[\x{2801}-\x{28FF}]`)
+
+	r.Chk("the working dot is a spinner frame, not a static dot",
+		r.WaitUntil(2000, func() bool { return frameNow() != "" }))
+
+	// Sample faster than the 125ms cadence and collect what turns up. Three
+	// distinct frames is proof of motion without depending on scheduling.
 	seen := map[string]bool{}
-	for _, f := range []string{"⠙", "⠹", "⠸", "⠼"} {
-		r.T("select-pane", "-T", f+" Spinning up", "-t", ap)
-		ok := r.WaitUntil(2000, func() bool {
-			// The card is three rows; the dot sits on the first, so scan the
-			// whole strip for the frame rather than one line.
-			return strings.Contains(r.Capture(sp), f)
-		})
-		if ok {
+	for i := 0; i < 40; i++ {
+		if f := frameNow(); f != "" {
 			seen[f] = true
 		}
+		if len(seen) >= 3 {
+			break
+		}
+		sleep(60)
 	}
-	r.Chk("the dot showed every frame the agent published", len(seen) == 4)
-	if len(seen) != 4 {
-		t.Logf("  saw %d/4 frames; strip row was %q", len(seen), frameOnRow())
+	r.Chk("the dot advances on its own, with the title held still", len(seen) >= 3)
+	if len(seen) < 3 {
+		t.Logf("  saw %d distinct frames in ~2.4s: %v", len(seen), keysOf(seen))
 	}
 
-	// And a working agent's dot is a braille frame, not the static ●.
-	r.Chk("the working dot is a spinner frame, not a dot",
-		braille.MatchString(r.Capture(sp)))
-
-	// Back to idle: the ornament stops being a frame, so the static dot
-	// returns rather than freezing on whatever glyph happened to be last.
+	// Idle stops it: a spinner that keeps turning for an agent that has
+	// finished is a lie, and the static dot is the honest answer.
 	r.T("select-pane", "-T", "✳ Done spinning", "-t", ap)
-	idleOK := r.WaitUntil(4000, func() bool {
+	r.Chk("idle restores the static dot", r.WaitUntil(5000, func() bool {
 		cap := r.Capture(sp)
 		return strings.Contains(cap, "Done spinning") && !braille.MatchString(cap)
-	})
-	r.Chk("idle restores the static dot", idleOK)
-	if !idleOK {
-		for _, ln := range strings.Split(r.Capture(sp), "\n") {
-			if braille.MatchString(ln) || strings.Contains(ln, "spinning") {
-				t.Logf("  strip: %q", ln)
-			}
-		}
-	}
+	}))
 
 	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
+}
+
+func keysOf(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }

@@ -42,10 +42,6 @@ type pane struct {
 	Command   string `json:"cmd"`
 	Path      string `json:"path"`
 	Title     string `json:"title"`
-	// Spin is the agent's own state ornament, split off the title so a
-	// spinner frame does not read as a change to the NAME. Published on its
-	// own because the sidebar animates it: see splitOrnament.
-	Spin string `json:"spin,omitempty"`
 
 	// Daemon-computed agent detection (detect.go), injected after every
 	// fetch — never read back from tmux.
@@ -128,11 +124,10 @@ func fetchWorld(c *control) (world, error) {
 			// structs, so folded in it made every animation frame read as a
 			// change to the NAME — which is what the row is keyed on.
 			//
-			// The frame itself is published as Spin, but by the detection
-			// tick (injectAgents), not from here: this re-list runs on tmux
-			// notifications, and a spinner that advances when some unrelated
-			// pane appears is not an animation. Leaving Spin alone here
-			// keeps one writer for the field.
+			// The ornament is dropped entirely rather than published: the
+			// sidebar runs its OWN spinner off a local clock (tui.go), so
+			// the agent's frames are not needed to animate — only its state
+			// is, and that is AgentState.
 			//
 			// herdr draws the same line one layer later: TerminalTitleChanges
 			// carries raw_changed and stripped_changed separately, and a
