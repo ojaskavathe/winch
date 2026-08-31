@@ -14,7 +14,7 @@ func TestRedockAdoption(t *testing.T) {
 	r.SendKeys(sp, "k") // billboard w1: carves it
 	sleep(500)
 	r.SendKeys(sp, "Enter") // enter w1: swap — beta now holds the spacer
-	r.WaitUntil(100, func() bool { return r.ClientWin() == r.W1 })
+	r.WaitUntil(1000, func() bool { return r.ClientWin() == r.W1 })
 	sleep(300)
 	r.Chk("beta spacer-held after enter", countLeftSpacer(r.T("list-panes", "-t", r.W2, "-F", "#{pane_left} #{pane_width}")) == 1)
 
@@ -36,7 +36,7 @@ func TestRedockAdoption(t *testing.T) {
 	r.SendKeys(sp, "j") // from w1 row down to beta
 	sleep(400)
 	r.SendKeys(sp, "Enter")
-	r.WaitUntil(100, func() bool { return r.ClientWin() == r.W2 })
+	r.WaitUntil(1000, func() bool { return r.ClientWin() == r.W2 })
 	sleep(300)
 	r.Chk("entered adopted window", r.ClientWin() == r.W2)
 

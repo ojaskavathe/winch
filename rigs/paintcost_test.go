@@ -118,7 +118,7 @@ func fillWindow(r *Rig, win, marker string) {
 	for i := 0; i < 4; i++ {
 		r.T("send-keys", "-t", pane,
 			"clear; for i in $(seq 200); do echo "+marker+" $i; done", "Enter")
-		if r.WaitUntil(200, func() bool { return strings.Contains(r.Capture(pane), marker) }) {
+		if r.WaitUntil(2000, func() bool { return strings.Contains(r.Capture(pane), marker) }) {
 			return
 		}
 	}

@@ -22,7 +22,7 @@ func TestStickySelection(t *testing.T) {
 	sleep(800) // relist + diff reach the TUI
 
 	r.SendKeys(sp, "Enter")
-	r.WaitUntil(100, func() bool { return r.ClientWin() == r.W3 })
+	r.WaitUntil(1000, func() bool { return r.ClientWin() == r.W3 })
 	sleep(400)
 	r.Chk("enter lands on gamma despite churn", r.ClientWin() == r.W3)
 	r.Chk("sidebar rode along", r.Side().Win == r.W3)

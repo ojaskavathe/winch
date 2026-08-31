@@ -65,7 +65,7 @@ func TestGestureCommits(t *testing.T) {
 	// list's selection bar is also reverse but spans the whole row, so
 	// one-char-then-escape can't match it.
 	cursor := regexp.MustCompile(`\x1b\[7m(?:\x1b\[[0-9;]*m)*.\x1b\[`)
-	r.Chk("billboard paints a cursor cell", r.WaitUntil(300, func() bool {
+	r.Chk("billboard paints a cursor cell", r.WaitUntil(3000, func() bool {
 		raw, _ := r.TQ("capture-pane", "-p", "-e", "-t", sp)
 		return cursor.MatchString(raw)
 	}))

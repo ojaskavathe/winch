@@ -33,7 +33,7 @@ func TestClientResize(t *testing.T) {
 	r.SendKeys(sp, "h")
 	sleep(500)
 	r.SendKeys(sp, "Enter")
-	r.WaitUntil(100, func() bool { return r.ClientWin() == r.W1 })
+	r.WaitUntil(1000, func() bool { return r.ClientWin() == r.W1 })
 	sleep(400)
 	r.Chk("on w1 pre-resize", r.ClientWin() == r.W1)
 
@@ -63,7 +63,7 @@ func TestClientResize(t *testing.T) {
 	}
 	r.Chk("wide list painted", found)
 	r.SendKeys(sp, "Enter")
-	r.WaitUntil(100, func() bool { return r.ClientWin() == r.W2 })
+	r.WaitUntil(1000, func() bool { return r.ClientWin() == r.W2 })
 	sleep(400)
 	r.Chk("commit works after resize", r.ClientWin() == r.W2)
 	r.Chk("sidebar 40 in beta", r.Side().Width == sideW)

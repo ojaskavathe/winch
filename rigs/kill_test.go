@@ -115,13 +115,8 @@ func TestKillOneOfTwoAgentsInAWindow(t *testing.T) {
 	// Both agents in gamma, the way a workspace with two claudes looks.
 	a1 := r.T("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", r.W3, fake+" 100000")
 	a2 := r.T("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", r.W3, fake+" 100000")
-	sleep(1700)
-	r.T("select-pane", "-T", "⠧ First agent", "-t", a1)
-	r.T("select-pane", "-T", "⠧ Second agent", "-t", a2)
-	r.await(5000, "both agents detected", func() bool {
-		out := r.T("list-panes", "-t", r.W3, "-F", "#{pane_id}")
-		return containsID(out, a1) && containsID(out, a2)
-	})
+	r.AgentUp(a1, "⠧ First agent")
+	r.AgentUp(a2, "⠧ Second agent")
 
 	r.D("toggle", r.CL)
 	r.await(5000, "docked", func() bool { return r.Side().Pane != "" })
@@ -130,26 +125,11 @@ func TestKillOneOfTwoAgentsInAWindow(t *testing.T) {
 		return strings.Count(r.Capture(sp), "claude") >= 2
 	})
 
-	// Arm on the first agent row reachable below the sessions.
-	armed := false
-	for i := 0; i < 40 && !armed; i++ {
-		r.SendKeys(sp, "x")
-		if r.WaitUntil(700, func() bool {
-			return strings.Contains(r.Capture(sp), "kill claude? y/n")
-		}) {
-			armed = true
-			break
-		}
-		r.SendKeys(sp, "Escape")
-		sleep(80)
-		r.SendKeys(sp, "j")
-		sleep(80)
-	}
-	r.Chk("armed on an agent row", armed)
-	if !armed {
-		t.Logf("  sidebar:\n%s", r.Capture(sp))
-		return
-	}
+	selectAgentRow(r, sp)
+	r.SendKeys(sp, "x")
+	r.Chk("armed on an agent row", r.WaitUntil(1000, func() bool {
+		return strings.Contains(r.Capture(sp), "kill claude? y/n")
+	}))
 	// Exactly ONE row is armed, even though both agents share a window.
 	r.Chk("only one row prompts", strings.Count(r.Capture(sp), "kill claude? y/n") == 1)
 
@@ -182,8 +162,7 @@ func TestKillAgentWindowFromSidebar(t *testing.T) {
 	aw := r.T("display-message", "-p", "-t", "play:agentwin", "#{window_id}")
 	ap := r.T("display-message", "-p", "-t", "play:agentwin", "#{pane_id}")
 	r.T("respawn-pane", "-k", "-t", ap, fake+" 100000")
-	sleep(1700)
-	r.T("select-pane", "-T", "⠧ Working on it", "-t", ap)
+	r.AgentUp(ap, "⠧ Working on it")
 	r.await(4000, "agent detected", func() bool {
 		return r.LogHas("agent claude pane=.* state=.*->working")
 	})
@@ -195,28 +174,11 @@ func TestKillAgentWindowFromSidebar(t *testing.T) {
 		return strings.Contains(r.Capture(sp), "agentwin")
 	})
 
-	// Walk down to the agent row — the agents section is below the sessions,
-	// so the agent's card is reachable by pressing j until the prompt names
-	// the agent's window rather than a session.
-	armed := false
-	for i := 0; i < 40 && !armed; i++ {
-		r.SendKeys(sp, "x")
-		if r.WaitUntil(700, func() bool {
-			return strings.Contains(r.Capture(sp), "kill claude? y/n")
-		}) {
-			armed = true
-			break
-		}
-		r.SendKeys(sp, "Escape")
-		sleep(80)
-		r.SendKeys(sp, "j")
-		sleep(80)
-	}
-	r.Chk("reached the agent row and armed it", armed)
-	if !armed {
-		t.Logf("  sidebar:\n%s", r.Capture(sp))
-		return
-	}
+	selectAgentRow(r, sp)
+	r.SendKeys(sp, "x")
+	r.Chk("reached the agent row and armed it", r.WaitUntil(1000, func() bool {
+		return strings.Contains(r.Capture(sp), "kill claude? y/n")
+	}))
 
 	r.SendKeys(sp, "y")
 	r.await(6000, "agent window closed", func() bool {
@@ -233,9 +195,41 @@ func TestKillAgentWindowFromSidebar(t *testing.T) {
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
 }
 
-// selectSessionRow walks the selection to a named session's card by arming the
-// confirm and reading who it names — the only way from outside to know which
-// row the TUI considers selected.
+// armedTarget arms the confirm on whatever row is selected, reads the name it
+// prompts for, and dismisses it. Arming is the only signal from outside about
+// which row the TUI considers selected.
+//
+// It waits for ANY prompt and then reads the name, which is the whole
+// difference. The version this replaces waited for the name it was hoping
+// for, so every row that was not that name cost the full ceiling — and
+// WaitUntil's argument was a poll count read by every caller as milliseconds,
+// making `WaitUntil(700)` a seven-second wait per wrong row. Three tests
+// walked rows this way and each took thirteen seconds.
+func armedTarget(r *Rig, sp string) string {
+	r.t.Helper()
+	r.SendKeys(sp, "x")
+	name := ""
+	r.WaitUntil(800, func() bool {
+		c := r.Capture(sp)
+		i := strings.Index(c, "kill ")
+		if i < 0 {
+			return false
+		}
+		j := strings.Index(c[i:], "? y/n")
+		if j < 0 {
+			return false
+		}
+		name = c[i+len("kill ") : i+j]
+		return true
+	})
+	if name != "" {
+		r.SendKeys(sp, "Escape")
+		r.WaitUntil(800, func() bool { return !strings.Contains(r.Capture(sp), "? y/n") })
+	}
+	return name
+}
+
+// selectSessionRow walks the selection to a named session's card.
 //
 // It goes to the TOP first. Sessions sort by name while the selection opens on
 // the client's own session, which is as likely to be the last card as the
@@ -243,22 +237,30 @@ func TestKillAgentWindowFromSidebar(t *testing.T) {
 // anything above it.
 func selectSessionRow(r *Rig, sp, name string) {
 	r.t.Helper()
-	want := "kill " + name + "? y/n"
 	for i := 0; i < 30; i++ {
 		r.SendKeys(sp, "k")
 	}
-	sleep(400)
 	for i := 0; i < 30; i++ {
-		r.SendKeys(sp, "x")
-		if r.WaitUntil(700, func() bool { return strings.Contains(r.Capture(sp), want) }) {
-			r.SendKeys(sp, "Escape")
-			r.WaitUntil(1000, func() bool { return !strings.Contains(r.Capture(sp), want) })
+		if armedTarget(r, sp) == name {
 			return
 		}
-		r.SendKeys(sp, "Escape")
-		sleep(80)
 		r.SendKeys(sp, "j")
-		sleep(80)
 	}
 	r.t.Fatalf("never reached session row %q; sidebar:\n%s", name, r.Capture(sp))
+}
+
+// selectAgentRow puts the selection on an agent card. One region jump rather
+// than a walk: the nav-down key means "go to the agents section", so stepping
+// row by row was paying a confirm round trip per session card to rediscover
+// something the sidebar already knows how to do in one keystroke.
+func selectAgentRow(r *Rig, sp string) {
+	r.t.Helper()
+	r.SendKeys(sp, "C-j")
+	for i := 0; i < 12; i++ {
+		if armedTarget(r, sp) == "claude" {
+			return
+		}
+		r.SendKeys(sp, "j")
+	}
+	r.t.Fatalf("never reached an agent row; sidebar:\n%s", r.Capture(sp))
 }

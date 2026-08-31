@@ -34,7 +34,7 @@ func TestMsIsContextual(t *testing.T) {
 
 	// Keyboard to the far edge: two panes away from the sidebar.
 	r.T("select-pane", "-t", far)
-	r.Chk("keyboard parked on the far pane", r.WaitUntil(500, func() bool {
+	r.Chk("keyboard parked on the far pane", r.WaitUntil(5000, func() bool {
 		return r.ClientPane() == far
 	}))
 

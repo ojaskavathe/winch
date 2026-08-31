@@ -46,7 +46,7 @@ func TestBCEBillboard(t *testing.T) {
 	// late — the content is what matters, not the latency
 	bar := regexp.MustCompile(`\x1b\[[0-9;]*44m[^\x1b]*BCEBAR {10,}`)
 	out := ""
-	r.WaitUntil(500, func() bool {
+	r.WaitUntil(5000, func() bool {
 		out, _ = r.TQ("capture-pane", "-e", "-p", "-t", sp)
 		return bar.MatchString(out)
 	})
@@ -63,7 +63,7 @@ func TestBCEBillboard(t *testing.T) {
 	// row below inherited the open bg and got padded to the pane edge, so the
 	// colour appeared on two rows.
 	gapBg := regexp.MustCompile(`48[;:]2[;:]7[;:]77[;:]177`)
-	r.WaitUntil(500, func() bool {
+	r.WaitUntil(5000, func() bool {
 		out, _ = r.TQ("capture-pane", "-e", "-p", "-t", sp)
 		return strings.Contains(out, "BCEGAP")
 	})

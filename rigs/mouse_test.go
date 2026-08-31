@@ -45,7 +45,7 @@ func TestMouse(t *testing.T) {
 	sleep(700)
 	r.Chk("click keeps scrubbing", r.ClientWin() == r.W2)
 	r.Click(sp, 5, wy)
-	r.WaitUntil(150, func() bool { return r.ClientWin() == r.W2 })
+	r.WaitUntil(1500, func() bool { return r.ClientWin() == r.W2 })
 	sleep(500)
 	r.Chk("click-click enters the pick", r.ClientWin() == r.W2)
 	r.Chk("sidebar docked in beta", r.Side().Win == r.W2 && r.Side().Width == sideW)
@@ -58,7 +58,7 @@ func TestMouse(t *testing.T) {
 	sleep(900)
 	r.Chk("billboard shows w1", strings.Contains(r.Capture(sp), "MARKW1"))
 	r.Click(sp, 160, 10)
-	r.WaitUntil(150, func() bool { return r.ClientWin() == r.W1 })
+	r.WaitUntil(1500, func() bool { return r.ClientWin() == r.W1 })
 	sleep(500)
 	r.Chk("canvas click enters w1", r.ClientWin() == r.W1)
 	right := ""

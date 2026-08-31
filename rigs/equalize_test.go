@@ -53,7 +53,7 @@ func TestEqualize(t *testing.T) {
 	r.D("toggle", r.CL)
 	sleep(600)
 	r.T("select-window", "-t", r.W1)
-	r.WaitUntil(100, func() bool { return r.Side().Win == r.W1 })
+	r.WaitUntil(1000, func() bool { return r.Side().Win == r.W1 })
 	r.Chk("docked in w1", r.Side().Win == r.W1)
 	r.T("resize-pane", "-t", m0, "-x", "50")
 	sleep(300)
@@ -73,7 +73,7 @@ func TestEqualize(t *testing.T) {
 	r.SendKeys(sp, "j")
 	sleep(400)
 	r.SendKeys(sp, "Enter")
-	r.WaitUntil(100, func() bool { return r.ClientWin() != r.W1 })
+	r.WaitUntil(1000, func() bool { return r.ClientWin() != r.W1 })
 	sleep(400)
 	// leaving is geometry-free: the equalized mains DON'T move, the spacer
 	// holds the slot, dirty survives until release
@@ -91,7 +91,7 @@ func TestEqualize(t *testing.T) {
 	r.D("toggle", r.CL)
 	sleep(600)
 	r.T("select-window", "-t", r.W1)
-	r.WaitUntil(100, func() bool { return r.Side().Win == r.W1 })
+	r.WaitUntil(1000, func() bool { return r.Side().Win == r.W1 })
 	r.T("resize-pane", "-t", m0, "-x", "50")
 	sleep(300)
 	equalize(m0)

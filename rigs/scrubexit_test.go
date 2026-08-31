@@ -42,7 +42,7 @@ func TestScrubExitClean(t *testing.T) {
 
 	// The list must be there the moment the strip is back — no blank, no
 	// reflowed canvas text.
-	r.Chk("strip shows the list right after the commit", r.WaitUntil(60, func() bool {
+	r.Chk("strip shows the list right after the commit", r.WaitUntil(600, func() bool {
 		return strings.Contains(r.Capture(r.Side().Pane), "sessions")
 	}))
 	r.Chk("took the clip path, not a respawn", r.LogHas("unzoom=clip"))
@@ -63,7 +63,7 @@ func TestScrubExitClean(t *testing.T) {
 	mark = benchSize(r)
 	r.Click(sp, sideW+20, 6)
 	r.await(5000, "unzoomed after click", func() bool { return r.Side().Width == sideW })
-	r.Chk("strip shows the list after a click commit", r.WaitUntil(60, func() bool {
+	r.Chk("strip shows the list after a click commit", r.WaitUntil(600, func() bool {
 		return strings.Contains(r.Capture(r.Side().Pane), "sessions")
 	}))
 	sels = selectionsPainted(r, mark)

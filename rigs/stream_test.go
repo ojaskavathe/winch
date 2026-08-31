@@ -22,9 +22,9 @@ func TestStream(t *testing.T) {
 	r.SendKeys(s.Pane, "h")
 	sleep(700)
 	r.Chk("billboard shows w1 content", strings.Contains(r.Capture(s.Pane), "MARKW1"))
-	r.Chk("busy target ships deltas", r.WaitUntil(400, func() bool { return r.LogHas("bench frame delta") }))
+	r.Chk("busy target ships deltas", r.WaitUntil(4000, func() bool { return r.LogHas("bench frame delta") }))
 	r.Chk("billboard still correct after deltas", strings.Contains(r.Capture(s.Pane), "MARKW1"))
-	r.Chk("TUI applied a delta", r.WaitUntil(200, func() bool { return r.TuiBenchHas("delta=true") }))
+	r.Chk("TUI applied a delta", r.WaitUntil(2000, func() bool { return r.TuiBenchHas("delta=true") }))
 	r.Chk("no delta resyncs", !r.TuiBenchHas("delta resync"))
 
 	// gamma is quiet (no output since setup): the stream must gate — no

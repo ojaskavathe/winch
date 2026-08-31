@@ -41,30 +41,30 @@ func TestHeavyHistory(t *testing.T) {
 	}
 	r.await(30000, "700k lines of scrollback", func() bool { return hist() >= 690_000 })
 	r.T("select-window", "-t", r.W2)
-	sleep(300)
+	r.Settle()
 
 	// enter heavy via scrub (from beta: gamma, heavy): billboards must not
 	// carve it; the Enter pays the one carve
 	r.D("toggle", r.CL)
-	sleep(1000)
+	r.Settle()
 	sp := r.Side().Pane
 	r.SendKeys(sp, "l")
-	sleep(400)
+	r.Settle()
 	r.SendKeys(sp, "l")
-	sleep(600)
+	r.Settle()
 	r.SendKeys(sp, "Enter")
-	r.WaitUntil(200, func() bool { return r.ClientWin() == heavy })
-	sleep(600)
+	r.WaitUntil(2000, func() bool { return r.ClientWin() == heavy })
+	r.Settle()
 	r.Chk("entered heavy", r.ClientWin() == heavy)
 	// leave (gamma is carved from the scrub past it) and re-enter: pure swaps
 	r.SendKeys(sp, "h")
-	sleep(500)
+	r.Settle()
 	r.SendKeys(sp, "Enter")
-	sleep(800)
+	r.Settle()
 	r.SendKeys(sp, "l")
-	sleep(500)
+	r.Settle()
 	r.SendKeys(sp, "Enter")
-	sleep(800)
+	r.Settle()
 	r.Chk("re-entered heavy", r.ClientWin() == heavy)
 	// Enter committed and put the keyboard in heavy's own pane, so M-s there
 	// focuses before it closes — Undock does both.
@@ -76,16 +76,16 @@ func TestHeavyHistory(t *testing.T) {
 	// M-s dismiss INTO the (again uncarved) heavy window lands directly —
 	// the target is already full width; no carve, no reflow
 	r.T("switch-client", "-c", r.CL, "-t", "work", ";", "select-window", "-t", r.W2)
-	sleep(300)
+	r.Settle()
 	r.D("toggle", r.CL)
-	sleep(800)
+	r.Settle()
 	sp = r.Side().Pane
 	r.SendKeys(sp, "l")
-	sleep(400)
+	r.Settle()
 	r.SendKeys(sp, "l")
-	sleep(600)
+	r.Settle()
 	r.D("toggle", r.CL)
-	r.Chk("dismiss landed on heavy", r.WaitUntil(200, func() bool { return r.ClientWin() == heavy }))
+	r.Chk("dismiss landed on heavy", r.WaitUntil(2000, func() bool { return r.ClientWin() == heavy }))
 	r.await(6000, "post-dismiss releases drained", func() bool {
 		return r.Spacers() == 0 && r.WinchPanes("-a") == 0
 	})

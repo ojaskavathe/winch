@@ -202,6 +202,42 @@ func setCurSess(id string) {
 	curSess = id
 }
 
+// pickCurAgent chooses the client's own agent: the one in the window it is
+// actually on. Active answers whenever the user is IN the agent; Last answers
+// the moment they are not, and docking makes that the common case — winch
+// takes the focus for its own pane, so at the instant the sidebar first paints
+// the agent you were working in is active nowhere. Preferring Active keeps two
+// agents in one window deterministic (map order would otherwise decide).
+//
+// Only ever ASSIGNS. curAgent is sticky and the one thing that clears it is a
+// session change, in setCurSess.
+//
+// Called from BOTH the row build and applySelect, because either can be the
+// one that completes the picture: the build has the world but may run before
+// any select has said which session the client is on, and a select can arrive
+// after the last build a static world will ever provoke. Recomputing in only
+// one of them left the highlight missing about one dock in five.
+func (st *store) pickCurAgent() {
+	var active, last string
+	for _, p := range st.panes {
+		if p.Agent == "" || p.SessionID != curSess || !st.windows[p.WindowID].Active {
+			continue
+		}
+		if p.Active {
+			active = p.ID
+		}
+		if p.Last {
+			last = p.ID
+		}
+	}
+	switch {
+	case active != "":
+		curAgent = active
+	case last != "":
+		curAgent = last
+	}
+}
+
 // The inline text field. `r` renames the selected session, `n` names a new
 // one; while active it owns the keyboard until enter or esc, and paintList
 // renders its line as buffer + accent █ cursor.
@@ -312,36 +348,15 @@ func (st *store) rows(winPick map[string]string) []row {
 	rank := map[string]int{"blocked": 4, "done": 3, "working": 2, "idle": 1}
 	agg := map[string]string{}
 	var agents []pane
-	// The client's own agent, in the window it is actually on. Active is the
-	// answer whenever the user is IN the agent; Last is the answer the moment
-	// they are not, and docking makes that the common case — winch takes the
-	// focus for its own pane, so at the instant the sidebar first paints, the
-	// agent you were working in is active nowhere. Preferring Active keeps
-	// two agents in one window deterministic (map order otherwise decides).
-	var agentActive, agentLast string
 	for _, p := range st.panes {
 		if p.Agent != "" {
 			agents = append(agents, p)
-			if p.SessionID == curSess && st.windows[p.WindowID].Active {
-				if p.Active {
-					agentActive = p.ID
-				}
-				if p.Last {
-					agentLast = p.ID
-				}
-			}
 		}
 		if p.AgentState != "" && rank[p.AgentState] > rank[agg[p.SessionID]] {
 			agg[p.SessionID] = p.AgentState
 		}
 	}
-	// Only ever ASSIGNED, never cleared: curAgent is sticky, and the one
-	// thing that clears it is a session change (setCurSess).
-	if agentActive != "" {
-		curAgent = agentActive
-	} else if agentLast != "" {
-		curAgent = agentLast
-	}
+	st.pickCurAgent()
 
 	for _, s := range sessions {
 		target := ""
@@ -866,6 +881,7 @@ func cmdTui(tmuxSock, winchSock string) {
 		}
 		if w, ok := st.windows[win]; ok {
 			setCurSess(w.SessionID)
+			st.pickCurAgent()
 		}
 		return found
 	}

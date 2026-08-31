@@ -1,11 +1,13 @@
 package rigs
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -27,7 +29,7 @@ func TestAgent(t *testing.T) {
 	ap := r.T("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", r.W3, fake+" 100000")
 	sleep(1700) // discovery + startup grace + a tick (WINCH_TEST_FAST scale)
 	r.T("select-pane", "-T", "⠧ Cooking up a thing", "-t", ap)
-	r.Chk("spinner title -> working", r.WaitUntil(300, func() bool {
+	r.Chk("spinner title -> working", r.WaitUntil(3000, func() bool {
 		return r.LogHas("agent claude pane=.* state=.*->working")
 	}))
 	r.Chk("statusline counts working", strings.Contains(r.ShowOpt("-gqv", "@winch_agents"), "✻"))
@@ -35,11 +37,11 @@ func TestAgent(t *testing.T) {
 	// ✳ title = idle — but the client is looking at beta, not gamma, so
 	// the completion lands as DONE and sticks until gamma is visited.
 	r.T("select-pane", "-T", "✳ Ready for input", "-t", ap)
-	r.Chk("unwatched completion -> done", r.WaitUntil(300, func() bool {
+	r.Chk("unwatched completion -> done", r.WaitUntil(3000, func() bool {
 		return r.LogHas("agent claude pane=.* state=working->done")
 	}))
 	r.T("select-window", "-t", r.W3)
-	r.Chk("visiting clears done", r.WaitUntil(300, func() bool {
+	r.Chk("visiting clears done", r.WaitUntil(3000, func() bool {
 		return r.LogHas(`state=done->idle \(seen\)`)
 	}))
 	r.T("select-window", "-t", r.W2)
@@ -52,11 +54,11 @@ func TestAgent(t *testing.T) {
 	// State dots differ by hue (herdr's language): working = yellow ●
 	// (catppuccin RGB; tmux may re-serialize with : separators).
 	workingDot := regexp.MustCompile(`249[;:]226[;:]175m(?:\x1b\[[0-9;:]*m)*●`)
-	r.Chk("working glyph in list", r.WaitUntil(200, func() bool {
+	r.Chk("working glyph in list", r.WaitUntil(2000, func() bool {
 		raw, _ := r.TQ("capture-pane", "-p", "-e", "-t", s.Pane)
 		return workingDot.MatchString(raw)
 	}))
-	r.Chk("agents section listed", r.WaitUntil(200, func() bool {
+	r.Chk("agents section listed", r.WaitUntil(2000, func() bool {
 		cap := r.Capture(s.Pane)
 		return strings.Contains(cap, "agents") && strings.Contains(cap, "Cooking again")
 	}))
@@ -77,7 +79,7 @@ func TestAgent(t *testing.T) {
 		r.Mouse(s.Pane, 0, 2, sep+1, true)  // grab the rule
 		r.Mouse(s.Pane, 32, 2, sep-3, true) // drag (motion, button held)
 		r.Mouse(s.Pane, 0, 2, sep-3, false) // release
-		r.Chk("divider dragged up", r.WaitUntil(200, func() bool {
+		r.Chk("divider dragged up", r.WaitUntil(2000, func() bool {
 			moved := sepRow()
 			return moved != sep && moved >= sep-5 && moved <= sep-2
 		}))
@@ -88,16 +90,16 @@ func TestAgent(t *testing.T) {
 	// looking at gamma get notified.
 	bp := r.T("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", r.W3,
 		"sh -c 'printf \"  Do you want to proceed?\\n❯ 1. Yes\\n  2. No, and tell Claude what to do differently (esc)\\n\"; exec "+fake+" 100000'")
-	r.Chk("permission screen -> blocked", r.WaitUntil(700, func() bool {
+	r.Chk("permission screen -> blocked", r.WaitUntil(7000, func() bool {
 		return r.LogHas("agent claude pane=.* state=.*->blocked")
 	}))
 	r.Chk("blocked notification sent", r.LogHas("notify blocked"))
 	blockedDot := regexp.MustCompile(`243[;:]139[;:]168m(?:\x1b\[[0-9;:]*m)*●`)
-	r.Chk("blocked glyph outranks working", r.WaitUntil(200, func() bool {
+	r.Chk("blocked glyph outranks working", r.WaitUntil(2000, func() bool {
 		raw, _ := r.TQ("capture-pane", "-p", "-e", "-t", s.Pane)
 		return blockedDot.MatchString(raw)
 	}))
-	r.Chk("blocked state on agent row", r.WaitUntil(300, func() bool {
+	r.Chk("blocked state on agent row", r.WaitUntil(3000, func() bool {
 		return strings.Contains(r.Capture(s.Pane), "permission prompt")
 	}))
 
@@ -106,7 +108,7 @@ func TestAgent(t *testing.T) {
 	// workspace, tab, state, agent kind — is identical for both. Only the
 	// name row tells them apart, and it used to be the first thing dropped
 	// when the line overflowed. Two agents, two distinguishable cards.
-	r.Chk("two agents in one window are distinguishable", r.WaitUntil(500, func() bool {
+	r.Chk("two agents in one window are distinguishable", r.WaitUntil(5000, func() bool {
 		cap := r.Capture(s.Pane)
 		return strings.Contains(cap, "Cooking again") && strings.Contains(cap, "permission prompt")
 	}))
@@ -120,7 +122,7 @@ func TestAgent(t *testing.T) {
 	// glyph rows once left the cursor at col 1 and dropped their border
 	// cell. Every surface row must carry │ at col 41.
 	r.D("browse", r.CL)
-	r.Chk("separator unbroken on glyph rows", r.WaitUntil(400, func() bool {
+	r.Chk("separator unbroken on glyph rows", r.WaitUntil(4000, func() bool {
 		lines := strings.Split(r.Capture(s.Pane), "\n")
 		if len(lines) < 10 {
 			return false
@@ -224,10 +226,10 @@ func TestAgent(t *testing.T) {
 	r.T("select-window", "-t", r.W2)
 	r.TQ("kill-pane", "-t", ap)
 	r.TQ("kill-pane", "-t", bp)
-	r.Chk("gamma layout intact", r.WaitUntil(300, func() bool {
+	r.Chk("gamma layout intact", r.WaitUntil(3000, func() bool {
 		return r.Layout(r.W3) == tail(r.LW3)
 	}))
-	r.Chk("statusline cleared", r.WaitUntil(200, func() bool {
+	r.Chk("statusline cleared", r.WaitUntil(2000, func() bool {
 		return r.ShowOpt("-gqv", "@winch_agents") == ""
 	}))
 
@@ -240,16 +242,59 @@ func TestAgent(t *testing.T) {
 // buildFakeAgent builds a binary literally named `claude` that just sleeps.
 // Built rather than copied: pane_current_command reports the image name, and
 // macOS kills relocated platform binaries.
+// buildFakeAgent returns a binary literally named `claude` that does nothing
+// but sleep — detection keys off the process name and the pane title, so
+// that is the entire contract.
+//
+// Built ONCE per test binary, not once per test. Nine tests want it, it does
+// not vary between them, and t.TempDir would otherwise pay a go build each
+// time; the rig suite has no budget for repeating work that has no test-local
+// meaning.
+var fakeAgentOnce struct {
+	sync.Once
+	path string
+	err  error
+}
+
 func buildFakeAgent(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	src := filepath.Join(dir, "main.go")
-	if err := os.WriteFile(src, []byte("package main\nimport \"time\"\nfunc main(){time.Sleep(time.Hour)}\n"), 0o644); err != nil {
-		t.Fatal(err)
+	fakeAgentOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "winch-fake-agent-")
+		if err != nil {
+			fakeAgentOnce.err = err
+			return
+		}
+		src := filepath.Join(dir, "main.go")
+		if err := os.WriteFile(src, []byte("package main\nimport \"time\"\nfunc main(){time.Sleep(time.Hour)}\n"), 0o644); err != nil {
+			fakeAgentOnce.err = err
+			return
+		}
+		fake := filepath.Join(dir, "claude")
+		if out, err := exec.Command("go", "build", "-o", fake, src).CombinedOutput(); err != nil {
+			fakeAgentOnce.err = fmt.Errorf("build fake claude: %v %s", err, out)
+			return
+		}
+		fakeAgentOnce.path = fake
+	})
+	if fakeAgentOnce.err != nil {
+		t.Fatal(fakeAgentOnce.err)
 	}
-	fake := filepath.Join(dir, "claude")
-	if out, err := exec.Command("go", "build", "-o", fake, src).CombinedOutput(); err != nil {
-		t.Fatalf("build fake claude: %v %s", err, out)
-	}
-	return fake
+	return fakeAgentOnce.path
+}
+
+// AgentUp waits for a pane to actually be RUNNING the fake agent and for the
+// daemon to have classified it. Replaces a blind sleep that was tuned to the
+// slowest observed shell exec plus a detection tick — nine of those cost more
+// than every assertion in the suite put together.
+func (r *Rig) AgentUp(pane, title string) {
+	r.t.Helper()
+	r.await(6000, "fake agent exec'd", func() bool {
+		out, _ := r.TQ("display-message", "-p", "-t", pane, "#{pane_current_command}")
+		return strings.TrimSpace(out) == "claude"
+	})
+	r.T("select-pane", "-T", title, "-t", pane)
+	r.await(6000, "agent detected", func() bool {
+		out, _ := r.TQ("list-panes", "-a", "-F", "#{pane_id} #{pane_title}")
+		return strings.Contains(out, pane+" "+title)
+	})
 }

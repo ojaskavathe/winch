@@ -86,7 +86,7 @@ func TestDockScrub(t *testing.T) {
 
 	// B2: Enter -> commits for real
 	r.SendKeys(sp, "Enter")
-	r.WaitUntil(100, func() bool { return r.ClientWin() == r.W1 })
+	r.WaitUntil(1000, func() bool { return r.ClientWin() == r.W1 })
 	sleep(400)
 	s = r.Side()
 	r.Chk("client now on w1", r.ClientWin() == r.W1)
@@ -177,7 +177,7 @@ func TestDockScrub(t *testing.T) {
 	r.SendKeys(sp, "l") // billboard beta (q reset the pick to w1)
 	sleep(500)
 	r.SendKeys(sp, "C-l")
-	r.WaitUntil(100, func() bool { return r.ClientWin() == r.W2 })
+	r.WaitUntil(1000, func() bool { return r.ClientWin() == r.W2 })
 	sleep(300)
 	r.Chk("C-l commits to billboard", r.ClientWin() == r.W2)
 	r.Chk("C-l keeps sidebar docked", r.Side().Win == r.W2 && r.Side().Width == sideW)
@@ -186,7 +186,7 @@ func TestDockScrub(t *testing.T) {
 	r.SendKeys(sp, "h") // back to w1 for the storm section
 	sleep(500)
 	r.SendKeys(sp, "Enter")
-	r.WaitUntil(100, func() bool { return r.ClientWin() == r.W1 })
+	r.WaitUntil(1000, func() bool { return r.ClientWin() == r.W1 })
 	sleep(300)
 
 	// C: storm kkkk + M-s commits AND dismisses

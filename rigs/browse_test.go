@@ -28,7 +28,7 @@ func TestBrowse(t *testing.T) {
 	sleep(700)
 	r.Chk("billboard shows w1 content", strings.Contains(r.Capture(s.Pane), "MARKW1"))
 	r.SendKeys(s.Pane, "Enter")
-	r.WaitUntil(100, func() bool { return r.ClientWin() == r.W1 })
+	r.WaitUntil(1000, func() bool { return r.ClientWin() == r.W1 })
 	sleep(400)
 	s = r.Side()
 	r.Chk("enter commits for real", r.ClientWin() == r.W1)

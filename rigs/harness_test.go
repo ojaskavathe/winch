@@ -131,6 +131,10 @@ func newRig(t *testing.T, prof rigProfile) *Rig {
 
 func (r *Rig) teardown() {
 	r.TQ("kill-server")
+	// kill-server does not unlink the socket. Removing it here is what keeps
+	// the sweep in sweepStaleServers a no-op instead of a growing tax on
+	// every future run — see the note there.
+	os.Remove(tmuxDir + "/" + r.L)
 	// By socket path, not binary name: catches the daemon, the TUI it
 	// spawned, and stragglers from a crashed earlier run of this test.
 	exec.Command("pkill", "-f", tmuxDir+"/"+r.L).Run()
@@ -151,10 +155,23 @@ func (r *Rig) teardown() {
 
 func glob(pat string) []string { m, _ := filepath.Glob(pat); return m }
 
-// sweepStaleServers kills rig tmux servers leaked by interrupted earlier
-// runs. Sockets are named <testname><pid>; per-test teardown only knows its
-// OWN pid, so a killed `go test` leaves its servers running forever.
+// sweepStaleServers kills rig tmux servers leaked by interrupted earlier runs
+// and DELETES their socket files. Sockets are named <testname><pid>; per-test
+// teardown only knows its OWN pid, so a killed `go test` leaves its servers
+// running forever.
+//
+// The delete is the whole point, and its absence was the single largest cost
+// in the suite. A tmux server outlives the test that spawned it, so the kill
+// has to happen — but kill-server does not unlink the socket, so every
+// swept-but-not-removed file was swept again on every future run, forever.
+// 6857 of them had accumulated, each costing one serial fork of tmux: 26
+// seconds of a 47-second suite, before a single test ran, growing daily.
+//
+// Bounded-parallel because the work is one exec apiece and entirely
+// I/O-bound, and because a backlog should cost seconds once rather than
+// minutes.
 func sweepStaleServers() {
+	var stale []string
 	for _, sock := range glob(tmuxDir + "/test*") {
 		name := filepath.Base(sock)
 		i := len(name)
@@ -165,13 +182,30 @@ func sweepStaleServers() {
 		if i == len(name) || err != nil || pid == os.Getpid() {
 			continue
 		}
-		// signal 0: is the owning test process still alive?
+		// signal 0: is the owning test process still alive? If it is, the
+		// sockets under it belong to a concurrent run — leave them alone.
 		if p, _ := os.FindProcess(pid); p != nil && p.Signal(syscall.Signal(0)) == nil {
 			continue
 		}
-		exec.Command("tmux", "-S", sock, "kill-server").Run()
-		fmt.Fprintf(os.Stderr, "swept stale rig server %s\n", name)
+		stale = append(stale, sock)
 	}
+	if len(stale) == 0 {
+		return
+	}
+	sem := make(chan struct{}, 16)
+	var wg sync.WaitGroup
+	for _, sock := range stale {
+		wg.Add(1)
+		go func(sock string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			exec.Command("tmux", "-S", sock, "kill-server").Run()
+			os.Remove(sock)
+		}(sock)
+	}
+	wg.Wait()
+	fmt.Fprintf(os.Stderr, "swept %d stale rig servers\n", len(stale))
 }
 
 // envSansTmux strips TMUX/TMUX_PANE so nothing ever looks nested.
@@ -366,6 +400,20 @@ func (r *Rig) StopRecord() []byte {
 
 func sleep(ms int) { time.Sleep(time.Duration(ms) * time.Millisecond) }
 
+// Settle blocks until the daemon has processed everything queued before this
+// call. The daemon is single-threaded — every field is touched only from the
+// consume loop — so a command that comes back is proof that every control-mode
+// notification ahead of it has already been folded into the world.
+//
+// This is what most `sleep(600)` calls in this suite were really asking for,
+// and it costs a process spawn (~15ms) instead of six hundred. It does NOT
+// prove the TUI has repainted: the sidebar is a separate process reading a
+// socket, so anything asserting on painted cells still has to await the cells.
+func (r *Rig) Settle() {
+	r.t.Helper()
+	r.D("ls")
+}
+
 func (r *Rig) Chk(name string, cond bool) {
 	r.t.Helper()
 	if cond {
@@ -410,15 +458,24 @@ func (r *Rig) realClient() string {
 	return ""
 }
 
-// WaitUntil polls f at 10ms up to tries times.
-func (r *Rig) WaitUntil(tries int, f func() bool) bool {
-	for i := 0; i < tries; i++ {
+// WaitUntil polls f at 10ms until ms elapse, reporting whether it came true.
+//
+// The argument is MILLISECONDS, matching await. It used to be a poll count,
+// which every caller in the suite read as milliseconds — `WaitUntil(2000)`
+// meant twenty seconds, not two. That costs nothing when the condition is
+// already true and everything when it is not, which is precisely the case a
+// negative assertion or a search loop hits on every iteration.
+func (r *Rig) WaitUntil(ms int, f func() bool) bool {
+	deadline := time.Now().Add(time.Duration(ms) * time.Millisecond)
+	for {
 		if f() {
 			return true
 		}
+		if time.Now().After(deadline) {
+			return false
+		}
 		sleep(10)
 	}
-	return false
 }
 
 // Sidebar is the winch TUI pane, wherever it currently lives.

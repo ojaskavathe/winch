@@ -17,12 +17,12 @@ func TestRecovery(t *testing.T) {
 	r.D("toggle", r.CL)
 	r.await(5000, "docked", func() bool { return r.Side().Pane != "" })
 	r.T("kill-window", "-t", r.ClientWin())
-	r.Chk("dock state cleaned", r.WaitUntil(300, func() bool {
+	r.Chk("dock state cleaned", r.WaitUntil(3000, func() bool {
 		return r.ShowOpt("-t", "play", "-v", "@winch_docked") == "" &&
 			r.ShowOpt("-t", "work", "-v", "@winch_docked") == ""
 	}))
 	r.D("toggle", r.CL)
-	r.Chk("sidebar re-docked", r.WaitUntil(300, func() bool {
+	r.Chk("sidebar re-docked", r.WaitUntil(3000, func() bool {
 		s := r.Side()
 		return s.Left == 0 && s.Width == sideW
 	}))
@@ -53,7 +53,7 @@ func TestRecovery(t *testing.T) {
 		return exec.Command("pgrep", "-f", filepath.Base(winchBin)+" -S "+tmuxDir+"/"+r.L+" run").Run() != nil
 	})
 	r.D("ls")
-	r.Chk("leaked spacer swept", r.WaitUntil(400, func() bool { return r.Spacers() == 0 }))
+	r.Chk("leaked spacer swept", r.WaitUntil(4000, func() bool { return r.Spacers() == 0 }))
 	r.Chk("gamma layout intact", r.Layout(r.W3) == tail(r.LW3))
 	err := exec.Command("pgrep", "-f", filepath.Base(winchBin)+" -S "+tmuxDir+"/"+r.L+" run").Run()
 	r.Chk("daemon alive", err == nil)
@@ -63,7 +63,7 @@ func TestRecovery(t *testing.T) {
 	// the next daemon's startup sweep must clear it. Layout of the docked
 	// window is knowingly lost here (the restore lived in the dead daemon).
 	r.D("toggle", r.CL)
-	r.Chk("docked for the kill", r.WaitUntil(500, func() bool {
+	r.Chk("docked for the kill", r.WaitUntil(5000, func() bool {
 		return r.ShowOpt("-t", "work", "-v", "@winch_docked") == "1"
 	}))
 	exec.Command("pkill", "-f", filepath.Base(winchBin)+" -S "+tmuxDir+"/"+r.L+" run").Run()
@@ -71,7 +71,7 @@ func TestRecovery(t *testing.T) {
 		return exec.Command("pgrep", "-f", filepath.Base(winchBin)+" -S "+tmuxDir+"/"+r.L+" run").Run() != nil
 	})
 	r.D("ls")
-	r.Chk("stale @winch_docked swept", r.WaitUntil(400, func() bool {
+	r.Chk("stale @winch_docked swept", r.WaitUntil(4000, func() bool {
 		return r.ShowOpt("-t", "work", "-v", "@winch_docked") == ""
 	}))
 	r.Chk("status pad swept", r.ShowOpt("-t", "work", "status-left") == "")

@@ -69,7 +69,17 @@ func TestTheAgentYouAreInIsFilled(t *testing.T) {
 		}
 		return ruleY >= 0 && mineY >= 0 && otherY >= 0
 	}
-	s := statusScreenUntil(r, find)
+	// The cards have to be PAINTED before the grounds mean anything, and the
+	// two events are independent: the rows appear as soon as the agents are
+	// known, while the fill needs the world that carries pane_last to have
+	// reached the TUI and provoked a repaint. Requiring both here — rather
+	// than measuring the first frame that merely has the text — is what makes
+	// the assertion below a statement about colour instead of about timing.
+	const col = 4
+	painted := func(s *screen) bool {
+		return find(s) && s.bg[mineY][col] != s.bg[ruleY][col]
+	}
+	s := statusScreenUntil(r, painted)
 	t.Logf("  rule=%d mine=%d other=%d", ruleY, mineY, otherY)
 	r.Chk("found both agent cards under the rule", find(s))
 	if !find(s) {
@@ -79,7 +89,6 @@ func TestTheAgentYouAreInIsFilled(t *testing.T) {
 
 	// The rule is drawn on the sidebar's own ground and nothing else, so it
 	// is the reference for "unfilled" — no hardcoded colour required.
-	const col = 4
 	ground := s.bg[ruleY][col]
 	mineBG, otherBG := s.bg[mineY][col], s.bg[otherY][col]
 	t.Logf("  ground=%q mine=%q other=%q", ground, mineBG, otherBG)

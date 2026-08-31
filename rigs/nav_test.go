@@ -39,7 +39,7 @@ func TestNavFollow(t *testing.T) {
 
 	// F: unrouted switch -> follow
 	r.T("switch-client", "-c", r.CL, "-t", "work", ";", "select-window", "-t", r.W3)
-	r.WaitUntil(100, func() bool { return r.Side().Win == r.W3 })
+	r.WaitUntil(1000, func() bool { return r.Side().Win == r.W3 })
 	s = r.Side()
 	r.Chk("follow docked into gamma", s.Win == r.W3)
 	r.Chk("follow focuses main", s.Active == 0)
@@ -91,7 +91,7 @@ func TestNavFollow(t *testing.T) {
 	}
 	r.T("select-pane", "-t", rightMain) // w1's active while hidden
 	r.T("select-window", "-t", r.W1)
-	r.WaitUntil(100, func() bool { return r.Side().Win == r.W1 })
+	r.WaitUntil(1000, func() bool { return r.Side().Win == r.W1 })
 	sleep(300)
 	r.T("select-pane", "-t", leftMain) // the user moves
 	sleep(300)

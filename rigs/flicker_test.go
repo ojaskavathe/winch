@@ -26,7 +26,7 @@ func TestFlicker(t *testing.T) {
 	r.T("new-window", "-d", "-t", "work:", "-n", "hv",
 		"sh -c 'seq 150000; while :; do echo HEAVYMARK; sleep 2; done'")
 	hv := r.T("display-message", "-p", "-t", "work:hv", "#{window_id}")
-	r.WaitUntil(600, func() bool {
+	r.WaitUntil(6000, func() bool {
 		h, _ := strconv.Atoi(r.T("display-message", "-p", "-t", "work:hv", "#{history_size}"))
 		return h >= 120_000
 	})
@@ -63,7 +63,7 @@ func TestFlicker(t *testing.T) {
 	}
 	sleep(800) // hv billboard (scaled approximation — no pre-carve)
 	r.SendKeys(sp, "Enter")
-	r.WaitUntil(300, func() bool { return r.ClientWin() == hv })
+	r.WaitUntil(3000, func() bool { return r.ClientWin() == hv })
 	sleep(1200) // carve reflow + settle
 	rec := r.StopRecord()
 

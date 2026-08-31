@@ -23,11 +23,11 @@ func TestRenameSession(t *testing.T) {
 	r.SendKeys(sp, "ploy")
 	sleep(200)
 	r.SendKeys(sp, "Enter")
-	r.Chk("enter commits the rename", r.WaitUntil(600, func() bool {
+	r.Chk("enter commits the rename", r.WaitUntil(6000, func() bool {
 		out := r.T("list-sessions", "-F", "#{session_name}")
 		return strings.Contains(out, "ploy") && !strings.Contains(out, "play")
 	}))
-	r.Chk("sidebar shows the new name", r.WaitUntil(400, func() bool {
+	r.Chk("sidebar shows the new name", r.WaitUntil(4000, func() bool {
 		return strings.Contains(r.Capture(sp), "ploy")
 	}))
 

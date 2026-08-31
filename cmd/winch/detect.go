@@ -36,21 +36,29 @@ import (
 // at all. The tick's own list-panes doubles as the self-heal for panes the
 // notification matrix misses.
 
-const (
-	detectTick     = 300 * time.Millisecond
-	detectFastTick = 100 * time.Millisecond // while a pending-idle hold is confirming
-	idleConfirms   = 3
-	idleCap        = 700 * time.Millisecond
-)
+// idleConfirms is a COUNT, not a duration, and stays fixed: it is the
+// anti-flap rule itself. Everything around it is wall clock, and wall clock
+// is the entire cost of the rig suite — a run spent 160s of its 270s asleep,
+// most of it waiting for exactly these constants to elapse.
+const idleConfirms = 3
 
-// Discovery cadence and startup grace are wall-clock costs every rig would
-// otherwise sleep through; testFast (rig harness only) compresses them.
-// Live values: 2s discovery-only tick, 3s grace.
-var detectIdleTick, startupGrace = func() (time.Duration, time.Duration) {
+// Detection cadences. testFast (rig harness only) compresses every one of
+// them; it never changes behaviour, only how long the same behaviour takes.
+// Live values are in the else branch.
+var detectTick, detectFastTick, idleCap, detectIdleTick, startupGrace = func() (
+	tick, fast, cap_, idle, grace time.Duration) {
 	if testFast {
-		return 300 * time.Millisecond, 750 * time.Millisecond
+		// Chosen against the suite running ~30-wide: 50ms ticks turned out
+		// to cost more in capture-pane churn under that load than they saved
+		// in latency, which showed up as flakes rather than as time.
+		return 80 * time.Millisecond, 40 * time.Millisecond,
+			200 * time.Millisecond, 150 * time.Millisecond, 200 * time.Millisecond
 	}
-	return 2 * time.Second, 3 * time.Second
+	return 300 * time.Millisecond, // full cadence with agents present
+		100 * time.Millisecond, // while a pending-idle hold is confirming
+		700 * time.Millisecond, // the hold's wall-clock escape hatch
+		2 * time.Second, // discovery only, nothing to watch
+		3 * time.Second // a just-spawned agent is not judged yet
 }()
 
 type agentInfo struct {
