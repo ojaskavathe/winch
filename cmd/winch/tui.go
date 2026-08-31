@@ -210,30 +210,31 @@ var (
 // was pressed on rather than opening anywhere else, so what is about to die is
 // the thing under the cursor, named, while you answer.
 //
-// confirmSess and confirmWin are the two kill shapes: a session row closes the
-// whole session, an agent row closes only that agent's window.
+// confirmSess and confirmPane are the two kill shapes: a session row closes
+// the whole session, an agent row closes only that agent's pane.
 // The target is held as an id rather than a row index, and the prompt finds
 // its row again on every paint — rows are rebuilt from scratch on every diff,
 // and an index would quietly come to mean a different row than the one you
 // armed. It is the rule the selection restore already follows.
 var (
 	confirmSess string // session id, when a session row is armed
-	confirmWin  string // window id, when an agent row is armed
+	confirmPane string // agent pane id, when an agent row is armed
 	confirmName string // what to call the target in the prompt
 )
 
-func confirming() bool { return confirmSess != "" || confirmWin != "" }
+func confirming() bool { return confirmSess != "" || confirmPane != "" }
 
-func confirmClear() { confirmSess, confirmWin, confirmName = "", "", "" }
+func confirmClear() { confirmSess, confirmPane, confirmName = "", "", "" }
 
-// confirmTargets reports whether the prompt belongs on this row. Two agents
-// sharing a window both get it, which is honest: one y closes both.
+// confirmTargets reports whether the prompt belongs on this row. Agent rows
+// key on the PANE: agents share a window often enough that a window would arm
+// a neighbour's row too, and kill it.
 func confirmTargets(r row) bool {
 	switch {
 	case confirmSess != "":
 		return r.session && r.sess == confirmSess
-	case confirmWin != "":
-		return r.arow && !r.cont && r.window == confirmWin
+	case confirmPane != "":
+		return r.arow && !r.cont && r.pane == confirmPane
 	}
 	return false
 }
@@ -501,19 +502,23 @@ func (st *store) tabLabel(sid, wid string) string {
 	return ""
 }
 
-// killLabel names a window for the x confirm. tabLabel is the right name when
-// there is one, but it is deliberately empty for a session's only window — and
-// "kill ? y/n" names nothing, so the session stands in. It reads correctly
-// either way: that window IS the session, and killing it ends both.
-func (st *store) killLabel(wid string) string {
-	w, ok := st.windows[wid]
+// killLabel names an agent's pane for the x confirm — its kind ("kill
+// claude?"), which is short enough to survive the sidebar's width.
+//
+// The kind alone would be ambiguous between two claudes, except that the
+// prompt replaces the FIRST line of the card it was armed on and the second
+// line is the conversation name, which stays put. So the two lines read
+// together as the question and its subject, and the selection highlight says
+// which card is answering.
+func (st *store) killLabel(pid string) string {
+	p, ok := st.panes[pid]
 	if !ok {
-		return "window"
+		return "agent"
 	}
-	if t := st.tabLabel(w.SessionID, wid); t != "" {
-		return t
+	if p.Agent != "" {
+		return p.Agent
 	}
-	return st.sessions[w.SessionID].Name
+	return "agent"
 }
 
 // autoNamed reports whether tmux picked this window's name rather than a
@@ -1345,7 +1350,7 @@ func cmdTui(tmuxSock, winchSock string) {
 					// reflex keypress moves the selection next time rather
 					// than killing whatever this time landed on.
 					if b == 'y' || b == 'Y' {
-						send(cmdMsg{Cmd: "kill", Sess: confirmSess, Window: confirmWin})
+						send(cmdMsg{Cmd: "kill", Sess: confirmSess, Pane: confirmPane})
 					}
 					confirmClear()
 					relayout = true
@@ -1423,12 +1428,12 @@ func cmdTui(tmuxSock, winchSock string) {
 					if sel >= 0 && sel < len(rows) && editWhat == editNone {
 						switch r := rows[sel]; {
 						case r.session && r.sess != "":
-							confirmSess, confirmWin = r.sess, ""
+							confirmSess, confirmPane = r.sess, ""
 							confirmName = st.sessions[r.sess].Name
 							relayout = true
-						case r.arow && r.window != "":
-							confirmSess, confirmWin = "", r.window
-							confirmName = st.killLabel(r.window)
+						case r.arow && r.pane != "":
+							confirmSess, confirmPane = "", r.pane
+							confirmName = st.killLabel(r.pane)
 							relayout = true
 						}
 					}

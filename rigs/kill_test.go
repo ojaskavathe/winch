@@ -104,8 +104,74 @@ func TestKillOwnSessionCarriesClient(t *testing.T) {
 	}
 }
 
-// x on an agent row closes only that agent's window; the session it lived in
-// carries on.
+// TestKillOneOfTwoAgentsInAWindow: two agents split across ONE window — the
+// live shape that exposed this. x on an agent row used to kill the WINDOW,
+// which took the neighbour with it. An agent row names one agent, so it closes
+// one agent: the pane goes, the window and the other agent stay.
+func TestKillOneOfTwoAgentsInAWindow(t *testing.T) {
+	r := New(t)
+	fake := buildFakeAgent(t)
+
+	// Both agents in gamma, the way a workspace with two claudes looks.
+	a1 := r.T("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", r.W3, fake+" 100000")
+	a2 := r.T("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", r.W3, fake+" 100000")
+	sleep(1700)
+	r.T("select-pane", "-T", "⠧ First agent", "-t", a1)
+	r.T("select-pane", "-T", "⠧ Second agent", "-t", a2)
+	r.await(5000, "both agents detected", func() bool {
+		out := r.T("list-panes", "-t", r.W3, "-F", "#{pane_id}")
+		return containsID(out, a1) && containsID(out, a2)
+	})
+
+	r.D("toggle", r.CL)
+	r.await(5000, "docked", func() bool { return r.Side().Pane != "" })
+	sp := r.Side().Pane
+	r.await(5000, "agents listed", func() bool {
+		return strings.Count(r.Capture(sp), "claude") >= 2
+	})
+
+	// Arm on the first agent row reachable below the sessions.
+	armed := false
+	for i := 0; i < 40 && !armed; i++ {
+		r.SendKeys(sp, "x")
+		if r.WaitUntil(700, func() bool {
+			return strings.Contains(r.Capture(sp), "kill claude? y/n")
+		}) {
+			armed = true
+			break
+		}
+		r.SendKeys(sp, "Escape")
+		sleep(80)
+		r.SendKeys(sp, "j")
+		sleep(80)
+	}
+	r.Chk("armed on an agent row", armed)
+	if !armed {
+		t.Logf("  sidebar:\n%s", r.Capture(sp))
+		return
+	}
+	// Exactly ONE row is armed, even though both agents share a window.
+	r.Chk("only one row prompts", strings.Count(r.Capture(sp), "kill claude? y/n") == 1)
+
+	r.SendKeys(sp, "y")
+	r.await(6000, "one agent died", func() bool {
+		out, _ := r.TQ("list-panes", "-t", r.W3, "-F", "#{pane_id}")
+		return !containsID(out, a1) || !containsID(out, a2)
+	})
+	out, _ := r.TQ("list-panes", "-t", r.W3, "-F", "#{pane_id}")
+	gone, kept := containsID(out, a1), containsID(out, a2)
+	r.Chk("exactly one agent died", gone != kept)
+	r.Chk("the other is still running", containsID(out, a1) || containsID(out, a2))
+	wins, _ := r.TQ("list-windows", "-a", "-F", "#{window_id}")
+	r.Chk("the window survived", containsID(wins, r.W3))
+	r.Chk("the session survived", hasSession(r, "work"))
+
+	r.Undock()
+	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
+}
+
+// x on an agent that is the only real thing in its window closes the window
+// too — a window with nothing left in it is reaped exactly as tmux would.
 func TestKillAgentWindowFromSidebar(t *testing.T) {
 	r := New(t)
 	fake := buildFakeAgent(t)
@@ -136,7 +202,7 @@ func TestKillAgentWindowFromSidebar(t *testing.T) {
 	for i := 0; i < 40 && !armed; i++ {
 		r.SendKeys(sp, "x")
 		if r.WaitUntil(700, func() bool {
-			return strings.Contains(r.Capture(sp), "kill agentwin? y/n")
+			return strings.Contains(r.Capture(sp), "kill claude? y/n")
 		}) {
 			armed = true
 			break

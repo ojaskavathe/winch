@@ -138,8 +138,8 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 		}
 	case "kill":
 		// `x` from the sidebar, past its y/n confirm: a session row closes the
-		// whole session, an agent row closes just that agent's window.
-		err = d.killTarget(ctl, env.msg.Sess, env.msg.Window)
+		// whole session, an agent row closes just that agent's pane.
+		err = d.killTarget(ctl, env.msg.Sess, env.msg.Pane)
 	case "focus":
 		// C-l from the docked idle sidebar: select the pane geometrically
 		// right of it — vim-tmux-navigator semantics, no origin reset.
@@ -328,37 +328,58 @@ func (d *daemon) createSession(ctl *control, from, name string) error {
 	return err
 }
 
-// killTarget closes a session (x on a session row) or a single window (x on an
-// agent row), having first carried anything that lives there somewhere safe.
+// killTarget closes a session (x on a session row) or one agent (x on an agent
+// row), having first carried anything that lives there somewhere safe.
 //
-// The evacuation is the whole job. tmux's default detach-on-destroy throws a
-// client out to a bare shell when its session is destroyed, and the sidebar
-// pane would go down with a window it is docked in — so pressing x on the
-// session you are sitting in could cost you both your sidebar and your
-// terminal. winch is the one pulling the trigger here, so it does not get to
-// leave that to the user's tmux settings: move first, then kill.
-func (d *daemon) killTarget(ctl *control, sess, win string) error {
+// An agent is a PANE, not a window. Agents share a window often enough —
+// several claudes split across one workspace — and killing the window took
+// every agent in it, which is not what a row that names one agent can mean.
+// Killing just the pane leaves the neighbours running; when the pane was the
+// only real thing in there, the window closes on its own anyway, because a
+// window whose last non-spacer pane goes is reaped exactly as tmux would.
+//
+// The evacuation is the rest of the job. tmux's default detach-on-destroy
+// throws a client out to a bare shell when its session is destroyed, and the
+// sidebar pane would go down with a window it is docked in — so pressing x on
+// the session you are sitting in could cost you both your sidebar and your
+// terminal. winch is the one pulling the trigger, so it does not get to leave
+// that to the user's tmux settings: move first, then kill.
+func (d *daemon) killTarget(ctl *control, sess, pane string) error {
 	switch {
-	case sess == "" && win == "":
-		return errors.New("kill needs a session or a window")
-	case sess != "" && win != "":
-		return errors.New("kill takes a session or a window, not both")
+	case sess == "" && pane == "":
+		return errors.New("kill needs a session or a pane")
+	case sess != "" && pane != "":
+		return errors.New("kill takes a session or a pane, not both")
 	}
 	w, err := fetchWorld(ctl)
 	if err != nil {
 		return err
 	}
+	if sess != "" && !sessionExists(w, sess) {
+		return nil // already gone; the diff that says so is on its way
+	}
+	// Killing a pane only takes its window down when nothing real is left
+	// behind it — that window then joins the blast radius, since everything
+	// below evacuates by window.
+	paneWin, takesWindow := "", false
+	if pane != "" {
+		paneWin, takesWindow = d.lastRealPane(w, pane)
+		if paneWin == "" {
+			return nil // the pane has already gone
+		}
+	}
 	// The blast radius: every window about to stop existing.
 	doomed := func(wid string) bool {
+		if wid == "" {
+			return false
+		}
 		for _, x := range w.Windows {
 			if x.ID == wid {
-				return (sess != "" && x.SessionID == sess) || (win != "" && x.ID == win)
+				return (sess != "" && x.SessionID == sess) ||
+					(takesWindow && x.ID == paneWin)
 			}
 		}
 		return false
-	}
-	if (sess != "" && !sessionExists(w, sess)) || (win != "" && !doomed(win)) {
-		return nil // already gone; the diff that says so is on its way
 	}
 
 	// Everything winch is DOING to the blast radius has to stop first.
@@ -376,11 +397,17 @@ func (d *daemon) killTarget(ctl *control, sess, win string) error {
 			d.pv.reset()
 		}
 		for wid := range d.dock.carved {
-			if doomed(wid) {
-				// The spacer dies with its window, so the carve describes
-				// nothing. Forget it rather than restore it: a select-layout
-				// aimed at a dead window errors, and tmux aborts the whole
-				// batch it rides in at the first error.
+			// Only a session kill removes windows itself; the spacers in them
+			// die with them, so the carve describes nothing and is FORGOTTEN
+			// rather than restored — a select-layout aimed at a dead window
+			// errors, and tmux aborts the batch it rides in at the first one.
+			//
+			// A pane kill must keep its carve even when the window is on its
+			// way out, because the spacer is what is left holding that window
+			// open, and reapEmptyCarves closes it by walking exactly this map.
+			// Forgetting it here stranded the window with a spacer in it and
+			// nothing that knew to reap it.
+			if sess != "" && doomed(wid) {
 				delete(d.dock.carved, wid)
 				d.opts.forget(scopeWindow, wid)
 			}
@@ -425,14 +452,45 @@ func (d *daemon) killTarget(ctl *control, sess, win string) error {
 		}
 	}
 
-	if win != "" {
-		log.Printf("kill window %s (refuge %q)", win, refuge)
-		_, err = ctl.run("kill-window -t " + q(win))
+	if pane != "" {
+		log.Printf("kill pane %s (window %s dies: %v, refuge %q)", pane, paneWin, takesWindow, refuge)
+		_, err = ctl.run("kill-pane -t " + q(pane))
 	} else {
 		log.Printf("kill session %s (refuge %q)", sess, refuge)
 		_, err = ctl.run("kill-session -t " + q(sess))
 	}
 	return err
+}
+
+// lastRealPane returns a pane's window, and whether killing that pane leaves
+// nothing in it but winch's own spacer — in which case the window goes too.
+//
+// The spacer has to be discounted by IDENTITY, from the carve that made it.
+// pane_current_command reports `sleep` for a spacer, and a user is perfectly
+// entitled to run sleep in a pane of their own.
+func (d *daemon) lastRealPane(w world, pid string) (string, bool) {
+	wid := ""
+	for _, p := range w.Panes {
+		if p.ID == pid {
+			wid = p.WindowID
+			break
+		}
+	}
+	if wid == "" {
+		return "", false
+	}
+	spacer := ""
+	if d.dock != nil {
+		if t := d.dock.carved[wid]; t != nil {
+			spacer = t.spacer
+		}
+	}
+	for _, p := range w.Panes {
+		if p.WindowID == wid && p.ID != pid && p.ID != spacer {
+			return wid, false
+		}
+	}
+	return wid, true
 }
 
 func sessionExists(w world, sid string) bool {
