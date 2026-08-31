@@ -409,11 +409,14 @@ func (d *daemon) agentsOpen(ctl *control, client string) error {
 		if ri != rj {
 			return ri > rj
 		}
-		// By pane NUMBER, so equal-attention agents rank oldest to newest.
-		// A string compare here reads %1572 < %4 < %77, which is a stable
-		// order but not one anybody could predict — with every agent idle
-		// (the common case) the tie-break IS the order, and the switcher
-		// looked like it picked at random.
+		// Equal attention: most recently changed first, matching the
+		// sidebar and herdr's priority tie-break. Pane number still settles
+		// agents that have never transitioned, so the order is total — and
+		// it is compared as a NUMBER, because a string compare reads
+		// %1572 < %4 < %77, a stable order nobody could predict.
+		if agents[i].AgentSeq != agents[j].AgentSeq {
+			return agents[i].AgentSeq > agents[j].AgentSeq
+		}
 		return paneNum(agents[i].ID) < paneNum(agents[j].ID)
 	})
 	// Start where the user already IS, falling back to the top-attention

@@ -221,3 +221,67 @@ func TestSpinnerFrames(t *testing.T) {
 		t.Error("a large tick produced no frame")
 	}
 }
+
+// Equal-attention agents order by most recently changed, herdr's priority
+// tie-break. Among five idle agents the one that just finished is the one
+// being looked for; pane number answers a question nobody asked. It still
+// settles agents that have never transitioned, so the order stays total.
+func TestAgentsOrderByAttentionThenRecency(t *testing.T) {
+	save := listW
+	t.Cleanup(func() { listW = save })
+	listW = 55
+
+	st := &store{
+		sessions: map[string]session{"$1": {ID: "$1", Name: "s"}},
+		windows:  map[string]window{"@1": {ID: "@1", SessionID: "$1", Index: 1, Active: true}},
+		panes: map[string]pane{
+			// Oldest pane, but it changed most recently of the idle three.
+			"%1": {ID: "%1", WindowID: "@1", SessionID: "$1", Title: "first", Agent: "claude", AgentState: "idle", AgentSeq: 9},
+			"%2": {ID: "%2", WindowID: "@1", SessionID: "$1", Title: "second", Agent: "claude", AgentState: "idle", AgentSeq: 3},
+			// Never transitioned: sorts last among idle, by pane number.
+			"%3": {ID: "%3", WindowID: "@1", SessionID: "$1", Title: "third", Agent: "claude", AgentState: "idle"},
+			"%9": {ID: "%9", WindowID: "@1", SessionID: "$1", Title: "ninth", Agent: "claude", AgentState: "idle"},
+			// Attention still outranks recency, however stale.
+			"%4": {ID: "%4", WindowID: "@1", SessionID: "$1", Title: "blocked one", Agent: "claude", AgentState: "blocked", AgentSeq: 1},
+		},
+	}
+
+	var names []string
+	for _, r := range st.rows(nil) {
+		if r.arow && r.cont {
+			names = append(names, strings.TrimSpace(r.label))
+		}
+	}
+	want := []string{"blocked one", "first", "second", "third", "ninth"}
+	if len(names) != len(want) {
+		t.Fatalf("got %d name rows, want %d: %v", len(names), len(want), names)
+	}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Fatalf("order = %v, want %v", names, want)
+		}
+	}
+}
+
+// row_gap 0 everywhere, as herdr defaults for BOTH sections: no blank row
+// inside the agents list and none between session cards either.
+func TestNoGapRowsBetweenCards(t *testing.T) {
+	st := &store{
+		sessions: map[string]session{
+			"$1": {ID: "$1", Name: "one"},
+			"$2": {ID: "$2", Name: "two"},
+		},
+		windows: map[string]window{
+			"@1": {ID: "@1", SessionID: "$1", Index: 1, Active: true},
+			"@2": {ID: "@2", SessionID: "$2", Index: 1, Active: true},
+		},
+		panes: map[string]pane{
+			"%1": {ID: "%1", WindowID: "@1", SessionID: "$1", Title: "a", Agent: "claude", AgentState: "idle"},
+		},
+	}
+	for i, r := range st.rows(nil) {
+		if r.gap {
+			t.Errorf("row %d is a blank spacer; row_gap should be 0", i)
+		}
+	}
+}

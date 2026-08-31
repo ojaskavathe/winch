@@ -293,17 +293,16 @@ func TestAgentCardIsNameLed(t *testing.T) {
 		row  int
 		want string
 	}{
-		{0, "main · 2"},                       // workspace · tab, herdr's token separator
+		{0, "main · 2 · claude"},              // workspace · tab · agent, one line
 		{1, "Build herdr-like tool for tmux"}, // terminal_title_stripped
-		{2, "claude"},                         // agent
 	} {
 		if got := strings.TrimSpace(rows[c.row].label); got != c.want {
 			t.Errorf("row %d = %q, want %q", c.row, got, c.want)
 		}
 	}
 	// Only the first row takes the selection; the rest ride with it.
-	if rows[0].cont || !rows[1].cont || !rows[2].cont {
-		t.Errorf("wrong continuation flags: %v %v %v", rows[0].cont, rows[1].cont, rows[2].cont)
+	if rows[0].cont || !rows[1].cont {
+		t.Errorf("wrong continuation flags: %v %v", rows[0].cont, rows[1].cont)
 	}
 	// row_gap 0, as herdr settled on: no blank line inside the section.
 	for _, r := range rows {
@@ -341,8 +340,8 @@ func agentCardFixture(t *testing.T, p pane) []row {
 			out = append(out, r)
 		}
 	}
-	if len(out) != 3 {
-		t.Fatalf("want a 3-row agent card, got %d: %+v", len(out), out)
+	if len(out) != 2 {
+		t.Fatalf("want a 2-row agent card, got %d: %+v", len(out), out)
 	}
 	return out
 }

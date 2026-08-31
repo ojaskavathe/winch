@@ -48,6 +48,10 @@ type pane struct {
 	Agent       string `json:"agent,omitempty"`   // claude | grok | codex | ...
 	AgentState  string `json:"astate,omitempty"`  // working | blocked | idle
 	AgentReason string `json:"areason,omitempty"` // blocked only: why ("permission prompt")
+	// AgentSeq stamps the last state change, monotonically. Equal-attention
+	// agents sort by it, most recent first: among several idle agents the
+	// one that just finished is the one being looked for.
+	AgentSeq int64 `json:"aseq,omitempty"`
 }
 
 type tclient struct {

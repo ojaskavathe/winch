@@ -267,7 +267,9 @@ func (st *store) rows(winPick map[string]string) []row {
 				target = pick
 			}
 		}
-		out = append(out, row{gap: true})
+		// No blank row between cards: herdr's row_gap defaults to 0 for
+		// spaces as well as agents, and the state dot plus the indent
+		// already separate one card from the next.
 		out = append(out, row{
 			label: "   " + s.Name, window: target, sess: s.ID,
 			session: true, att: s.Attached, agent: agg[s.ID],
@@ -318,20 +320,47 @@ func (st *store) rows(winPick map[string]string) []row {
 			if ri != rj {
 				return ri > rj
 			}
-			return agents[i].ID < agents[j].ID
+			// Equal attention: most recently changed first — herdr's
+			// priority tie-break. Among several idle agents the one that
+			// just finished is the one being looked for; pane number
+			// answers a question nobody asked. Pane number still breaks a
+			// tie between agents that have never transitioned, so the
+			// order is always total.
+			if agents[i].AgentSeq != agents[j].AgentSeq {
+				return agents[i].AgentSeq > agents[j].AgentSeq
+			}
+			return paneNum(agents[i].ID) < paneNum(agents[j].ID)
 		})
 		avail := listW - 3
 		for _, p := range agents {
-			// Row one: state_icon (painted at col 2 by paintList from
-			// row.agent) + workspace + tab.
+			// Row one: state_icon (painted at col 2 by paintList) then
+			// workspace, tab, agent — herdr's tokens, joined by its
+			// separator (" · " between tokens; the plain space after the
+			// icon is already there because winch paints it separately).
+			//
+			// The agent kind rides here rather than owning a row of its
+			// own. herdr's default spends a whole line on it, which is a
+			// reasonable default for someone running four different agents
+			// and a wasted line for anyone running one.
 			sess := st.sessions[p.SessionID].Name
-			// Joined with herdr's token separator — " · " between tokens, a
-			// plain space only after the state icon (which winch paints
-			// separately at column 2, so the space is already there).
-			head, headStyled := "   "+sess, ""
-			if tab := st.tabLabel(p.SessionID, p.WindowID); tab != "" && len([]rune(sess+" · "+tab)) <= avail {
-				head = "   " + sess + " · " + tab
-				headStyled = "   " + sess + pal.muted + " · " + tab + "\033[39m"
+			toks := []string{sess}
+			if tab := st.tabLabel(p.SessionID, p.WindowID); tab != "" {
+				toks = append(toks, tab)
+			}
+			if p.Agent != "" {
+				toks = append(toks, p.Agent)
+			}
+			// Drop trailing tokens rather than truncate: a half-written
+			// agent name reads as breakage, and everything after the
+			// workspace is context the row can live without.
+			for len(toks) > 1 && len([]rune(strings.Join(toks, " · "))) > avail {
+				toks = toks[:len(toks)-1]
+			}
+			head := "   " + strings.Join(toks, " · ")
+			headStyled := ""
+			if len(toks) > 1 {
+				headStyled = "   " + toks[0] + pal.muted +
+					" · " + strings.Join(toks[1:], " · ") + "\033[39m"
 			}
 			// The dot itself is paintList's business: a working row spins
 			// there, off the sidebar's own clock. Baking a frame into the
@@ -364,12 +393,6 @@ func (st *store) rows(winPick map[string]string) []row {
 				})
 			}
 
-			// Row three: agent. Dim — it is the kind, not the identity, and
-			// with one agent kind in play it is the same word every time.
-			out = append(out, row{
-				label: "   " + p.Agent, styled: "   \033[2m" + pal.muted + p.Agent + "\033[22;39m",
-				window: p.WindowID, pane: p.ID, arow: true, cont: true,
-			})
 		}
 	}
 	return out

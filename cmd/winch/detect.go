@@ -61,6 +61,7 @@ type agentInfo struct {
 	pendingIdle  int       // consecutive idle samples held back
 	pendingAt    time.Time // when the hold started
 	title        string    // conversation name (title minus ornament), for the card
+	seq          int64     // monotonic stamp of the last state change (ordering)
 	lastActivity int64     // window_activity at the last screen scan
 	win          string    // pane's window (for done/notify bookkeeping)
 }
@@ -73,6 +74,7 @@ type detectState struct {
 	tickC     <-chan time.Time
 	period    time.Duration
 	lastOpt   string // last @winch_agents value pushed
+	seq       int64  // monotonic state-change counter; see applyAgentState
 }
 
 // wrapperCmds run agents under an interpreter: pane_current_command says
@@ -133,6 +135,7 @@ func (d *daemon) injectAgents(w *world) {
 			w.Panes[i].Agent = a.kind
 			w.Panes[i].AgentState = a.state
 			w.Panes[i].AgentReason = a.reason
+			w.Panes[i].AgentSeq = a.seq
 			// Detection's title wins over the world's: it is read on a
 			// tick, while the world's copy is only as fresh as the last
 			// re-list — which happens on tmux notifications, and a pane
@@ -173,6 +176,8 @@ func (d *daemon) checkSeen(w *world) {
 	for id, a := range d.det.agents {
 		if a.state == "done" && vis[a.win] {
 			a.state = "idle"
+			d.det.seq++
+			a.seq = d.det.seq // a transition is a transition, however it happened
 			log.Printf("agent %s pane=%s state=done->idle (seen)", a.kind, id)
 		}
 	}
@@ -531,6 +536,12 @@ func (d *daemon) applyAgentState(id string, a *agentInfo, want string, visible b
 	}
 	log.Printf("agent %s pane=%s state=%s->%s", a.kind, id, orDash(a.state), want)
 	a.state = want
+	// Stamp WHEN, monotonically. Equal-attention agents order by most
+	// recently changed — herdr's priority tie-break — because among five
+	// idle agents the one that just finished is the one you are looking
+	// for, and pane number answers a question nobody asked.
+	d.det.seq++
+	a.seq = d.det.seq
 	return true
 }
 
