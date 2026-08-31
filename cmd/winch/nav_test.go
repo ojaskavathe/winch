@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNavByte(t *testing.T) {
 	cases := []struct {
@@ -146,4 +149,65 @@ func contains(s, sub string) bool {
 		}
 		return false
 	})()
+}
+
+func TestStyleField(t *testing.T) {
+	cases := []struct{ style, name, want string }{
+		{"bg=yellow,fg=black,fill=yellow", "fill", "yellow"},
+		{"bg=yellow,fg=black,fill=yellow", "bg", "yellow"},
+		{"fg=#94e2d5,bg=default,align=centre", "bg", ""}, // default names no colour
+		{"fg=#94e2d5,bg=default,align=centre", "fill", ""},
+		{" fg=black , bg=#f9e2af ", "bg", "#f9e2af"},
+		{"", "bg", ""},
+		{"bg=", "bg", ""},
+		// bg= must not be found by a search for fill=, nor the reverse.
+		{"bg=red", "fill", ""},
+		{"fill=red", "bg", ""},
+	}
+	for _, c := range cases {
+		if got := styleField(c.style, c.name); got != c.want {
+			t.Errorf("styleField(%q, %q) = %q want %q", c.style, c.name, got, c.want)
+		}
+	}
+}
+
+// The confinement must carry exactly one fill= and one width=/align=, whatever
+// the user's original said — a style that accumulated a directive per dock
+// would grow without bound.
+func TestMsgStyleConfinedIsIdempotent(t *testing.T) {
+	base := "bg=yellow,fg=black,fill=yellow,align=centre,width=40"
+	got := msgStyleConfined(base, "yellow", 200, 26)
+	if got == "" {
+		t.Fatal("expected a confined style")
+	}
+	for _, d := range []string{"fill=", "width=", "align="} {
+		if n := strings.Count(got, d); n != 1 {
+			t.Errorf("%q appears %d times in %q, want 1", d, n, got)
+		}
+	}
+	if !strings.Contains(got, "width=173") { // 200 - 26 - 1
+		t.Errorf("width wrong in %q", got)
+	}
+	if !strings.Contains(got, "fg=black") {
+		t.Errorf("user's own colours dropped from %q", got)
+	}
+
+	// Feeding the result back in must not stack another set on top.
+	again := msgStyleConfined(got, "yellow", 200, 26)
+	for _, d := range []string{"fill=", "width=", "align="} {
+		if n := strings.Count(again, d); n != 1 {
+			t.Errorf("after re-confining, %q appears %d times in %q", d, n, again)
+		}
+	}
+
+	// No fill resolved: the area is left uncleared rather than given a
+	// meaningless directive.
+	if s := msgStyleConfined("fg=red", "", 200, 26); strings.Contains(s, "fill=") {
+		t.Errorf("empty fill should add no directive, got %q", s)
+	}
+
+	// Too narrow to confine: nothing is claimed at all.
+	if s := msgStyleConfined(base, "yellow", 30, 26); s != "" {
+		t.Errorf("want no confinement at 30 cols, got %q", s)
+	}
 }

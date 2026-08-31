@@ -299,6 +299,27 @@ var (
 // dialects drifts without anything noticing.
 const dividerPad = 2
 
+// promptFill is the colour the confined command prompt clears its area to.
+//
+// Their own `fill=` first, which is a direct statement about this exact thing —
+// and not a rare one: tmux's DEFAULT message-style is `bg=yellow,fg=black,
+// fill=yellow`, which is why an unconfigured tmux appears to replace the whole
+// status bar when you press prefix-:. It is the fill doing that, not the bg.
+//
+// Then their message background, then the status bar's. `bg=default` is the
+// common answer and names no colour, so the bar's own background stands in:
+// the point is to erase what was underneath, and erasing it to the bar's colour
+// is what an emptied status line looks like.
+func promptFill(ctl *control, msgStyle string) string {
+	if c := styleField(msgStyle, "fill"); c != "" {
+		return c
+	}
+	if c := styleField(msgStyle, "bg"); c != "" {
+		return c
+	}
+	return styleField(resolveStyle(ctl, "status-style"), "bg")
+}
+
 // loadSeamStyle resolves the colour of the sidebar's edge: @winch-seam-style if
 // the user set one, otherwise whatever tmux would paint an active border in.
 //

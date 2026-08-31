@@ -396,6 +396,10 @@ type optIntent struct {
 	// of the command prompt — see msgStyleConfined.
 	msgStyle string
 	clientW  int
+	// msgFill is the colour the confined prompt area is cleared to. Empty
+	// leaves it uncleared, which is only right when nothing sensible resolves:
+	// the bar then shows through under the prompt.
+	msgFill string
 
 	// scrubbing is winch holding the sidebar ZOOMED for billboards. It changes
 	// what draws the sidebar.s edge, and so what the pad.s last column has to
@@ -436,7 +440,7 @@ func desiredOpts(in optIntent) []optWant {
 		want = append(want, optWant{optKey{scopeSession, in.sess, "status-format"}, rows})
 	}
 
-	if ms := msgStyleConfined(in.msgStyle, in.clientW, in.width); ms != "" {
+	if ms := msgStyleConfined(in.msgStyle, in.msgFill, in.clientW, in.width); ms != "" {
 		want = append(want, optWant{optKey{scopeSession, in.sess, "message-style"},
 			[]string{"message-style " + q(ms)}})
 	}
@@ -488,7 +492,7 @@ func desiredOpts(in optIntent) []optWant {
 //
 // The user's own message-style is kept and appended to, not replaced: their
 // colours are theirs, and a directive later in the string wins.
-func msgStyleConfined(base string, clientW, sideW int) string {
+func msgStyleConfined(base, fill string, clientW, sideW int) string {
 	avail := clientW - sideW - 1
 	if clientW <= 0 || sideW <= 0 || avail < 20 {
 		// Too narrow to be worth confining — the prompt needs room more than
@@ -505,13 +509,51 @@ func msgStyleConfined(base string, clientW, sideW int) string {
 		}
 		low := strings.ToLower(f)
 		if strings.HasPrefix(low, "width=") || strings.HasPrefix(low, "align=") ||
-			low == "noalign" {
+			low == "noalign" || strings.HasPrefix(low, "fill=") {
+			// fill= is dropped for the same reason as the other two: ours is
+			// appended below, and leaving theirs in produced a style carrying
+			// the directive twice. It is not lost — promptFill reads it back
+			// out of the saved original and prefers it, so a user who chose a
+			// prompt fill keeps exactly that colour.
 			continue
 		}
 		keep = append(keep, f)
 	}
 	keep = append(keep, "align=right", fmt.Sprintf("width=%d", avail))
+	// And CLEAR that area, which confining it does not do on its own.
+	//
+	// status_prompt_redraw builds the prompt screen by fast-copying the real bar
+	// and then drawing the message inside [ax, ax+aw) — but format_draw only
+	// blanks the area when the style carries a `fill=` (format-draw.c, "Clear the
+	// available area", guarded on sy.fill != 8). A `bg=` does not do it.
+	//
+	// Unconfined this never showed: the area is then the whole bar and the
+	// message is drawn across all of it. Confined to the right of the sidebar,
+	// everything the message did not cover stayed on screen — so prefix-: left
+	// the old status text sitting under the prompt instead of replacing the bar
+	// the way tmux does everywhere else.
+	if fill != "" {
+		keep = append(keep, "fill="+fill)
+	}
 	return strings.Join(keep, ",")
+}
+
+// styleField pulls one `name=value` directive out of a style string. Empty when
+// it names none, or names `default` — which cannot colour anything, since tmux
+// spells "no fill" as that same value.
+func styleField(style, name string) string {
+	for _, f := range strings.Split(style, ",") {
+		f = strings.TrimSpace(f)
+		if !strings.HasPrefix(strings.ToLower(f), name+"=") {
+			continue
+		}
+		v := strings.TrimSpace(f[len(name)+1:])
+		if v == "" || strings.EqualFold(v, "default") {
+			return ""
+		}
+		return v
+	}
+	return ""
 }
 
 // ------------------------------------------------------------------
