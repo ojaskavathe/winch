@@ -42,6 +42,10 @@ type pane struct {
 	Command   string `json:"cmd"`
 	Path      string `json:"path"`
 	Title     string `json:"title"`
+	// Spin is the agent's own state ornament, split off the title so a
+	// spinner frame does not read as a change to the NAME. Published on its
+	// own because the sidebar animates it: see splitOrnament.
+	Spin string `json:"spin,omitempty"`
 
 	// Daemon-computed agent detection (detect.go), injected after every
 	// fetch — never read back from tmux.
@@ -115,26 +119,26 @@ func fetchWorld(c *control) (world, error) {
 		idx, _ := strconv.Atoi(p[3])
 		width, _ := strconv.Atoi(p[5])
 		height, _ := strconv.Atoi(p[6])
+		_, name := splitOrnament(p[9])
 		w.Panes = append(w.Panes, pane{
 			ID: p[2], WindowID: p[1], SessionID: p[0], Index: idx,
 			Active: p[4] == "1", Width: width, Height: height,
-			// Stripped HERE, not at render: the spinner in an agent's title
-			// re-emits several times a second, and diffWorlds compares whole
-			// pane structs — so every animation frame became a pane op, a
-			// JSON write down the socket, a row rebuild and a full paint,
-			// thrown away at the final byte-compare. Nothing downstream
-			// wants the ornament: the state it encodes is already published
-			// as AgentState, detection reads titles from its OWN list-panes
-			// (detect.go) rather than from here, and the renderer stripped
-			// it anyway.
+			// Title carries no ornament. It re-emits several times a second
+			// while an agent works, and diffWorlds compares whole pane
+			// structs, so folded in it made every animation frame read as a
+			// change to the NAME — which is what the row is keyed on.
 			//
-			// herdr solves the same problem one layer later —
-			// TerminalTitleChanges carries raw_changed and stripped_changed
-			// separately, and a repaint is requested only if a configured
-			// token consumes the part that moved. Stripping at the source is
-			// the same outcome without a second title to keep in sync,
-			// because winch has no layout that shows the raw one.
-			Command: p[7], Path: p[8], Title: agentTaskTitle(p[9]),
+			// The frame itself is published as Spin, but by the detection
+			// tick (injectAgents), not from here: this re-list runs on tmux
+			// notifications, and a spinner that advances when some unrelated
+			// pane appears is not an animation. Leaving Spin alone here
+			// keeps one writer for the field.
+			//
+			// herdr draws the same line one layer later: TerminalTitleChanges
+			// carries raw_changed and stripped_changed separately, and a
+			// layout showing the raw title repaints on frames while one
+			// showing the stripped title does not.
+			Command: p[7], Path: p[8], Title: name,
 		})
 	}
 

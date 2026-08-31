@@ -60,6 +60,8 @@ type agentInfo struct {
 	grace        time.Time
 	pendingIdle  int       // consecutive idle samples held back
 	pendingAt    time.Time // when the hold started
+	spin         string    // the agent's own spinner frame, for the sidebar dot
+	title        string    // conversation name (title minus ornament), for the card
 	lastActivity int64     // window_activity at the last screen scan
 	win          string    // pane's window (for done/notify bookkeeping)
 }
@@ -132,6 +134,16 @@ func (d *daemon) injectAgents(w *world) {
 			w.Panes[i].Agent = a.kind
 			w.Panes[i].AgentState = a.state
 			w.Panes[i].AgentReason = a.reason
+			w.Panes[i].Spin = a.spin
+			// Detection's title wins over the world's: it is read on a
+			// tick, while the world's copy is only as fresh as the last
+			// re-list — which happens on tmux notifications, and a pane
+			// title change emits none. The card is keyed on this now, so a
+			// stale one is the wrong NAME on screen rather than a slightly
+			// old tail nobody was reading.
+			if a.title != "" {
+				w.Panes[i].Title = a.title
+			}
 		}
 	}
 }
@@ -189,6 +201,11 @@ func (d *daemon) detectTickRun(ctl *control, w *world) {
 	var scans []scanReq
 	var blockedNew []string // pane ids that just turned blocked
 	changed := false
+	// soft: the card CHANGED but attention did not — a spinner frame, or a
+	// renamed conversation. Published, because the sidebar shows both, but
+	// on a lighter path than a state change: the statusline write and the
+	// blocked notifications must not fire three times a second.
+	soft := false
 	apply := func(id string, a *agentInfo, want string, visible bool, label string) {
 		prev := a.state
 		if d.applyAgentState(id, a, want, visible, vis) {
@@ -240,6 +257,24 @@ func (d *daemon) detectTickRun(ctl *control, w *world) {
 		a.win = wid
 		if now.Before(a.grace) {
 			continue
+		}
+		// The agent's own title, split. Captured here rather than left to
+		// fetchWorld because THIS is the loop that reads titles on a tick;
+		// a full re-list only happens on tmux notifications, so anything
+		// taken from there advances when some unrelated pane appears, which
+		// is neither an animation nor a current name.
+		//
+		// The name matters as much as the frame now that it IS the card's
+		// identity. As a droppable tail it could be stale for a long time
+		// and nobody could tell.
+		orn, name := splitOrnament(title)
+		if a.spin != orn {
+			a.spin = orn
+			soft = true
+		}
+		if a.title != name {
+			a.title = name
+			soft = true
 		}
 		m := d.det.manifests[kind]
 		if m == nil {
@@ -300,10 +335,16 @@ func (d *daemon) detectTickRun(ctl *control, w *world) {
 			}
 		}
 	}
-	if changed {
+	switch {
+	case changed:
 		d.publishAgents(ctl, w)
 		d.notifyBlocked(ctl, w, blockedNew)
 		d.pushStatusOpt(ctl, w)
+	case soft:
+		// A frame moved and nothing else. publishAgents is a pane copy and
+		// a diff unless a pane went missing, so this costs one small op per
+		// turning agent — no tmux write, no notification.
+		d.publishAgents(ctl, w)
 	}
 	d.retune()
 }

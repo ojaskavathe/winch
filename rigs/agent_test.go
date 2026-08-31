@@ -19,15 +19,7 @@ import (
 func TestAgent(t *testing.T) {
 	r := New(t)
 
-	dir := t.TempDir()
-	src := filepath.Join(dir, "main.go")
-	if err := os.WriteFile(src, []byte("package main\nimport \"time\"\nfunc main(){time.Sleep(time.Hour)}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	fake := filepath.Join(dir, "claude")
-	if out, err := exec.Command("go", "build", "-o", fake, src).CombinedOutput(); err != nil {
-		t.Fatalf("build fake claude: %v %s", err, out)
-	}
+	fake := buildFakeAgent(t)
 
 	// A cross-session -d split emits NO tmux notification: only the
 	// detection tick's own discovery finds this pane (up to 2s) before its
@@ -243,4 +235,21 @@ func TestAgent(t *testing.T) {
 	r.D("agents", r.CL)
 	sleep(800)
 	r.Chk("no agents: switcher declines to dock", r.Side().Pane == "")
+}
+
+// buildFakeAgent builds a binary literally named `claude` that just sleeps.
+// Built rather than copied: pane_current_command reports the image name, and
+// macOS kills relocated platform binaries.
+func buildFakeAgent(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(src, []byte("package main\nimport \"time\"\nfunc main(){time.Sleep(time.Hour)}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fake := filepath.Join(dir, "claude")
+	if out, err := exec.Command("go", "build", "-o", fake, src).CombinedOutput(); err != nil {
+		t.Fatalf("build fake claude: %v %s", err, out)
+	}
+	return fake
 }

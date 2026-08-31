@@ -117,6 +117,7 @@ type row struct {
 	cont    bool   // continuation line of a multi-row entry (herdr's model)
 	create  bool   // the `n` field: a session that does not exist yet
 	agent   string // worst agent state (window rows) / the state (agent rows)
+	orn     string // the agent's own spinner frame, when it is turning
 	styled  string // optional pre-styled label (only fg/dim codes, self-closing);
 	// used when it fits — truncation falls back to the plain label
 }
@@ -333,9 +334,16 @@ func (st *store) rows(winPick map[string]string) []row {
 				head = "   " + sess + " · " + tab
 				headStyled = "   " + sess + pal.muted + " · " + tab + "\033[39m"
 			}
+			// The agent's own spinner replaces the state dot while it turns.
+			// Only for `working`: the other states publish a static ✳, and a
+			// spinner that is not spinning is worse than a dot.
+			spin := ""
+			if p.AgentState == "working" {
+				spin = spinFrame(p.Spin)
+			}
 			out = append(out, row{
 				label: head, styled: headStyled,
-				window: p.WindowID, pane: p.ID, agent: p.AgentState, arow: true,
+				window: p.WindowID, pane: p.ID, agent: p.AgentState, orn: spin, arow: true,
 			})
 
 			// Row two: terminal_title_stripped — the agent's own name for
@@ -485,14 +493,28 @@ func fitTokens(s string, max int) string {
 // agentTaskTitle strips the state ornament (spinner char, ✳) off an agent's
 // pane title, leaving the task summary.
 func agentTaskTitle(t string) string {
+	_, name := splitOrnament(t)
+	return name
+}
+
+// splitOrnament separates an agent title's leading state ornament from its
+// text. The ornament is the agent's OWN spinner frame, which is why winch
+// shows it rather than animating a glyph of its own on a timer: it advances
+// when the agent advances, and it stops when the agent stops. A spinner that
+// keeps turning for a wedged process is a lie told at 3fps.
+//
+// Kept apart from the title on the wire (pane.Spin) so a frame change diffs
+// only the ornament. Folding it back into Title would make every frame a
+// change to the NAME as well, and the name is what the row is keyed on.
+func splitOrnament(t string) (orn, name string) {
 	t = strings.TrimSpace(t)
 	if r := []rune(t); len(r) > 1 {
 		c := r[0]
 		if c == '✳' || (c >= 0x2800 && c <= 0x28FF) || (c >= 0x25D0 && c <= 0x25D3) {
-			t = strings.TrimSpace(string(r[1:]))
+			return string(c), strings.TrimSpace(string(r[1:]))
 		}
 	}
-	return t
+	return "", t
 }
 
 func cmdTui(tmuxSock, winchSock string) {
@@ -1841,6 +1863,11 @@ func paintList(rows []row, sel int) {
 			// Painted AFTER the border write on purpose — this repositions
 			// the cursor, and the border relies on it sitting at col lw+1.
 			orn, style := agentGlyph(rows[i].agent)
+			if rows[i].orn != "" {
+				// A turning agent shows its OWN frame in place of the dot,
+				// in the same colour the dot would have been.
+				orn = rows[i].orn
+			}
 			if orn == "" && rows[i].session && rows[i].att {
 				orn, style = "●", pal.accent
 			}
@@ -1891,6 +1918,23 @@ func paintList(rows []row, sel int) {
 // herdr's dot language: attention states share ● and differ by hue
 // (red needs you, yellow is live, teal finished unseen); confirmed idle
 // hollows out to a green ○.
+// spinFrame is the ornament when it is an animation FRAME — braille, or the
+// quarter-circle set claude 2.1.228 moved to — and empty otherwise. ✳ is a
+// static marker, not a frame: standing it in for the working dot would read
+// as a spinner that has seized. Blank braille (U+2800) is excluded for the
+// same reason in the other direction — it would blink the dot out entirely.
+func spinFrame(orn string) string {
+	r := []rune(orn)
+	if len(r) != 1 {
+		return ""
+	}
+	switch c := r[0]; {
+	case c > 0x2800 && c <= 0x28FF, c >= 0x25D0 && c <= 0x25D3:
+		return orn
+	}
+	return ""
+}
+
 func agentGlyph(state string) (string, string) {
 	switch state {
 	case "blocked":

@@ -195,3 +195,40 @@ func TestSpinnerFrameIsNotAWorldChange(t *testing.T) {
 		t.Errorf("a real title change produced %d ops, want 1", len(ops))
 	}
 }
+
+// Only real spinner frames stand in for the working dot. ✳ is a static
+// marker; showing it in place of the dot would read as a spinner that has
+// seized, and blank braille would blink the dot out of existence entirely.
+func TestSpinFrameRejectsNonFrames(t *testing.T) {
+	for _, orn := range []string{"⠂", "⠐", "⠋", "⣿", "◐", "◓"} {
+		if spinFrame(orn) != orn {
+			t.Errorf("spinFrame(%q) = %q, want it kept", orn, spinFrame(orn))
+		}
+	}
+	for _, orn := range []string{"✳", "", "⠀" /* U+2800, blank */, "ab", "●"} {
+		if got := spinFrame(orn); got != "" {
+			t.Errorf("spinFrame(%q) = %q, want it rejected", orn, got)
+		}
+	}
+}
+
+// The frame reaches the row that paints the dot, and only while working:
+// the other states publish a static ✳, and a still spinner is worse than a
+// dot because it looks like a stall.
+func TestWorkingRowCarriesTheSpinnerFrame(t *testing.T) {
+	rows := agentCardFixture(t, pane{
+		ID: "%1", WindowID: "@1", SessionID: "$1", Title: "Build herdr-like tool for tmux",
+		Spin: "⠙", Agent: "claude", AgentState: "working",
+	})
+	if rows[0].orn != "⠙" {
+		t.Errorf("working row orn = %q, want the agent's frame", rows[0].orn)
+	}
+
+	idle := agentCardFixture(t, pane{
+		ID: "%1", WindowID: "@1", SessionID: "$1", Title: "Ready",
+		Spin: "✳", Agent: "claude", AgentState: "idle",
+	})
+	if idle[0].orn != "" {
+		t.Errorf("idle row orn = %q, want the static dot", idle[0].orn)
+	}
+}
