@@ -1393,16 +1393,7 @@ func (d *daemon) checkDock(ctl *control, w world) {
 		// gone, only session state needs cleaning. Layout restore would fight
 		// whatever the user just did — skip it.
 		log.Printf("dock: sidebar pane gone, cleaning up")
-		d.dock = nil
-		d.stopStream()
-		d.pv.target = ""
-		d.pv.reset()
-		if seq := d.opts.releaseAll(); len(seq) > 0 {
-			if _, err := ctl.runSeq(seq...); err != nil {
-				log.Printf("dock cleanup: %v", err)
-			}
-		}
-		d.deferReleases(p)
+		d.dockAbandon(ctl, p)
 		return
 	}
 	var cl *tclient
@@ -1415,6 +1406,24 @@ func (d *daemon) checkDock(ctl *control, w world) {
 	if cl == nil {
 		log.Printf("dock: client %s detached, undocking", p.client)
 		_ = d.dockClose(ctl, false)
+		return
+	}
+	// The dock's own window plays by the rule reapEmptyCarves enforces for
+	// spacer-held ones, and for the same reason: the sidebar is a pane, so it
+	// holds its window open once the user closes their last real split. Left
+	// alone the sidebar just stretches to fill the window — a full-width TUI
+	// sitting in a session that should already have ended, with nothing to
+	// explain it and no key that closes it.
+	//
+	// Letting go closes the window, which is what tmux would have done. If it
+	// was the session's last window the session goes with it, and the client
+	// moves or detaches exactly as it would have if winch had never docked.
+	if !p.scrubbing && dockAlone(w, p) {
+		log.Printf("dock: %s is sidebar-only, letting the window go", p.win)
+		d.dockAbandon(ctl, p)
+		if _, err := ctl.run("kill-pane -t " + q(p.pane)); err != nil {
+			log.Printf("dock reap: %v", err)
+		}
 		return
 	}
 	d.reapEmptyCarves(ctl, w)
@@ -1529,4 +1538,41 @@ func paneAlive(w world, pid string) bool {
 		}
 	}
 	return false
+}
+
+// dockAlone reports whether the sidebar is the only pane left in its window.
+//
+// Requiring a sighting of the sidebar itself is the point of the seen flag: a
+// world that lists no panes for the window at all — the window already gone,
+// or a snapshot taken mid-batch — must read as "don't know", not as "empty".
+// Reaping on absent data would kill the sidebar during an ordinary move.
+func dockAlone(w world, p *dockState) bool {
+	seen := false
+	for _, pn := range w.Panes {
+		if pn.WindowID != p.win {
+			continue
+		}
+		if pn.ID != p.pane {
+			return false
+		}
+		seen = true
+	}
+	return seen
+}
+
+// dockAbandon drops every trace of the dock WITHOUT restoring layout, for the
+// cases where the host window is going away or already has: a restore aimed at
+// a dying window either errors — taking the rest of the sequence with it, since
+// tmux aborts a batch at the first failure — or fights what the user just did.
+func (d *daemon) dockAbandon(ctl *control, p *dockState) {
+	d.dock = nil
+	d.stopStream()
+	d.pv.target = ""
+	d.pv.reset()
+	if seq := d.opts.releaseAll(); len(seq) > 0 {
+		if _, err := ctl.runSeq(seq...); err != nil {
+			log.Printf("dock cleanup: %v", err)
+		}
+	}
+	d.deferReleases(p)
 }
