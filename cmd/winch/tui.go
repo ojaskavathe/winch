@@ -222,6 +222,15 @@ var (
 	confirmName string // what to call the target in the prompt
 )
 
+// Where the selection last sat in each of the sidebar's two regions, so the
+// pane-navigation keys land where you left rather than at the top. Held as row
+// IDENTITY (session id, agent pane id) because indexes are rebuilt on every
+// diff and would come to mean a different row.
+var (
+	lastSessKey  string
+	lastAgentKey string
+)
+
 func confirming() bool { return confirmSess != "" || confirmPane != "" }
 
 func confirmClear() { confirmSess, confirmPane, confirmName = "", "", "" }
@@ -955,6 +964,60 @@ func cmdTui(tmuxSock, winchSock string) {
 		sel = next
 		return true
 	}
+	// jumpRegion is what the pane-navigation keys do: move to the OTHER
+	// region, not one row.
+	//
+	// The sidebar has two, the sessions list and the pinned agents section,
+	// and they are the closest thing it has to panes. So the keys that move
+	// between panes move between them — C-j from the sessions goes to the
+	// agents the way it would go to the split below, in one press. Stepping a
+	// row at a time is what j/k are for, and with five sessions on screen the
+	// difference is one press against a dozen.
+	//
+	// Where you were in each region is remembered, so coming back lands where
+	// you left rather than at the top. Identity, not index: the rows are
+	// rebuilt on every diff.
+	jumpRegion := func(toAgents bool) bool {
+		if sel >= 0 && sel < len(rows) && rows[sel].arow == toAgents {
+			return false // already there; tmux does not wrap either
+		}
+		if sel >= 0 && sel < len(rows) {
+			if rows[sel].arow {
+				lastAgentKey = rows[sel].pane
+			} else {
+				lastSessKey = rows[sel].sess
+			}
+		}
+		want := lastSessKey
+		if toAgents {
+			want = lastAgentKey
+		}
+		target, first := -1, -1
+		for i, r := range rows {
+			if r.inert() || r.arow != toAgents {
+				continue
+			}
+			if first < 0 {
+				first = i
+			}
+			key := r.sess
+			if r.arow {
+				key = r.pane
+			}
+			if want != "" && key == want {
+				target = i
+				break
+			}
+		}
+		if target < 0 {
+			target = first
+		}
+		if target < 0 || target == sel {
+			return false // that region is empty — no agents, say
+		}
+		sel = target
+		return true
+	}
 	// cycleWin (h/l, arrows): pages the selected session's windows through
 	// the billboard — the tab-bar gesture, without listing windows.
 	cycleWin := func(delta int) bool {
@@ -1412,10 +1475,14 @@ func cmdTui(tmuxSock, winchSock string) {
 				// (config.go). AFTER the letters above so a config that maps a
 				// bare `l` cannot take `l` away from window paging — the
 				// literal keys are the sidebar's own and win ties.
+				//
+				// These JUMP between the list and the agents section rather
+				// than stepping a row: they are the between-panes keys, and
+				// the two sections are the sidebar's panes.
 				case navHit(uiNav.Down, b):
-					moved = moveSel(1) || moved
+					moved = jumpRegion(true) || moved
 				case navHit(uiNav.Up, b):
-					moved = moveSel(-1) || moved
+					moved = jumpRegion(false) || moved
 				case b == 'r':
 					// Rename the selected session inline, prefilled.
 					if sel >= 0 && sel < len(rows) && rows[sel].session {

@@ -11,9 +11,13 @@ import (
 // what the sidebar pane actually reports as its command.
 const navPattern = `#{m/r:^(view|l?n?vim?x?|fzf|winch)(diff)?(-wrapped)?$,#{pane_current_command}}`
 
-// TestCtrlJKReachTheSidebar: C-j/C-k must step the sidebar's selection through
-// sessions AND agents, driven through the ROOT BINDING the way a keypress
-// actually arrives.
+// TestCtrlJKReachTheSidebar: the pane-navigation keys must JUMP between the
+// sidebar's two regions — sessions and agents — driven through the ROOT
+// BINDING the way a keypress actually arrives.
+//
+// One press, not one row. With several sessions listed, stepping row by row
+// takes a dozen presses to cross into the agents; C-j is the key that moves to
+// the split below, so in the sidebar it moves to the section below.
 //
 // Every other sidebar-key test sends keys straight to the pane, which skips
 // tmux's key table entirely. That hides the failure mode this guards: the bind
@@ -64,26 +68,42 @@ func TestCtrlJKReachTheSidebar(t *testing.T) {
 		return ""
 	}
 
+	// Park at the TOP of the sessions list, as far from the agents as the
+	// list gets — a jump has to cross the whole distance, where a row-step
+	// would only reach the neighbouring session.
+	for i := 0; i < 10; i++ {
+		r.SendKeys(sp, "k")
+	}
+	sleep(500)
 	start := selected()
-	r.Chk("something is selected to begin with", start != "")
+	r.Chk("parked on a session at the top", start != "" && !strings.Contains(start, "claude"))
 
 	// C-j through the bind: 0x0a is what the terminal sends for ctrl-j.
 	r.Type("\x0a")
-	r.Chk("C-j moved the selection", r.WaitUntil(3000, func() bool {
-		return selected() != start && selected() != ""
+	r.Chk("one C-j reaches the agents section", r.WaitUntil(3000, func() bool {
+		return strings.Contains(selected(), "claude")
 	}))
 	r.Chk("C-j did NOT move the keyboard out of the sidebar", r.ClientPane() == sp)
-	down := selected()
-	r.Chk("C-j crossed into the agents section", strings.Contains(down, "claude"))
 
-	// C-k comes back the other way.
+	// A second C-j does nothing: there is no region below the agents, and
+	// tmux does not wrap to the top pane either.
+	//
+	// Asserted on the REGION rather than the row text: a working agent's row
+	// carries a spinner that advances several times a second, so comparing
+	// the rendered line would fail on the animation and say "wrapped".
+	r.Type("\x0a")
+	sleep(700)
+	r.Chk("a second C-j does not wrap back to the sessions",
+		strings.Contains(selected(), "claude"))
+
+	// C-k comes back the other way, to where it left.
 	r.Type("\x0b")
-	r.Chk("C-k moved back", r.WaitUntil(3000, func() bool {
+	r.Chk("C-k returns to the sessions", r.WaitUntil(3000, func() bool {
 		s := selected()
-		return s != "" && s != down
+		return s != "" && !strings.Contains(s, "claude")
 	}))
 	r.Chk("C-k did NOT move the keyboard out either", r.ClientPane() == sp)
-	r.Chk("and landed back among the sessions", !strings.Contains(selected(), "claude"))
+	r.Chk("and landed back where it left the list", selected() == start)
 
 	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
@@ -126,20 +146,18 @@ func TestNavKeysFollowTheUsersBinds(t *testing.T) {
 	sleep(600)
 
 	start := navSelected(r)
-	r.Chk("something is selected", start != "")
+	r.Chk("starts among the sessions", start != "" && !strings.Contains(start, "claude"))
 
 	r.Type("\x17") // C-w
-	r.Chk("the user's own down key moves the selection", r.WaitUntil(3000, func() bool {
-		s := navSelected(r)
-		return s != "" && s != start
+	r.Chk("the user's own down key reaches the agents", r.WaitUntil(3000, func() bool {
+		return strings.Contains(navSelected(r), "claude")
 	}))
 	r.Chk("and does not move the keyboard out", r.ClientPane() == sp)
-	down := navSelected(r)
 
 	r.Type("\x05") // C-e
-	r.Chk("the user's own up key moves it back", r.WaitUntil(3000, func() bool {
+	r.Chk("the user's own up key returns to the sessions", r.WaitUntil(3000, func() bool {
 		s := navSelected(r)
-		return s != "" && s != down
+		return s != "" && !strings.Contains(s, "claude")
 	}))
 
 	// C-j is nothing here — it is not bound at all in this tmux, so it must
@@ -156,6 +174,12 @@ func TestNavKeysFollowTheUsersBinds(t *testing.T) {
 // TestNavKeysExplicitOverride: @winch-nav-keys beats detection.
 func TestNavKeysExplicitOverride(t *testing.T) {
 	r := New(t)
+	fake := buildFakeAgent(t)
+
+	// An agent, so there is a second region for the keys to jump to.
+	ap := r.T("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", r.W3, fake+" 100000")
+	sleep(1700)
+	r.T("select-pane", "-T", "⠧ Cooking again", "-t", ap)
 
 	// Binds say C-w/C-e; the option says C-n/C-p. The option wins.
 	r.T("bind-key", "-n", "C-w", "if-shell", "-F", navPattern, "send-keys C-w", "select-pane -D")
@@ -177,34 +201,26 @@ func TestNavKeysExplicitOverride(t *testing.T) {
 	r.await(3000, "keyboard in the sidebar", func() bool { return r.ClientPane() == sp })
 	sleep(600)
 
-	// UP first: the selection opens on the client's own session, which sorts
-	// last here, so "down" has nowhere to go and a working key would look
-	// broken.
 	start := navSelected(r)
-	r.Chk("something is selected", start != "")
-	r.Type("\x10") // C-p
-	r.Chk("the configured up key works", r.WaitUntil(3000, func() bool {
-		s := navSelected(r)
-		return s != "" && s != start
-	}))
-	up := navSelected(r)
+	r.Chk("starts among the sessions", start != "" && !strings.Contains(start, "claude"))
 
 	r.Type("\x0e") // C-n
-	r.Chk("the configured down key works", r.WaitUntil(3000, func() bool {
-		s := navSelected(r)
-		return s != "" && s != up
+	r.Chk("the configured down key reaches the agents", r.WaitUntil(3000, func() bool {
+		return strings.Contains(navSelected(r), "claude")
 	}))
 
-	// C-w is bound in tmux and forwards, but the option displaced it. Aim it
-	// UP-ward's opposite from the top so a no-op is distinguishable from a
-	// clamp: park at the top first, where "down" (C-w's direction) would move
-	// if it were still live.
-	r.Type("\x10") // C-p, back to the top
-	sleep(500)
-	top := navSelected(r)
+	r.Type("\x10") // C-p
+	r.Chk("the configured up key returns", r.WaitUntil(3000, func() bool {
+		s := navSelected(r)
+		return s != "" && !strings.Contains(s, "claude")
+	}))
+
+	// C-w is bound in tmux and forwards, but the option displaced it — so
+	// from the sessions it must NOT jump to the agents.
+	inSess := navSelected(r)
 	r.Type("\x17") // C-w — detected, but overridden
 	sleep(800)
-	r.Chk("the detected-but-overridden key does nothing", navSelected(r) == top)
+	r.Chk("the detected-but-overridden key does nothing", navSelected(r) == inSess)
 
 	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
