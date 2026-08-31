@@ -299,12 +299,6 @@ var (
 // dialects drifts without anything noticing.
 const dividerPad = 2
 
-// statusBG is the status bar's own background — the last resort for the fill
-// that clears the prompt area, read once per dock and handed to desiredOpts.
-func statusBG(ctl *control) string {
-	return styleField(resolveStyle(ctl, "status-style"), "bg")
-}
-
 // loadSeamStyle resolves the colour of the sidebar's edge: @winch-seam-style if
 // the user set one, otherwise whatever tmux would paint an active border in.
 //

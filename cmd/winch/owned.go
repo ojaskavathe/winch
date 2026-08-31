@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -365,6 +364,27 @@ func markName(opt string) string {
 // sweep per kind of leftover.
 var ownedOptions = []optKey{
 	{scope: scopeSession, name: "status-format"},
+	// message-style and message-command-style are no longer CLAIMED — winch
+	// wants nothing from them (desiredOpts). They stay on this list so the
+	// startup sweep still finds and restores a claim written by an older
+	// daemon: a running tmux out there is wearing `width=`/`align=right`/
+	// `fill=` on a session right now, and dropping the names would strand it
+	// with no way back short of setting the option by hand.
+	//
+	// Winch confined the prompt to the right of the sidebar so prefix-: would
+	// stop painting over the strip and the seam. It worked, and it cost more
+	// than it was worth. `align` does double duty — status_prompt_area reads it
+	// to place the AREA, and message-format embeds the same style so format_draw
+	// reads it again to place the TEXT — so forcing align=right to push the area
+	// past the sidebar also shoved the user's prompt to the far edge. Underneath
+	// that: the paint and the area come from two DIFFERENT options, editing
+	// either means splitting on commas that a conditional style does not use as
+	// separators, and set-option validates styles so a mangled one aborts the
+	// dock batch and the sidebar fails to open.
+	//
+	// The prompt now paints over the sidebar for as long as it is open, which is
+	// what tmux does to every other pane's status. That is a visible cost for a
+	// few seconds against a permanent class of bug.
 	{scope: scopeSession, name: "message-style"},
 	{scope: scopeSession, name: "message-command-style"},
 	{scope: scopeSession, name: "@winch_docked"},
@@ -392,20 +412,6 @@ type optIntent struct {
 	// restore replays: a session inheriting the global reports nothing of its
 	// own, but the pad still has to wrap the global's text.
 	rows []string
-
-	// msgStyle is the session's own effective message-style, and clientW the
-	// width of the client the sidebar is docked into. Both feed the confinement
-	// of the command prompt — see msgStyleConfined.
-	msgStyle string
-	clientW  int
-	// cmdStyle is the session's effective message-command-style — what tmux
-	// paints prefix-: with, as opposed to message-style which only decides
-	// where it goes.
-	cmdStyle string
-	// statusBG is the status bar's own background, the last resort for the
-	// fill that clears the prompt area. Passed in rather than looked up so
-	// desiredOpts stays a pure function of its intent.
-	statusBG string
 
 	// scrubbing is winch holding the sidebar ZOOMED for billboards. It changes
 	// what draws the sidebar.s edge, and so what the pad.s last column has to
@@ -446,21 +452,9 @@ func desiredOpts(in optIntent) []optWant {
 		want = append(want, optWant{optKey{scopeSession, in.sess, "status-format"}, rows})
 	}
 
-	if ms := msgStyleConfined(in.msgStyle, fillFor(in.msgStyle, in.statusBG), in.clientW, in.width); ms != "" {
-		want = append(want, optWant{optKey{scopeSession, in.sess, "message-style"},
-			[]string{"message-style " + q(ms)}})
-		// The command prompt — prefix-: — is painted from a DIFFERENT option.
-		// status_prompt_redraw picks message-command-style when the mode is
-		// PROMPT_COMMAND and message-style otherwise, while status_prompt_area
-		// reads message-style either way. So the two options split the job: one
-		// says where the prompt goes, the other says what colour it is, and the
-		// fill that clears the area has to be on BOTH or prefix-: sets an area
-		// it never erases.
-		if cs := cmdStyleFilled(in.cmdStyle, fillFor(in.cmdStyle, in.statusBG)); cs != "" {
-			want = append(want, optWant{optKey{scopeSession, in.sess, "message-command-style"},
-				[]string{"message-command-style " + q(cs)}})
-		}
-	}
+	// The command prompt is deliberately NOT touched. See the note on
+	// ownedOptions: winch used to confine it past the sidebar, and giving that
+	// up is what stopped this file editing the user's styles at all.
 
 	// Window options apply to every window winch holds, not just the one the
 	// sidebar is in: a spacer-held window is still wearing the dock's geometry
@@ -484,184 +478,6 @@ func desiredOpts(in optIntent) []optWant {
 			optWant{optKey{scopeWindow, wid, "pane-border-indicators"}, []string{"pane-border-indicators off"}})
 	}
 	return want
-}
-
-// msgStyleConfined keeps tmux's command prompt and its messages to the right of
-// the sidebar, so prefix-: no longer paints over it.
-//
-// The prompt does not replace the status line, it OVERLAYS it: status.c's
-// status_prompt_redraw and status_message_redraw both open with
-//
-//	screen_write_fast_copy(&ctx, &sl->screen, 0, 0, c->tty.sx, lines)
-//
-// — a copy of the real bar — and only then format_draw the message, inside an
-// area whose x and width come from status_prompt_area(). That function reads
-// the area straight off message-style's `width=` and `align=` directives:
-// width absent means the whole terminal, and align=right puts x at sx - w. So
-// a width of sx - sidebar - 1 with align=right starts the prompt in the first
-// column past the border, and everything left of it survives the fast_copy.
-//
-// The width has to be a literal. status_prompt_area calls
-// options_string_to_style with a NULL format tree, so #{client_width} would
-// never expand — which is why this is a function of clientW and gets recomputed
-// whenever either input moves. Returns "" when there is nothing sensible to
-// write, and the option is then simply not claimed.
-//
-// The user's own message-style is kept and appended to, not replaced: their
-// colours are theirs, and a directive later in the string wins.
-func msgStyleConfined(base, fill string, clientW, sideW int) string {
-	avail := clientW - sideW - 1
-	if clientW <= 0 || sideW <= 0 || avail < 20 {
-		// Too narrow to be worth confining — the prompt needs room more than
-		// the sidebar needs its corner.
-		return ""
-	}
-	if isFormatStyle(base) {
-		return ""
-	}
-	// Drop any width/align the user set, or ours would be fighting theirs; the
-	// original comes back verbatim at undock, from the registry's saved value.
-	var keep []string
-	for _, f := range strings.Split(base, ",") {
-		f = strings.TrimSpace(f)
-		if f == "" {
-			continue
-		}
-		low := strings.ToLower(f)
-		if strings.HasPrefix(low, "width=") || strings.HasPrefix(low, "align=") ||
-			low == "noalign" || strings.HasPrefix(low, "fill=") {
-			// fill= is dropped for the same reason as the other two: ours is
-			// appended below, and leaving theirs in produced a style carrying
-			// the directive twice. It is not lost — promptFill reads it back
-			// out of the saved original and prefers it, so a user who chose a
-			// prompt fill keeps exactly that colour.
-			continue
-		}
-		keep = append(keep, f)
-	}
-	keep = append(keep, "align=right", fmt.Sprintf("width=%d", avail))
-	// And CLEAR that area, which confining it does not do on its own.
-	//
-	// status_prompt_redraw builds the prompt screen by fast-copying the real bar
-	// and then drawing the message inside [ax, ax+aw) — but format_draw only
-	// blanks the area when the style carries a `fill=` (format-draw.c, "Clear the
-	// available area", guarded on sy.fill != 8). A `bg=` does not do it.
-	//
-	// Unconfined this never showed: the area is then the whole bar and the
-	// message is drawn across all of it. Confined to the right of the sidebar,
-	// everything the message did not cover stayed on screen — so prefix-: left
-	// the old status text sitting under the prompt instead of replacing the bar
-	// the way tmux does everywhere else.
-	if fill != "" {
-		keep = append(keep, "fill="+fill)
-	}
-	return strings.Join(keep, ",")
-}
-
-// fillFor is the colour a prompt drawn in this style should clear its area to.
-//
-// The style's own `fill=` first, which is a direct statement about this exact
-// thing — and not a rare one: tmux's DEFAULT message-style is
-// `bg=yellow,fg=black,fill=yellow`, and that fill is why an unconfigured tmux
-// looks like it replaces the whole status bar on prefix-:. It is the fill doing
-// that, not the bg.
-//
-// Then the style's own background, then the status bar's. `bg=default` is the
-// common answer and names no colour, so the bar's background stands in: the
-// point is to erase what was underneath, and erasing to the bar's colour is
-// what an emptied status line looks like.
-// Only a value tmux will certainly parse as a colour is used. set-option
-// VALIDATES styles (options.c, "invalid style: %s") and tmux aborts a command
-// sequence at the first error — and these options ride in the same batch as the
-// dock itself. So a fill tmux rejects would not merely look wrong, it would
-// take the sidebar's own install down with it and the dock would not open.
-// Anything unrecognised yields no fill, which is exactly the old behaviour.
-func fillFor(style, statusBG string) string {
-	for _, c := range []string{styleField(style, "fill"), styleField(style, "bg"), statusBG} {
-		if isColour(c) {
-			return c
-		}
-	}
-	return ""
-}
-
-var colourNumRe = regexp.MustCompile(`^(#[0-9a-fA-F]{6}|colour[0-9]{1,3}|[0-9]{1,3})$`)
-
-// namedColours is colour_fromstring's word list, minus `default` and
-// `terminal`: both parse, but tmux spells "no fill" as default's own value, so
-// neither can clear anything.
-var namedColours = map[string]bool{
-	"black": true, "red": true, "green": true, "yellow": true,
-	"blue": true, "magenta": true, "cyan": true, "white": true,
-	"brightblack": true, "brightred": true, "brightgreen": true,
-	"brightyellow": true, "brightblue": true, "brightmagenta": true,
-	"brightcyan": true, "brightwhite": true,
-}
-
-func isColour(s string) bool {
-	if s == "" {
-		return false
-	}
-	return colourNumRe.MatchString(s) || namedColours[strings.ToLower(s)]
-}
-
-// cmdStyleFilled gives message-command-style the same fill as the confined
-// message-style, and nothing else.
-//
-// No width or align: status_prompt_area reads those off message-style alone, so
-// putting them here would be dead weight that still has to be saved, restored
-// and reasoned about. Only the fill matters, because only this option supplies
-// the cell the command prompt is drawn with.
-//
-// Returns "" when there is no fill to add — claiming an option in order to
-// write it back unchanged is pure risk.
-func cmdStyleFilled(base, fill string) string {
-	if fill == "" || isFormatStyle(base) {
-		return ""
-	}
-	var keep []string
-	for _, f := range strings.Split(base, ",") {
-		f = strings.TrimSpace(f)
-		if f == "" || strings.HasPrefix(strings.ToLower(f), "fill=") {
-			continue
-		}
-		keep = append(keep, f)
-	}
-	return strings.Join(append(keep, "fill="+fill), ",")
-}
-
-// isFormatStyle reports whether a style is a FORMAT rather than a plain list of
-// directives, in which case winch leaves it alone entirely.
-//
-// Every edit here works by splitting on commas, and a format's commas are not
-// separators: `#{?pane_in_mode,fg=red,fg=blue}` is one directive containing two
-// of them. Splitting it produces fragments that are not styles, and tmux only
-// validates a style when it does NOT contain `#{` (options.c) — so the mangled
-// value would be accepted, then fail to parse later, at draw time, where there
-// is nothing to report it.
-//
-// Declining costs those users the confinement — their prompt paints over the
-// sidebar, which is where everyone was before it existed — and that is much the
-// better failure. This is not exotic: themed configs, catppuccin included,
-// write conditional styles.
-func isFormatStyle(s string) bool { return strings.Contains(s, "#{") }
-
-// styleField pulls one `name=value` directive out of a style string. Empty when
-// it names none, or names `default` — which cannot colour anything, since tmux
-// spells "no fill" as that same value.
-func styleField(style, name string) string {
-	for _, f := range strings.Split(style, ",") {
-		f = strings.TrimSpace(f)
-		if !strings.HasPrefix(strings.ToLower(f), name+"=") {
-			continue
-		}
-		v := strings.TrimSpace(f[len(name)+1:])
-		if v == "" || strings.EqualFold(v, "default") {
-			return ""
-		}
-		return v
-	}
-	return ""
 }
 
 // ------------------------------------------------------------------
@@ -787,30 +603,6 @@ func (o *owner) statusRows(ctl *control, sid string) []string {
 	b := effectiveStatusRows(ctl, sid)
 	o.basis[k] = b
 	return b
-}
-
-// msgStyle reports a session's effective message-style — the value the
-// confinement is appended to. Cached against the message-style claim exactly as
-// statusRows is against status-format: read before winch writes, dropped the
-// moment the claim is released.
-func (o *owner) msgStyle(ctl *control, sid string) string {
-	return o.styleBasis(ctl, sid, "message-style")
-}
-
-// styleBasis reads a session's effective value for one style option and caches
-// it against that option's claim, exactly as msgStyle always did — generalised
-// because the command prompt needs TWO of them (see cmdStyleFilled).
-func (o *owner) styleBasis(ctl *control, sid, name string) string {
-	k := optKey{scopeSession, sid, name}
-	if b, ok := o.basis[k]; ok {
-		if len(b) == 1 {
-			return b[0]
-		}
-		return ""
-	}
-	v := effPair(ctl, sid, name)
-	o.basis[k] = []string{v}
-	return v
 }
 
 // effectiveStatusRows reads how many rows tmux renders for a session and the

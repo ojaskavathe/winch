@@ -1,104 +1,104 @@
 package rigs
 
 import (
-	"strconv"
 	"strings"
 	"testing"
 )
 
-// TestPromptStaysPastTheSidebar: prefix-: opens tmux's command prompt, and the
-// prompt used to paint from column 0 — straight over the sidebar's strip and
-// the seam.
+// TestWinchLeavesThePromptAlone: winch does not touch message-style or
+// message-command-style. The command prompt is the user's, entirely.
 //
-// It does not have to. status.c's status_prompt_redraw copies the real status
-// screen first (screen_write_fast_copy) and only then draws the message, inside
-// an area whose x and width come from status_prompt_area() — which reads them
-// off message-style's `width=` and `align=`. So confining the area to the right
-// of the sidebar leaves everything left of it intact underneath.
+// It used to confine the prompt to the right of the sidebar, so prefix-: would
+// stop painting over the strip and the seam. That worked and cost too much.
+// `align` does double duty — status_prompt_area reads it to place the AREA,
+// while message-format embeds the same style so format_draw reads it again to
+// place the TEXT — so forcing align=right to push the area past the sidebar
+// also shoved the user's prompt to the far edge. Under that: the paint and the
+// area come from two DIFFERENT options; editing either means splitting on
+// commas that a conditional style does not use as separators; and set-option
+// validates styles, so a mangled one aborts the dock batch and the sidebar
+// never opens.
 //
-// Asserted at the option level rather than on pixels: what winch controls is
-// the area, and tmux's honouring of it is its own (source-verified) business.
-// The screen-level claim that the pad survives is below.
-func TestPromptStaysPastTheSidebar(t *testing.T) {
+// The prompt now paints over the sidebar while it is open, which is what tmux
+// does to every other pane's status line. A few seconds of overdraw against a
+// whole class of bug.
+func TestWinchLeavesThePromptAlone(t *testing.T) {
 	r := New(t)
-
-	r.T("set-option", "-g", "message-style", "fg=#94e2d5,bg=default,align=centre")
+	const ms = "fg=#94e2d5,bg=#181825,fill=#181825"
+	const cs = "fg=black,bg=#f9e2af,fill=#f9e2af"
+	r.T("set-option", "-g", "message-style", ms)
+	r.T("set-option", "-g", "message-command-style", cs)
 
 	r.D("toggle", r.CL)
 	r.await(5000, "docked", func() bool { return r.Side().Pane != "" })
-	sleep(700)
+	sleep(800)
 	sess := r.ClientSess()
-	w := r.Side().Width
 
-	ms := r.ShowOpt("-t", sess, "-v", "message-style")
-	t.Logf("  message-style while docked: %q", ms)
-	r.Chk("the prompt area is right-aligned", strings.Contains(ms, "align=right"))
-	r.Chk("the user's own colours survive", strings.Contains(ms, "#94e2d5"))
-	r.Chk("their align=centre was dropped, not left to fight ours",
-		!strings.Contains(ms, "align=centre"))
+	// Nothing at session scope: `show-options -v` does not inherit, so empty
+	// here means winch wrote nothing of its own.
+	r.Chk("no session-scope message-style", r.ShowOpt("-t", sess, "-v", "message-style") == "")
+	r.Chk("no session-scope message-command-style",
+		r.ShowOpt("-t", sess, "-v", "message-command-style") == "")
+	r.Chk("the global is untouched", r.ShowOpt("-g", "-v", "message-style") == ms)
+	r.Chk("and so is the command style", r.ShowOpt("-g", "-v", "message-command-style") == cs)
 
-	// The area must start in the first column past the border: x = sx - width,
-	// so width = sx - sidebar - 1.
-	wantW := r.prof.cols - w - 1
-	r.Chk("width leaves exactly the sidebar and its border",
-		strings.Contains(ms, "width="+strconv.Itoa(wantW)))
-	if !strings.Contains(ms, "width="+strconv.Itoa(wantW)) {
-		t.Logf("  want width=%d (cols %d - sidebar %d - 1), got %q", wantW, r.prof.cols, w, ms)
-	}
+	// No claim marks either — a mark with no install is still a mark, and the
+	// sweep would act on it.
+	r.Chk("no claim mark on message-style",
+		r.ShowOpt("-t", sess, "-qv", "@winch_saved_message_style") == "")
+	r.Chk("no claim mark on message-command-style",
+		r.ShowOpt("-t", sess, "-qv", "@winch_saved_message_command_style") == "")
 
-	// And it is the user's again on undock — a themed message-style is theirs,
-	// and a stranded width= would confine their prompt forever.
+	// A real prompt opens and takes input over the docked sidebar.
+	r.Type("\x02:")
+	sleep(600)
+	r.Type("display-message winched")
+	r.Chk("the prompt works while docked", r.WaitUntil(4000, func() bool {
+		s := statusScreenUntil(r, func(*screen) bool { return false })
+		return strings.Contains(string(s.grid[r.prof.rows-1]), "display-message winched")
+	}))
+	r.Type("\x1b")
+	sleep(400)
+
 	r.Undock()
 	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
-	after := r.ShowOpt("-t", sess, "-v", "message-style")
-	r.Chk("message-style restored on undock",
-		!strings.Contains(after, "width=") && !strings.Contains(after, "align=right"))
-	if strings.Contains(after, "width=") {
-		t.Logf("  stranded on %s: %q", sess, after)
-	}
+	r.Chk("still untouched after undock", r.ShowOpt("-g", "-v", "message-style") == ms)
 }
 
-// There is deliberately no screen-level test of an OPEN prompt, and the reason
-// is worth writing down so nobody spends an afternoon rediscovering it: the
-// prompt reads keys from the CLIENT, not from a pane, so send-keys cannot reach
-// it, and invoking `tmux command-prompt` from the CLI blocks that process until
-// the prompt is answered — which never happens, so the rig hangs rather than
-// fails. Tried; it hung.
+// TestStrandedPromptClaimIsSwept: a daemon from BEFORE the confinement was
+// dropped may have left message-style claimed on a live session — width=,
+// align=right, fill= and a @winch_saved_ mark. Winch no longer wants the
+// option, but it still has to give that one back: the names stay on
+// ownedOptions precisely so the startup sweep finds them.
 //
-// The claim therefore rests on the option assertions above plus status.c, which
-// is unusually explicit: status_prompt_redraw copies the whole status screen
-// with screen_write_fast_copy before format_draw touches only [ax, ax+aw), and
-// ax/aw come from status_prompt_area() reading message-style. Nothing else in
-// that function writes outside the area.
-
-// TestPromptConfinementFollowsTheWidth: the area is a literal column count —
-// status_prompt_area calls options_string_to_style with a NULL format tree, so
-// #{client_width} would never expand — which means every input to it has to be
-// re-derived whenever it moves. Dragging the sidebar is the cheapest of those
-// to provoke.
-func TestPromptConfinementFollowsTheWidth(t *testing.T) {
+// Without this the upgrade strands the user's prompt confined forever, with no
+// way back short of setting the option by hand — and nothing to say why.
+func TestStrandedPromptClaimIsSwept(t *testing.T) {
 	r := New(t)
-
-	r.D("toggle", r.CL)
-	r.await(5000, "docked", func() bool { return r.Side().Pane != "" })
-	sleep(700)
 	sess := r.ClientSess()
+	const original = "fg=#94e2d5,bg=default,align=centre"
+	r.T("set-option", "-g", "message-style", original)
 
-	before := r.ShowOpt("-t", sess, "-v", "message-style")
-	w0 := r.Side().Width
+	// Forge exactly what the old daemon left behind: the confined value on the
+	// session, and a mark holding the session's saved value. "[]" is the mark
+	// for "unset at this scope", which is what a session inheriting the global
+	// would have had.
+	r.T("set-option", "-t", sess, "message-style",
+		"fg=#94e2d5,bg=default,align=right,width=173,fill=#181825")
+	r.T("set-option", "-t", sess, "@winch_saved_message_style", "[]")
+	r.Chk("the claim is in place", r.ShowOpt("-t", sess, "-v", "message-style") != "")
 
-	// Widen it the way the user does: drag the pane border. checkDock reads an
-	// unchanged WINDOW width as "the user chose this" and adopts it.
-	r.T("resize-pane", "-t", r.Side().Pane, "-x", strconv.Itoa(w0+10))
-	r.await(5000, "sidebar widened", func() bool { return r.Side().Width == w0+10 })
-	sleep(500)
+	// The sweep runs at attach.
+	r.KillDaemon()
+	r.D("ls")
+	r.await(6000, "swept", func() bool {
+		return r.ShowOpt("-t", sess, "-v", "message-style") == ""
+	})
 
-	after := r.ShowOpt("-t", sess, "-v", "message-style")
-	t.Logf("  %d cols: %q\n  %d cols: %q", w0, before, w0+10, after)
-	r.Chk("the confinement moved with the sidebar", before != after)
-	r.Chk("and still matches the new width",
-		strings.Contains(after, "width="+strconv.Itoa(r.prof.cols-(w0+10)-1)))
-
-	r.Undock()
-	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
+	r.Chk("the session-scope value is gone",
+		r.ShowOpt("-t", sess, "-v", "message-style") == "")
+	r.Chk("the mark went with it",
+		r.ShowOpt("-t", sess, "-qv", "@winch_saved_message_style") == "")
+	r.Chk("so the user's global is what applies again",
+		r.ShowOpt("-g", "-v", "message-style") == original)
 }

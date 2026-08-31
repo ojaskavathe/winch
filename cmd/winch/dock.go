@@ -444,17 +444,12 @@ func (d *daemon) intentFor(ctl *control, sess, win string, held []string, scrubW
 	if sess == "" {
 		return optIntent{}
 	}
-	ms := d.opts.msgStyle(ctl, sess)
 	in := optIntent{
 		sess:      sess,
 		win:       win,
 		held:      held,
 		width:     d.width(),
 		rows:      d.opts.statusRows(ctl, sess),
-		msgStyle:  ms,
-		cmdStyle:  d.opts.styleBasis(ctl, sess, "message-command-style"),
-		statusBG:  statusBG(ctl),
-		clientW:   clientW,
 		scrubbing: scrubbing,
 	}
 	if scrubWin != "" {
