@@ -261,23 +261,84 @@ func TestBlockedReasonLabel(t *testing.T) {
 	}
 }
 
+// A blocked pane's TITLE is the task it was doing before it stopped, which
+// says nothing about why it stopped and actively misleads. The matched rule's
+// reason takes the name row instead. herdr would show the stale title here;
+// this is a winch departure and the reason it is worth keeping is that the
+// title is wrong, not merely less useful.
 func TestBlockedRowShowsReason(t *testing.T) {
+	rows := agentCardFixture(t, pane{
+		ID: "%1", WindowID: "@1", SessionID: "$1", Title: "✳ Old task",
+		Agent: "claude", AgentState: "blocked", AgentReason: "permission prompt",
+	})
+	if got := rows[1].label; !strings.Contains(got, "permission prompt") {
+		t.Errorf("name row = %q, want the blocked reason", got)
+	}
+	for _, r := range rows {
+		if strings.Contains(r.label, "Old task") {
+			t.Errorf("the stale pre-prompt title is still on the card: %q", r.label)
+		}
+	}
+}
+
+// The card is herdr's claude layout: workspace+tab, then the agent's own
+// conversation name, then the agent kind. The name row is the whole point —
+// it is the only field that separates two agents in one window.
+func TestAgentCardIsNameLed(t *testing.T) {
+	rows := agentCardFixture(t, pane{
+		ID: "%1", WindowID: "@1", SessionID: "$1", Title: "⠧ Build herdr-like tool for tmux",
+		Agent: "claude", AgentState: "working",
+	})
+	for _, c := range []struct {
+		row  int
+		want string
+	}{
+		{0, "main 2"},                         // workspace + tab (window has no name -> index)
+		{1, "Build herdr-like tool for tmux"}, // terminal_title_stripped
+		{2, "claude"},                         // agent
+	} {
+		if got := strings.TrimSpace(rows[c.row].label); got != c.want {
+			t.Errorf("row %d = %q, want %q", c.row, got, c.want)
+		}
+	}
+	// Only the first row takes the selection; the rest ride with it.
+	if rows[0].cont || !rows[1].cont || !rows[2].cont {
+		t.Errorf("wrong continuation flags: %v %v %v", rows[0].cont, rows[1].cont, rows[2].cont)
+	}
+	// row_gap 0, as herdr settled on: no blank line inside the section.
+	for _, r := range rows {
+		if r.gap {
+			t.Errorf("agent card still emits a gap row")
+		}
+	}
+}
+
+// agentCardFixture builds a one-agent world and returns just that agent's
+// rows, so the tests above read as claims about the card.
+func agentCardFixture(t *testing.T, p pane) []row {
+	t.Helper()
+	// Pin the width: the card's SHAPE is what these tests are about, and at
+	// the 26-column default a realistic conversation name token-drops (see
+	// TestFitTokens, which is where that belongs).
+	save := listW
+	t.Cleanup(func() { listW = save })
+	listW = 55
+
 	st := &store{
 		sessions: map[string]session{"$1": {ID: "$1", Name: "main"}},
 		windows:  map[string]window{"@1": {ID: "@1", SessionID: "$1", Index: 2, Active: true}},
-		panes: map[string]pane{"%1": {
-			ID: "%1", WindowID: "@1", SessionID: "$1", Title: "✳ Old task",
-			Agent: "claude", AgentState: "blocked", AgentReason: "permission prompt",
-		}},
+		panes:    map[string]pane{p.ID: p},
 	}
-	rows := st.rows(nil)
-	last := rows[len(rows)-1]
-	// At sidebar width the reason tail gets token-dropped (the billboard
-	// carries the detail); the state word must survive, the stale title
-	// must not.
-	if !last.arow || !strings.Contains(last.label, "blocked · claude") || strings.Contains(last.label, "Old task") {
-		t.Fatalf("blocked row label = %q", last.label)
+	var out []row
+	for _, r := range st.rows(nil) {
+		if r.arow {
+			out = append(out, r)
+		}
 	}
+	if len(out) != 3 {
+		t.Fatalf("want a 3-row agent card, got %d: %+v", len(out), out)
+	}
+	return out
 }
 
 // The session card's second row: git branch + ahead/behind; absent when

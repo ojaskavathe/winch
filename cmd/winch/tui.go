@@ -114,15 +114,18 @@ type row struct {
 	arow    bool   // agents-section row (rendered in the pinned bottom region)
 	gap     bool   // blank spacer between session groups; never selectable
 	head    bool   // section heading (" sessions"); never selectable
-	cont    bool   // continuation line of a two-row entry (herdr's model)
+	cont    bool   // continuation line of a multi-row entry (herdr's model)
+	create  bool   // the `n` field: a session that does not exist yet
 	agent   string // worst agent state (window rows) / the state (agent rows)
 	styled  string // optional pre-styled label (only fg/dim codes, self-closing);
 	// used when it fits — truncation falls back to the plain label
 }
 
 // inert rows are chrome or continuations: selection passes over them
-// (a continuation highlights with its owner instead).
-func (r row) inert() bool { return r.gap || r.head || r.cont }
+// (a continuation highlights with its owner instead). The create field is
+// inert too — it owns the keyboard while it exists, so a selection on it
+// would mean nothing and a selection moving THROUGH it would be worse.
+func (r row) inert() bool { return r.gap || r.head || r.cont || r.create }
 
 // palette: the sidebar's theme as raw SGR fragments. The look lives on a
 // brightness ladder (text > subtext > muted, plus bold/dim) — that ladder
@@ -176,9 +179,31 @@ var listW = listWidth
 // fill — herdr's active_row_bg, distinct from the selection cursor.
 var curSess string
 
-// renSess/renBuf: inline rename state (`r` on a session row). While set,
-// paintList renders the row as an edit line: buffer + accent █ cursor.
-var renSess, renBuf string
+// The inline text field. `r` renames the selected session, `n` names a new
+// one; while active it owns the keyboard until enter or esc, and paintList
+// renders its line as buffer + accent █ cursor.
+//
+// renSess is the rename TARGET, or for a create the session whose working
+// directory the new one inherits — you pressed `n` on a row, and "like that
+// one, but new" is what that means.
+type editKind int
+
+const (
+	editNone editKind = iota
+	editRename
+	editCreate
+)
+
+var (
+	editWhat editKind
+	renSess  string
+	renBuf   string
+	// editReplace is herdr's name_input_replace_on_type: the field opens
+	// prefilled with a suggestion and SELECTED, so the first character
+	// typed replaces it. Accepting a suggestion and clearing it are both
+	// one keystroke; neither is the other's punishment.
+	editReplace bool
+)
 
 func setTheme(name string) {
 	if p, ok := themes[name]; ok {
@@ -204,6 +229,13 @@ func (st *store) winsOf(sid string) []window {
 // choice), then the pinned agents section. winPick may be nil.
 func (st *store) rows(winPick map[string]string) []row {
 	out := []row{{label: " sessions", head: true}}
+	// A session being named does not exist yet, so it gets a line of its
+	// own directly under the heading. Anywhere else would move as you type
+	// — the list is sorted by name — and a field that jumps mid-word is
+	// unusable.
+	if editWhat == editCreate {
+		out = append(out, row{create: true})
+	}
 	sessions := make([]session, 0, len(st.sessions))
 	for _, s := range st.sessions {
 		sessions = append(sessions, s)
@@ -258,12 +290,28 @@ func (st *store) rows(winPick map[string]string) []row {
 			})
 		}
 	}
-	// The agents section: one row per agent pane, attention-sorted
-	// (blocked > done > working > idle), enter jumps to the pane. Labels
-	// carry the agent's own task summary — its title minus the state
-	// prefix the glyph already conveys. These rows render in a PINNED
-	// bottom region under a labeled rule (paintList), so a long session
-	// tree never scrolls the agents out of sight.
+	// The agents section: one CARD per agent pane, attention-sorted
+	// (blocked > done > working > idle), enter jumps to the pane. These
+	// rows render in a PINNED bottom region under a labeled rule
+	// (paintList), so a long session tree never scrolls the agents out of
+	// sight.
+	//
+	// Three rows, herdr's documented layout for claude:
+	//
+	//	[ui.sidebar.agents.rows_by_agent]
+	//	claude = [["state_icon", "workspace", "tab"],
+	//	          ["terminal_title_stripped"],
+	//	          ["agent"]]
+	//
+	// The middle row is the point. Agents publish their conversation name
+	// in the OSC title, so it is a name winch is HANDED rather than one it
+	// has to invent — and it is the only field that separates two agents in
+	// the same window. It used to ride as a dim tail on the state line and
+	// was dropped whenever the whole line overflowed, which at any real
+	// title length was always: five claude panes rendered as five copies of
+	// their session name, and the switcher looked like it picked at random.
+	//
+	// No state_text, matching herdr: the dot carries the state.
 	if len(agents) > 0 {
 		sort.Slice(agents, func(i, j int) bool {
 			ri, rj := rank[agents[i].AgentState], rank[agents[j].AgentState]
@@ -272,50 +320,148 @@ func (st *store) rows(winPick map[string]string) []row {
 			}
 			return agents[i].ID < agents[j].ID
 		})
+		avail := listW - 3
 		for _, p := range agents {
+			// Row one: state_icon (painted at col 2 by paintList from
+			// row.agent) + workspace + tab.
 			sess := st.sessions[p.SessionID].Name
-			// A blocked pane's title is the stale pre-prompt task; the
-			// reason ("permission prompt") is what the row should say.
+			head, headStyled := "   "+sess, ""
+			if tab := st.tabLabel(p.WindowID); tab != "" && len([]rune(sess+" "+tab)) <= avail {
+				head = "   " + sess + " " + tab
+				headStyled = "   " + sess + pal.muted + " " + tab + "\033[39m"
+			}
+			out = append(out, row{
+				label: head, styled: headStyled,
+				window: p.WindowID, pane: p.ID, agent: p.AgentState, arow: true,
+			})
+
+			// Row two: terminal_title_stripped — the agent's own name for
+			// this conversation. A blocked pane's title is the STALE
+			// pre-prompt task, so the reason ("permission prompt") speaks
+			// instead; that is a winch addition and worth keeping, since
+			// the stale title actively misleads about why it stopped.
+			//
+			// Truncated, never dropped: this row is the card's identity
+			// now, so it has to degrade rather than vanish. Whole tokens
+			// go first (herdr's solver) — mid-word cuts read as breakage —
+			// and the billboard still holds the full text.
 			text := agentTaskTitle(p.Title)
 			if p.AgentState == "blocked" && p.AgentReason != "" {
 				text = p.AgentReason
 			}
-			// herdr's two-row agent entry: state dot + the bold project
-			// (session) name — nothing else — then `state · agent` below
-			// with the state word in its own color, and our task/reason
-			// riding as a dim tail. A blank row breathes between entries.
-			// Fit like herdr's token solver: drop the rightmost token
-			// until the row fits — mid-word truncation reads broken, and
-			// the billboard is where the full task lives anyway.
-			avail := listW - 3
-			tail := p.Agent
-			if text != "" && len([]rune(p.AgentState+" · "+p.Agent+" · "+text)) <= avail {
-				tail += " · " + text
+			if text != "" {
+				name := fitTokens(text, avail)
+				out = append(out, row{
+					label: "   " + name, styled: "   " + pal.subtext + name + "\033[39m",
+					window: p.WindowID, pane: p.ID, arow: true, cont: true,
+				})
 			}
-			who, whoStyled := "   "+tail, ""
-			if p.AgentState != "" {
-				if len([]rune(p.AgentState+" · "+tail)) <= avail {
-					who = "   " + p.AgentState + " · " + tail
-					if _, c := agentGlyph(p.AgentState); c != "" {
-						// herdr's weighting: the icon stays bright, the
-						// text line sits a step back (dim), state word in
-						// its hue, tail in chrome gray.
-						whoStyled = "   \033[2m" + c + p.AgentState + pal.muted + " · " + tail + "\033[22;39m"
-					}
-				}
-			}
-			out = append(out, row{gap: true, arow: true})
+
+			// Row three: agent. Dim — it is the kind, not the identity, and
+			// with one agent kind in play it is the same word every time.
 			out = append(out, row{
-				label:  "   " + sess,
-				window: p.WindowID, pane: p.ID, agent: p.AgentState, arow: true,
-			})
-			out = append(out, row{
-				label: who, styled: whoStyled,
+				label: "   " + p.Agent, styled: "   \033[2m" + pal.muted + p.Agent + "\033[22;39m",
 				window: p.WindowID, pane: p.ID, arow: true, cont: true,
 			})
 		}
 	}
 	return out
+}
+
+// sessPath is a session's working directory: the path of the active pane in
+// its active window, which is where a shell opened there would land.
+func (st *store) sessPath(sid string) string {
+	active := ""
+	for _, w := range st.windows {
+		if w.SessionID == sid && w.Active {
+			active = w.ID
+		}
+	}
+	for _, p := range st.panes {
+		if p.WindowID == active && p.Active && p.Path != "" {
+			return p.Path
+		}
+	}
+	for _, p := range st.panes {
+		if p.SessionID == sid && p.Path != "" {
+			return p.Path
+		}
+	}
+	return ""
+}
+
+// baseName is herdr's derive_label_from_cwd, minus the git part: the last
+// path element, with ~ for home. winch has no repo-root lookup in the TUI,
+// and a directory basename is what you would have typed anyway.
+func baseName(path string) string {
+	path = strings.TrimRight(path, "/")
+	if path == "" {
+		return ""
+	}
+	if home := os.Getenv("HOME"); home != "" && path == strings.TrimRight(home, "/") {
+		return "~"
+	}
+	if i := strings.LastIndexByte(path, '/'); i >= 0 {
+		return path[i+1:]
+	}
+	return path
+}
+
+// tabLabel is herdr's `tab` token, ported to tmux honestly.
+//
+// A herdr tab is either something you named or a NUMBER, and it dims the
+// auto-named ones. tmux windows auto-rename to the running command, which is
+// the same "I made this up" state — except the made-up value is noise rather
+// than a number: every agent window here is called `.claude-wrapped`, which
+// says nothing and duplicates row three. So a window still carrying a
+// command name shows its index, the way herdr shows a number, and a name a
+// person chose shows verbatim.
+//
+// Compared against every pane in the window, not just the agent's: tmux names
+// a window after its ACTIVE pane, which may be the editor beside the agent.
+func (st *store) tabLabel(wid string) string {
+	w, ok := st.windows[wid]
+	if !ok {
+		return ""
+	}
+	if w.Name == "" {
+		return strconv.Itoa(w.Index)
+	}
+	for _, p := range st.panes {
+		if p.WindowID == wid && baseCmd(w.Name) == baseCmd(p.Command) {
+			return strconv.Itoa(w.Index)
+		}
+	}
+	return w.Name
+}
+
+// baseCmd strips what nix and tmux add around a command name, so the
+// `.claude-wrapped` a window is named matches the `.claude-wrapped` its pane
+// is running. Wrapper scripts are the norm in this setup, not an edge case.
+func baseCmd(s string) string {
+	return strings.TrimSuffix(strings.TrimPrefix(s, "."), "-wrapped")
+}
+
+// fitTokens shortens s to at most max columns by dropping whole trailing
+// words, marking the elision. Mid-word truncation reads as breakage rather
+// than as brevity; a dropped word reads as a summary. Falls back to a rune
+// cut only when the first word alone will not fit.
+func fitTokens(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if len([]rune(s)) <= max {
+		return s
+	}
+	words := strings.Fields(s)
+	for n := len(words) - 1; n > 0; n-- {
+		cut := strings.Join(words[:n], " ") + "…"
+		if len([]rune(cut)) <= max {
+			return cut
+		}
+	}
+	r := []rune(s)
+	return string(r[:max-1]) + "…"
 }
 
 // agentTaskTitle strips the state ornament (spinner char, ✳) off an agent's
@@ -563,6 +709,31 @@ func cmdTui(tmuxSock, winchSock string) {
 		paintedWin, paintedGen, paintedPanes = "", -1, nil
 		paintFrameFor(target())
 	}
+	// rebuild recomputes the row list and re-finds the selection by identity.
+	// Needed when the list changes SHAPE rather than content — the create
+	// field appearing or going — because a row inserted near the top shifts
+	// every index after it, and `sel` is an index. relayout alone repaints
+	// the rows it already has, which is why a rename works without this and
+	// a create does not.
+	rebuild := func() {
+		prev := row{}
+		if sel >= 0 && sel < len(rows) {
+			prev = rows[sel]
+		}
+		rows = st.rows(winPick)
+		for i, r := range rows {
+			switch {
+			case prev.session && r.session && r.sess == prev.sess:
+			case prev.arow && r.arow && !r.cont && prev.pane != "" && r.pane == prev.pane:
+			default:
+				continue
+			}
+			sel = i
+			break
+		}
+		clampSel()
+	}
+
 	// shrinkExpected: a commit/close was sent from wide mode, so the pane is
 	// about to shrink to 40 cols. tmux REWRAPS the grid on width change —
 	// the canvas mashes into a wall of wrapped text in the 40-col strip (the
@@ -995,26 +1166,45 @@ func cmdTui(tmuxSock, winchSock string) {
 					}
 				case b == 0x1b:
 					esc = 1
-					if renSess != "" {
-						renSess, renBuf = "", "" // esc cancels the rename
+					if editWhat != editNone {
+						creating := editWhat == editCreate
+						editWhat, renSess, renBuf = editNone, "", "" // esc cancels
+						if creating {
+							rebuild()
+						}
 						relayout = true
 					}
-				case renSess != "":
-					// Inline rename owns the keyboard until enter/esc.
+				case editWhat != editNone:
+					// The inline field owns the keyboard until enter/esc.
 					switch {
 					case b == '\r':
 						name := strings.TrimSpace(renBuf)
-						if name != "" && name != st.sessions[renSess].Name {
+						switch {
+						case editWhat == editCreate && name != "":
+							send(cmdMsg{Cmd: "create", Sess: renSess, Name: name})
+						case editWhat == editRename && name != "" && name != st.sessions[renSess].Name:
 							send(cmdMsg{Cmd: "rename", Sess: renSess, Name: name})
 						}
-						renSess, renBuf = "", ""
+						creating := editWhat == editCreate
+						editWhat, renSess, renBuf = editNone, "", ""
+						if creating {
+							rebuild() // the field row goes away
+						}
 					case b == 0x7f, b == 0x08: // backspace
+						// Backspace EDITS the suggestion rather than
+						// replacing it: you reached for the tail of the
+						// prefill, so you want to keep the head.
+						editReplace = false
 						if r := []rune(renBuf); len(r) > 0 {
 							renBuf = string(r[:len(r)-1])
 						}
 					case b == 0x15: // ctrl-u
+						editReplace = false
 						renBuf = ""
 					case b >= 0x20 && b != 0x7f:
+						if editReplace {
+							renBuf, editReplace = "", false
+						}
 						renBuf += string([]byte{b}) // raw byte: utf-8 rides through
 					}
 					relayout = true
@@ -1036,8 +1226,20 @@ func cmdTui(tmuxSock, winchSock string) {
 				case b == 'r':
 					// Rename the selected session inline, prefilled.
 					if sel >= 0 && sel < len(rows) && rows[sel].session {
+						editWhat, editReplace = editRename, false
 						renSess = rows[sel].sess
 						renBuf = st.sessions[renSess].Name
+						relayout = true
+					}
+				case b == 'n':
+					// New session, named. Prefilled from the selected
+					// session's working directory and selected, so enter
+					// alone takes the suggestion — herdr's create flow.
+					if sel >= 0 && sel < len(rows) && rows[sel].session {
+						editWhat, editReplace = editCreate, true
+						renSess = rows[sel].sess
+						renBuf = baseName(st.sessPath(renSess))
+						rebuild() // the field is a row that did not exist
 						relayout = true
 					}
 				case b == '\r': // enter
@@ -1541,8 +1743,9 @@ func paintList(rows []row, sel int) {
 			}
 			pad := strings.Repeat(" ", lw-len(label))
 			switch {
-			case rows[i].session && rows[i].sess != "" && rows[i].sess == renSess:
-				// Inline rename: the row IS the input field.
+			case rows[i].create,
+				editWhat == editRename && rows[i].session && rows[i].sess != "" && rows[i].sess == renSess:
+				// The row IS the input field.
 				edit := []rune("   " + renBuf)
 				if len(edit) > lw-1 {
 					edit = edit[len(edit)-(lw-1):]

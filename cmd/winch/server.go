@@ -21,8 +21,8 @@ type hub struct {
 	selWin   string
 	selPane  string
 	selQuiet bool
-	width   int
-	split   float64
+	width    int
+	split    float64
 }
 
 type subscriber struct {

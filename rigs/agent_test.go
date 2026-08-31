@@ -66,7 +66,7 @@ func TestAgent(t *testing.T) {
 	}))
 	r.Chk("agents section listed", r.WaitUntil(200, func() bool {
 		cap := r.Capture(s.Pane)
-		return strings.Contains(cap, "agents") && strings.Contains(cap, "working · claude")
+		return strings.Contains(cap, "agents") && strings.Contains(cap, "Cooking again")
 	}))
 	r.Chk("sessions heading on top", strings.Contains(r.Capture(s.Pane), "sessions"))
 
@@ -106,8 +106,22 @@ func TestAgent(t *testing.T) {
 		return blockedDot.MatchString(raw)
 	}))
 	r.Chk("blocked state on agent row", r.WaitUntil(300, func() bool {
-		return strings.Contains(r.Capture(s.Pane), "blocked · claude")
+		return strings.Contains(r.Capture(s.Pane), "permission prompt")
 	}))
+
+	// The reason this layout changed. ap and bp are in the SAME window of
+	// the same session, so every field the card used to lead with —
+	// workspace, tab, state, agent kind — is identical for both. Only the
+	// name row tells them apart, and it used to be the first thing dropped
+	// when the line overflowed. Two agents, two distinguishable cards.
+	r.Chk("two agents in one window are distinguishable", r.WaitUntil(500, func() bool {
+		cap := r.Capture(s.Pane)
+		return strings.Contains(cap, "Cooking again") && strings.Contains(cap, "permission prompt")
+	}))
+	// And the stale pre-prompt title must not be what identifies the
+	// blocked one: it describes what it WAS doing, not why it stopped.
+	r.Chk("the blocked card does not lead with a stale title",
+		!strings.Contains(r.Capture(s.Pane), "Cooking up a thing"))
 	r.Chk("statusline counts blocked", strings.Contains(r.ShowOpt("-gqv", "@winch_agents"), "!"))
 
 	// Border continuity: in browse mode the list paints its own │ column;
@@ -164,7 +178,7 @@ func TestAgent(t *testing.T) {
 	r.D("agents", r.CL)
 	r.await(5000, "the switcher docked", func() bool { return r.Side().Pane != "" })
 	r.Chk("from outside an agent, the switcher pins the blocked one", r.WaitUntil(1500, func() bool {
-		return filled("blocked · claude")
+		return filled("permission prompt")
 	}))
 
 	// ...and pinning it must not TELEPORT. The agent is in gamma, the client
@@ -201,7 +215,7 @@ func TestAgent(t *testing.T) {
 	r.D("agents", r.CL)
 	r.await(5000, "the switcher docked", func() bool { return r.Side().Pane != "" })
 	r.Chk("opening from inside an agent pins THAT agent, not the blocked one",
-		r.WaitUntil(1500, func() bool { return filled("working · claude") }))
+		r.WaitUntil(1500, func() bool { return filled("Cooking again") }))
 
 	// And it does NOT zoom on the way in: the pinned agent is in the window
 	// the sidebar just docked into, so there is nothing to scrub to. Opening

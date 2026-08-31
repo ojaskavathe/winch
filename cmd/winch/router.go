@@ -123,6 +123,10 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 			d.h.setSplit(f)
 			saveOpt(ctl, optSplit, strconv.FormatFloat(f, 'f', 3, 64))
 		}
+	case "create":
+		// `n` from the sidebar: a new session, starting in the working
+		// directory of the row it was pressed on.
+		err = d.createSession(ctl, env.msg.Sess, env.msg.Name)
 	case "rename":
 		// Inline rename from the sidebar (`r` on a session row). The
 		// %session-renamed notification re-lists and the new name flows
@@ -284,6 +288,40 @@ func (d *daemon) browseOpen(ctl *control, client string) error {
 		return nil
 	}
 	return d.scrubStart(ctl, d.dock.win)
+}
+
+// createSession makes a session and switches to it. from is the session the
+// new one inherits a working directory from — you pressed `n` on that row,
+// and "like this one, but new" is what that means.
+//
+// The switch is an ordinary unrouted one: the daemon's follow already moves
+// the sidebar with it, so there is nothing session-creation-specific about
+// arriving. A duplicate name is the one failure a person will actually hit,
+// so it is reported where they are looking rather than only in the log.
+func (d *daemon) createSession(ctl *control, from, name string) error {
+	if name == "" {
+		return errors.New("create needs a name")
+	}
+	cmd := "new-session -d -s " + q(name)
+	if from != "" {
+		if lines, err := ctl.run("display-message -p -t " + q(from) + " '#{pane_current_path}'"); err == nil && len(lines) == 1 {
+			if cwd := strings.TrimSpace(lines[0]); cwd != "" {
+				cmd += " -c " + q(cwd)
+			}
+		}
+	}
+	if _, err := ctl.run(cmd); err != nil {
+		if d.dock != nil {
+			_, _ = ctl.run("display-message -t " + q(d.dock.client) + " " +
+				q("winch: cannot create "+name+" (name taken?)"))
+		}
+		return err
+	}
+	if d.dock == nil {
+		return nil
+	}
+	_, err := ctl.run("switch-client -c " + q(d.dock.client) + " -t " + q(name))
+	return err
 }
 
 // paneNum is the numeric part of a tmux pane id ("%1572" -> 1572), for
