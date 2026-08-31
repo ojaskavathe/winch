@@ -166,3 +166,32 @@ func TestCreateRowIsInertAndUnderTheHeading(t *testing.T) {
 		t.Error("the create field is selectable")
 	}
 }
+
+// A spinner frame must not reach the world.
+//
+// Claude re-emits its whole OSC title several times a second while working —
+// measured live, ⠐ to ⠂ inside two seconds. diffWorlds compares whole pane
+// structs, so an ornament left in Title made every frame a pane op: JSON down
+// the socket, a row rebuild, a full paint built and then discarded by the
+// byte-compare at the end of paintList. Invisible, and never free.
+func TestSpinnerFrameIsNotAWorldChange(t *testing.T) {
+	frame := func(orn string) world {
+		return world{Panes: []pane{{
+			ID: "%1", WindowID: "@1", SessionID: "$1",
+			Command: ".claude-wrapped", Title: agentTaskTitle(orn + " Build herdr-like tool for tmux"),
+		}}}
+	}
+	for _, orn := range []string{"⠂", "⠐", "⠋", "◐", "✳"} {
+		if ops := diffWorlds(frame("⠐"), frame(orn)); len(ops) != 0 {
+			t.Errorf("ornament %q produced %d ops, want none: %+v", orn, len(ops), ops)
+		}
+	}
+	// The name itself changing IS a world change — that is the whole point
+	// of the row, so it must still get through.
+	if ops := diffWorlds(frame("⠐"), world{Panes: []pane{{
+		ID: "%1", WindowID: "@1", SessionID: "$1",
+		Command: ".claude-wrapped", Title: agentTaskTitle("⠐ Something else entirely"),
+	}}}); len(ops) != 1 {
+		t.Errorf("a real title change produced %d ops, want 1", len(ops))
+	}
+}

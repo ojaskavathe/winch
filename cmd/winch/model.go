@@ -118,7 +118,23 @@ func fetchWorld(c *control) (world, error) {
 		w.Panes = append(w.Panes, pane{
 			ID: p[2], WindowID: p[1], SessionID: p[0], Index: idx,
 			Active: p[4] == "1", Width: width, Height: height,
-			Command: p[7], Path: p[8], Title: p[9],
+			// Stripped HERE, not at render: the spinner in an agent's title
+			// re-emits several times a second, and diffWorlds compares whole
+			// pane structs — so every animation frame became a pane op, a
+			// JSON write down the socket, a row rebuild and a full paint,
+			// thrown away at the final byte-compare. Nothing downstream
+			// wants the ornament: the state it encodes is already published
+			// as AgentState, detection reads titles from its OWN list-panes
+			// (detect.go) rather than from here, and the renderer stripped
+			// it anyway.
+			//
+			// herdr solves the same problem one layer later —
+			// TerminalTitleChanges carries raw_changed and stripped_changed
+			// separately, and a repaint is requested only if a configured
+			// token consumes the part that moved. Stripping at the source is
+			// the same outcome without a second title to keep in sync,
+			// because winch has no layout that shows the raw one.
+			Command: p[7], Path: p[8], Title: agentTaskTitle(p[9]),
 		})
 	}
 
