@@ -211,3 +211,57 @@ func TestMsgStyleConfinedIsIdempotent(t *testing.T) {
 		t.Errorf("want no confinement at 30 cols, got %q", s)
 	}
 }
+
+// A style tmux rejects does not merely look wrong: set-option validates styles
+// and tmux aborts a command sequence at the first error, and these options ride
+// in the same batch as the dock — so a bad one stops the sidebar opening.
+func TestConfinementNeverEmitsAnUnparseableStyle(t *testing.T) {
+	// Formats are left ENTIRELY alone: their commas are not separators, and
+	// tmux skips validation for anything containing #{, so a mangled one is
+	// accepted at set time and fails later at draw time where nothing reports
+	// it.
+	fmts := []string{
+		"#{?pane_in_mode,fg=red,fg=blue}",
+		"fg=green,#{?client_prefix,bg=red,bg=blue}",
+	}
+	for _, f := range fmts {
+		if got := msgStyleConfined(f, "red", 200, 26); got != "" {
+			t.Errorf("msgStyleConfined(%q) = %q, want none", f, got)
+		}
+		if got := cmdStyleFilled(f, "red"); got != "" {
+			t.Errorf("cmdStyleFilled(%q) = %q, want none", f, got)
+		}
+	}
+
+	// A fill is only emitted for something certain to parse as a colour.
+	for _, c := range []string{"#181825", "colour234", "42", "red", "brightwhite", "BLACK"} {
+		if !isColour(c) {
+			t.Errorf("isColour(%q) = false, want true", c)
+		}
+	}
+	for _, c := range []string{"", "default", "terminal", "#18182", "#gggggg",
+		"colour", "colour1234", "puce", "#{?x,a,b}"} {
+		if isColour(c) {
+			t.Errorf("isColour(%q) = true, want false", c)
+		}
+	}
+
+	// Unresolvable fill -> no fill directive at all, which is the behaviour
+	// that existed before the fill was added and is safe.
+	if got := fillFor("fg=red,bg=default", ""); got != "" {
+		t.Errorf("fillFor with nothing resolvable = %q, want empty", got)
+	}
+	if got := fillFor("fg=red,bg=default", "puce"); got != "" {
+		t.Errorf("fillFor must reject a non-colour status bg, got %q", got)
+	}
+	// Precedence: own fill, then own bg, then the bar's.
+	if got := fillFor("bg=blue,fill=green", "#181825"); got != "green" {
+		t.Errorf("own fill should win, got %q", got)
+	}
+	if got := fillFor("bg=blue", "#181825"); got != "blue" {
+		t.Errorf("own bg should be next, got %q", got)
+	}
+	if got := fillFor("bg=default", "#181825"); got != "#181825" {
+		t.Errorf("status bg should be the fallback, got %q", got)
+	}
+}

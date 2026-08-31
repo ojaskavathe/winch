@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -515,6 +516,9 @@ func msgStyleConfined(base, fill string, clientW, sideW int) string {
 		// the sidebar needs its corner.
 		return ""
 	}
+	if isFormatStyle(base) {
+		return ""
+	}
 	// Drop any width/align the user set, or ours would be fighting theirs; the
 	// original comes back verbatim at undock, from the registry's saved value.
 	var keep []string
@@ -566,14 +570,39 @@ func msgStyleConfined(base, fill string, clientW, sideW int) string {
 // common answer and names no colour, so the bar's background stands in: the
 // point is to erase what was underneath, and erasing to the bar's colour is
 // what an emptied status line looks like.
+// Only a value tmux will certainly parse as a colour is used. set-option
+// VALIDATES styles (options.c, "invalid style: %s") and tmux aborts a command
+// sequence at the first error — and these options ride in the same batch as the
+// dock itself. So a fill tmux rejects would not merely look wrong, it would
+// take the sidebar's own install down with it and the dock would not open.
+// Anything unrecognised yields no fill, which is exactly the old behaviour.
 func fillFor(style, statusBG string) string {
-	if c := styleField(style, "fill"); c != "" {
-		return c
+	for _, c := range []string{styleField(style, "fill"), styleField(style, "bg"), statusBG} {
+		if isColour(c) {
+			return c
+		}
 	}
-	if c := styleField(style, "bg"); c != "" {
-		return c
+	return ""
+}
+
+var colourNumRe = regexp.MustCompile(`^(#[0-9a-fA-F]{6}|colour[0-9]{1,3}|[0-9]{1,3})$`)
+
+// namedColours is colour_fromstring's word list, minus `default` and
+// `terminal`: both parse, but tmux spells "no fill" as default's own value, so
+// neither can clear anything.
+var namedColours = map[string]bool{
+	"black": true, "red": true, "green": true, "yellow": true,
+	"blue": true, "magenta": true, "cyan": true, "white": true,
+	"brightblack": true, "brightred": true, "brightgreen": true,
+	"brightyellow": true, "brightblue": true, "brightmagenta": true,
+	"brightcyan": true, "brightwhite": true,
+}
+
+func isColour(s string) bool {
+	if s == "" {
+		return false
 	}
-	return statusBG
+	return colourNumRe.MatchString(s) || namedColours[strings.ToLower(s)]
 }
 
 // cmdStyleFilled gives message-command-style the same fill as the confined
@@ -587,7 +616,7 @@ func fillFor(style, statusBG string) string {
 // Returns "" when there is no fill to add — claiming an option in order to
 // write it back unchanged is pure risk.
 func cmdStyleFilled(base, fill string) string {
-	if fill == "" {
+	if fill == "" || isFormatStyle(base) {
 		return ""
 	}
 	var keep []string
@@ -600,6 +629,22 @@ func cmdStyleFilled(base, fill string) string {
 	}
 	return strings.Join(append(keep, "fill="+fill), ",")
 }
+
+// isFormatStyle reports whether a style is a FORMAT rather than a plain list of
+// directives, in which case winch leaves it alone entirely.
+//
+// Every edit here works by splitting on commas, and a format's commas are not
+// separators: `#{?pane_in_mode,fg=red,fg=blue}` is one directive containing two
+// of them. Splitting it produces fragments that are not styles, and tmux only
+// validates a style when it does NOT contain `#{` (options.c) — so the mangled
+// value would be accepted, then fail to parse later, at draw time, where there
+// is nothing to report it.
+//
+// Declining costs those users the confinement — their prompt paints over the
+// sidebar, which is where everyone was before it existed — and that is much the
+// better failure. This is not exotic: themed configs, catppuccin included,
+// write conditional styles.
+func isFormatStyle(s string) bool { return strings.Contains(s, "#{") }
 
 // styleField pulls one `name=value` directive out of a style string. Empty when
 // it names none, or names `default` — which cannot colour anything, since tmux

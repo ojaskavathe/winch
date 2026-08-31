@@ -119,6 +119,52 @@ func TestCommandPromptStyleGetsTheFillToo(t *testing.T) {
 	}
 }
 
+// TestFormatValuedMessageStyleStillDocks: somebody else's theme is allowed to
+// write a CONDITIONAL message-style, and winch must not choke on it.
+//
+// Every edit winch makes to a style splits on commas, and a format's commas are
+// not separators — `#{?pane_in_mode,fg=red,fg=blue}` is one directive holding
+// two. Splitting it yields fragments that are not styles. Worse than looking
+// wrong: set-option validates styles (options.c, "invalid style") and tmux
+// aborts a sequence at the first error, and these options ride in the SAME
+// batch as the dock — so a mangled style would stop the sidebar opening at all.
+//
+// winch declines the confinement instead. Those users get the prompt painting
+// over the sidebar, which is where everyone was before confinement existed.
+func TestFormatValuedMessageStyleStillDocks(t *testing.T) {
+	r := New(t)
+	cond := "#{?client_prefix,fg=red,fg=green},bg=default"
+	r.T("set-option", "-g", "message-style", cond)
+	r.T("set-option", "-g", "message-command-style", cond)
+
+	r.D("toggle", r.CL)
+	r.Chk("the sidebar still docks", r.WaitUntil(6000, func() bool { return r.Side().Pane != "" }))
+	sleep(800)
+	r.Chk("and it is a real sidebar, at its proper width", r.Side().Width == sideW)
+
+	// Read at SESSION scope: `show-options -v` does not inherit, so empty here
+	// means winch wrote nothing of its own onto the session — which is the
+	// claim. The global is what the user set and must be untouched.
+	sess := r.ClientSess()
+	ms := r.ShowOpt("-t", sess, "-v", "message-style")
+	cs := r.ShowOpt("-t", sess, "-v", "message-command-style")
+	t.Logf("  session-scope message-style:         %q", ms)
+	t.Logf("  session-scope message-command-style: %q", cs)
+	r.Chk("winch claimed nothing on the session", ms == "" && cs == "")
+	r.Chk("the user's format is still theirs", r.ShowOpt("-g", "-v", "message-style") == cond)
+	r.Chk("and so is the command style", r.ShowOpt("-g", "-v", "message-command-style") == cond)
+
+	// The rest of the dock is unaffected — the status pad still installed,
+	// which is what a batch aborted by an invalid style would have taken down.
+	r.Chk("the status pad still went in",
+		strings.Contains(r.ShowOpt("-t", sess, "-v", "status-format[0]"), "#[range"))
+
+	r.Undock()
+	r.await(5000, "undocked", func() bool { return r.WinchPanes("-a") == 0 })
+	r.Chk("style untouched after undock too",
+		r.ShowOpt("-g", "-v", "message-style") == cond)
+}
+
 // The fill comes from the user's own message background when they picked one,
 // and only falls back to the bar's when they did not.
 func TestPromptFillPrefersTheUsersOwnBackground(t *testing.T) {
