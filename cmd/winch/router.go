@@ -136,6 +136,10 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 		} else {
 			_, err = ctl.run("rename-session -t " + q(env.msg.Sess) + " " + q(env.msg.Name))
 		}
+	case "kill":
+		// `x` from the sidebar, past its y/n confirm: a session row closes the
+		// whole session, an agent row closes just that agent's window.
+		err = d.killTarget(ctl, env.msg.Sess, env.msg.Window)
 	case "focus":
 		// C-l from the docked idle sidebar: select the pane geometrically
 		// right of it — vim-tmux-navigator semantics, no origin reset.
@@ -322,6 +326,172 @@ func (d *daemon) createSession(ctl *control, from, name string) error {
 	}
 	_, err := ctl.run("switch-client -c " + q(d.dock.client) + " -t " + q(name))
 	return err
+}
+
+// killTarget closes a session (x on a session row) or a single window (x on an
+// agent row), having first carried anything that lives there somewhere safe.
+//
+// The evacuation is the whole job. tmux's default detach-on-destroy throws a
+// client out to a bare shell when its session is destroyed, and the sidebar
+// pane would go down with a window it is docked in — so pressing x on the
+// session you are sitting in could cost you both your sidebar and your
+// terminal. winch is the one pulling the trigger here, so it does not get to
+// leave that to the user's tmux settings: move first, then kill.
+func (d *daemon) killTarget(ctl *control, sess, win string) error {
+	switch {
+	case sess == "" && win == "":
+		return errors.New("kill needs a session or a window")
+	case sess != "" && win != "":
+		return errors.New("kill takes a session or a window, not both")
+	}
+	w, err := fetchWorld(ctl)
+	if err != nil {
+		return err
+	}
+	// The blast radius: every window about to stop existing.
+	doomed := func(wid string) bool {
+		for _, x := range w.Windows {
+			if x.ID == wid {
+				return (sess != "" && x.SessionID == sess) || (win != "" && x.ID == win)
+			}
+		}
+		return false
+	}
+	if (sess != "" && !sessionExists(w, sess)) || (win != "" && !doomed(win)) {
+		return nil // already gone; the diff that says so is on its way
+	}
+
+	// Everything winch is DOING to the blast radius has to stop first.
+	// Navigating onto a row starts a billboard scrub of its window, which
+	// carves a spacer there and swaps the sidebar in — all aimed at a window
+	// that is about to stop existing. Left armed, the scrub that raced this
+	// kill went on trying to swap with a pane tmux had already destroyed, and
+	// the next toggle failed with "can't find window".
+	if d.dock != nil {
+		if d.dock.scrubbing && (doomed(d.dock.win) || doomed(d.dock.scrubWin) || doomed(d.pv.target)) {
+			d.scrubEnd(ctl, true)
+		}
+		if doomed(d.pv.target) {
+			d.pv.target = ""
+			d.pv.reset()
+		}
+		for wid := range d.dock.carved {
+			if doomed(wid) {
+				// The spacer dies with its window, so the carve describes
+				// nothing. Forget it rather than restore it: a select-layout
+				// aimed at a dead window errors, and tmux aborts the whole
+				// batch it rides in at the first error.
+				delete(d.dock.carved, wid)
+				d.opts.forget(scopeWindow, wid)
+			}
+		}
+	}
+
+	// A refuge to move to, or "" when the whole server is going. Preferring
+	// the client's own session keeps the move as small as possible: closing
+	// some other session should not also relocate you.
+	refuge := pickRefuge(w, d.clientSession(w), doomed)
+
+	// The sidebar first, so it survives to show the result. dockMove carries
+	// the client with it, which covers the client too whenever both are in
+	// the blast radius — the common case, since x is pressed on the row you
+	// are looking at.
+	moved := false
+	if d.dock != nil && doomed(d.dock.win) {
+		if refuge == "" {
+			// Nowhere to go: undock cleanly rather than have the pane die
+			// under us and the layout restore land on a dead window.
+			_ = d.dockClose(ctl, false)
+		} else if err := d.dockMove(ctl, refuge, true, ""); err != nil {
+			log.Printf("kill: move sidebar to %s: %v", refuge, err)
+		} else {
+			d.pushSelect(selectMsg{Type: "select", Window: refuge, Quiet: true})
+			moved = true
+		}
+	}
+	// A client in the blast radius that the sidebar move did not already
+	// carry — undocked, or docked in a window that is not dying.
+	if refuge != "" && !moved {
+		for _, c := range w.Clients {
+			if !clientDoomed(w, c, doomed) {
+				continue
+			}
+			if _, err := ctl.runSeq(
+				"select-window -t "+q(refuge),
+				"switch-client -c "+q(c.Name)+" -t "+q(refuge),
+			); err != nil {
+				log.Printf("kill: move client %s: %v", c.Name, err)
+			}
+		}
+	}
+
+	if win != "" {
+		log.Printf("kill window %s (refuge %q)", win, refuge)
+		_, err = ctl.run("kill-window -t " + q(win))
+	} else {
+		log.Printf("kill session %s (refuge %q)", sess, refuge)
+		_, err = ctl.run("kill-session -t " + q(sess))
+	}
+	return err
+}
+
+func sessionExists(w world, sid string) bool {
+	for _, s := range w.Sessions {
+		if s.ID == sid {
+			return true
+		}
+	}
+	return false
+}
+
+// clientDoomed reports whether a client is looking at a window that is about
+// to die. A client in a doomed session is doomed wherever it is standing —
+// killing the session takes every window with it.
+func clientDoomed(w world, c tclient, doomed func(string) bool) bool {
+	for _, x := range w.Windows {
+		if x.SessionID == c.SessionID && x.Active {
+			return doomed(x.ID)
+		}
+	}
+	return false
+}
+
+// clientSession is the session the docked client is in, "" when undocked.
+func (d *daemon) clientSession(w world) string {
+	if d.dock == nil {
+		return ""
+	}
+	for _, c := range w.Clients {
+		if c.Name == d.dock.client {
+			return c.SessionID
+		}
+	}
+	return ""
+}
+
+// pickRefuge chooses a surviving window to move to: one in prefer if that
+// session has any left, otherwise the lowest-indexed window of the
+// first-sorted surviving session. Deterministic on purpose — a rig cannot
+// pin behaviour that depends on tmux's attach ordering.
+func pickRefuge(w world, prefer string, doomed func(string) bool) string {
+	// fetchWorld sorts windows by session then index, so the first survivor
+	// seen in each scan is that session's lowest-indexed one.
+	first, inPrefer := "", ""
+	for _, x := range w.Windows {
+		if doomed(x.ID) {
+			continue
+		}
+		if first == "" {
+			first = x.ID
+		}
+		if x.SessionID == prefer && inPrefer == "" {
+			inPrefer = x.ID
+		}
+	}
+	if inPrefer != "" {
+		return inPrefer
+	}
+	return first
 }
 
 // paneNum is the numeric part of a tmux pane id ("%1572" -> 1572), for

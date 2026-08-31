@@ -205,6 +205,39 @@ var (
 	editReplace bool
 )
 
+// The x confirmation. Closing a session or a window destroys work that is not
+// coming back, so x arms and y fires — and the prompt takes over the row it
+// was pressed on rather than opening anywhere else, so what is about to die is
+// the thing under the cursor, named, while you answer.
+//
+// confirmSess and confirmWin are the two kill shapes: a session row closes the
+// whole session, an agent row closes only that agent's window.
+// The target is held as an id rather than a row index, and the prompt finds
+// its row again on every paint — rows are rebuilt from scratch on every diff,
+// and an index would quietly come to mean a different row than the one you
+// armed. It is the rule the selection restore already follows.
+var (
+	confirmSess string // session id, when a session row is armed
+	confirmWin  string // window id, when an agent row is armed
+	confirmName string // what to call the target in the prompt
+)
+
+func confirming() bool { return confirmSess != "" || confirmWin != "" }
+
+func confirmClear() { confirmSess, confirmWin, confirmName = "", "", "" }
+
+// confirmTargets reports whether the prompt belongs on this row. Two agents
+// sharing a window both get it, which is honest: one y closes both.
+func confirmTargets(r row) bool {
+	switch {
+	case confirmSess != "":
+		return r.session && r.sess == confirmSess
+	case confirmWin != "":
+		return r.arow && !r.cont && r.window == confirmWin
+	}
+	return false
+}
+
 func setTheme(name string) {
 	if p, ok := themes[name]; ok {
 		pal = p
@@ -466,6 +499,21 @@ func (st *store) tabLabel(sid, wid string) string {
 		return strconv.Itoa(w.Index)
 	}
 	return ""
+}
+
+// killLabel names a window for the x confirm. tabLabel is the right name when
+// there is one, but it is deliberately empty for a session's only window — and
+// "kill ? y/n" names nothing, so the session stands in. It reads correctly
+// either way: that window IS the session, and killing it ends both.
+func (st *store) killLabel(wid string) string {
+	w, ok := st.windows[wid]
+	if !ok {
+		return "window"
+	}
+	if t := st.tabLabel(w.SessionID, wid); t != "" {
+		return t
+	}
+	return st.sessions[w.SessionID].Name
 }
 
 // autoNamed reports whether tmux picked this window's name rather than a
@@ -1021,6 +1069,21 @@ func cmdTui(tmuxSock, winchSock string) {
 					sel = i
 					break
 				}
+				// An armed prompt whose target has gone — killed from
+				// elsewhere, or by this very confirm — has to disarm, or it
+				// holds the keyboard while drawing nothing.
+				if confirming() {
+					live := false
+					for _, r := range rows {
+						if confirmTargets(r) {
+							live = true
+							break
+						}
+					}
+					if !live {
+						confirmClear()
+					}
+				}
 				if selPending && m.Type == "snapshot" && m.Select != "" {
 					// The daemon stamped where the selection belongs into this
 					// TUI's very first world, so the first paint is already
@@ -1272,6 +1335,20 @@ func cmdTui(tmuxSock, winchSock string) {
 						}
 						relayout = true
 					}
+					if confirming() {
+						confirmClear()
+						relayout = true
+					}
+				case confirming():
+					// Armed: the prompt owns the keyboard. Anything that is
+					// not an explicit yes cancels — including j/k, so a
+					// reflex keypress moves the selection next time rather
+					// than killing whatever this time landed on.
+					if b == 'y' || b == 'Y' {
+						send(cmdMsg{Cmd: "kill", Sess: confirmSess, Window: confirmWin})
+					}
+					confirmClear()
+					relayout = true
 				case editWhat != editNone:
 					// The inline field owns the keyboard until enter/esc.
 					switch {
@@ -1339,6 +1416,21 @@ func cmdTui(tmuxSock, winchSock string) {
 						renBuf = baseName(st.sessPath(renSess))
 						rebuild() // the field is a row that did not exist
 						relayout = true
+					}
+				case b == 'x':
+					// Arm the kill confirm on the selected row. Nothing is
+					// sent yet — y fires, everything else cancels.
+					if sel >= 0 && sel < len(rows) && editWhat == editNone {
+						switch r := rows[sel]; {
+						case r.session && r.sess != "":
+							confirmSess, confirmWin = r.sess, ""
+							confirmName = st.sessions[r.sess].Name
+							relayout = true
+						case r.arow && r.window != "":
+							confirmSess, confirmWin = "", r.window
+							confirmName = st.killLabel(r.window)
+							relayout = true
+						}
 					}
 				case b == '\r': // enter
 					shrinkExpected = !narrowMode()
@@ -1847,6 +1939,16 @@ func paintList(rows []row, sel int) {
 			}
 			pad := strings.Repeat(" ", lw-len(label))
 			switch {
+			case confirming() && confirmTargets(rows[i]):
+				// The prompt replaces the row it was armed on, so the thing
+				// about to die is named under the cursor while you answer.
+				// Red, because y here does not ask twice.
+				ask := fitTokens("   kill "+confirmName+"? y/n", lw)
+				apad := ""
+				if n := lw - len([]rune(ask)); n > 0 {
+					apad = strings.Repeat(" ", n)
+				}
+				b.WriteString(pal.fill + pal.red + "\033[1m" + ask + apad + "\033[22;49;39m")
 			case rows[i].create,
 				editWhat == editRename && rows[i].session && rows[i].sess != "" && rows[i].sess == renSess:
 				// The row IS the input field.
