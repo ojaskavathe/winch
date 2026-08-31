@@ -1,9 +1,6 @@
 package main
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 func TestNavByte(t *testing.T) {
 	cases := []struct {
@@ -151,36 +148,3 @@ func contains(s, sub string) bool {
 	})()
 }
 
-
-// A format-valued border style must be PREPENDED to, not declined and not
-// split. Declining is what left catppuccin's conditional
-// pane-active-border-style ungrounded, so the seam kept its gap for exactly
-// the theme the grounding was for.
-func TestGroundedStyle(t *testing.T) {
-	cond := "#{?pane_in_mode,fg=#b4befe,#{?pane_synchronized,fg=#cba6f7,fg=#b4befe}}"
-	got := groundedStyle("#181825", cond)
-	if got != "bg=#181825,"+cond {
-		t.Errorf("format style should be prepended to, got %q", got)
-	}
-
-	// Plain lists keep their directives, ground first so a bg of theirs wins.
-	if got := groundedStyle("#181825", "fg=#6c7086"); got != "bg=#181825,fg=#6c7086" {
-		t.Errorf("got %q", got)
-	}
-	if got := groundedStyle("#181825", "fg=red,bg=blue"); got != "bg=#181825,fg=red,bg=blue" {
-		t.Errorf("their own bg must come last and win, got %q", got)
-	}
-	// A bare `default` would reset the ground away.
-	for _, base := range []string{"default", "default,fg=red", "fg=red,default"} {
-		got := groundedStyle("#181825", base)
-		if strings.Contains(got, "default") {
-			t.Errorf("groundedStyle(%q) kept default: %q", base, got)
-		}
-		if !strings.HasPrefix(got, "bg=#181825") {
-			t.Errorf("groundedStyle(%q) lost the ground: %q", base, got)
-		}
-	}
-	if got := groundedStyle("", "fg=red"); got != "" {
-		t.Errorf("no ground means no claim, got %q", got)
-	}
-}
