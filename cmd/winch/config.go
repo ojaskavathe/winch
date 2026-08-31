@@ -309,10 +309,37 @@ const dividerPad = 2
 // round trip on a path that already makes several, and "change the theme,
 // toggle the sidebar, it is right" is what a person would expect.
 func loadSeamStyle(ctl *control) {
-	uiSeamStyle = strings.TrimSpace(optStr(ctl, optSeam))
+	uiSeamStyle = expandStyle(ctl, strings.TrimSpace(optStr(ctl, optSeam)))
 	if uiSeamStyle == "" {
 		uiSeamStyle = resolveStyle(ctl, "pane-active-border-style")
 	}
+}
+
+// expandStyle resolves a style written as a FORMAT down to the literal
+// directives it currently evaluates to.
+//
+// padCell renders the seam style into a tmux conditional by turning its commas
+// into separate #[] directives — tmux splits a conditional at the first comma
+// not inside #{}, and does not count #[]. That rewrite is only correct for a
+// plain directive list. A conditional style's commas are not separators, so
+// `#{?client_prefix,fg=red,fg=blue}` came out as
+// `#[#{?client_prefix]#[fg=red]#[fg=blue}]` — the same class of bug that took
+// the command prompt confinement down, one option over.
+//
+// The fallback path never had it: resolveStyle already expands, because
+// catppuccin writes pane-active-border-style as a #{?pane_in_mode,...} chain.
+// Only the user's own @winch-seam-style went in raw. Expanding freezes it at
+// dock time, exactly as the fallback is frozen, which is the same trade already
+// made there.
+func expandStyle(ctl *control, s string) string {
+	if s == "" || !strings.Contains(s, "#{") {
+		return s
+	}
+	lines, err := ctl.run("display-message -p " + q(s))
+	if err != nil || len(lines) != 1 {
+		return "" // unusable; the caller falls back to the border style
+	}
+	return strings.TrimSpace(lines[0])
 }
 
 // borderLines reads tmux's pane-border-lines. A WINDOW option, so -gw; an
