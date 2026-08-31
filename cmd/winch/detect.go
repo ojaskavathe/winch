@@ -503,6 +503,7 @@ func (d *daemon) notifyFire(ctl *control, w *world, id string, a *agentInfo) {
 		body += " — " + a.title
 	}
 
+	cfg := d.det.ncfg
 	var cmds []string
 	sent := 0
 	for _, c := range w.Clients {
@@ -510,17 +511,29 @@ func (d *daemon) notifyFire(ctl *control, w *world, id string, a *agentInfo) {
 			continue // already looking at it
 		}
 		cmds = append(cmds, "display-message -c "+q(c.Name)+" "+q("winch: "+title+" in "+where))
-		if c.TTY == "" {
+		if c.TTY == "" || cfg.via == "system" {
 			continue
 		}
-		if err := notifyTTY(c.TTY, notifyPayload(d.det.ncfg.osc, title, body)); err != nil {
+		if err := notifyTTY(c.TTY, notifyPayload(cfg.osc, title, body)); err != nil {
 			log.Printf("notify %s: %v", c.Name, err)
 			continue
 		}
 		sent++
 	}
+	// The system notifier is per MACHINE, not per client: asking the OS twice
+	// because two clients are attached would show you the same thing twice.
+	// Only fired when a client would have been notified at all, so an agent
+	// you are already looking at stays silent by the same rule.
+	osNote := false
+	if cfg.via != "terminal" && len(cmds) > 0 {
+		if err := notifySystem(title, body); err != nil {
+			log.Printf("notify system: %v", err)
+		} else {
+			osNote = true
+		}
+	}
 	if len(cmds) > 0 {
-		log.Printf("notify %s pane=%s clients=%d desktop=%d", a.state, id, len(cmds), sent)
+		log.Printf("notify %s pane=%s clients=%d desktop=%d system=%v", a.state, id, len(cmds), sent, osNote)
 		_, _ = ctl.runSeq(cmds...)
 	}
 }

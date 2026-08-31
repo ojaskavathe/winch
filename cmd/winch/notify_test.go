@@ -154,6 +154,65 @@ func TestNotifyConfigDefaults(t *testing.T) {
 	}
 }
 
+// The system path hands the same untrusted text to a SHELL COMMAND rather
+// than a terminal, which is a different injection surface with a worse
+// blast radius: on macOS the notifier is AppleScript, so a quote in a
+// session name embedded in script source would be executable code.
+//
+// The defence is structural — the script text is a constant and the data
+// travels as argv — so the test asserts the structure rather than trying to
+// enumerate what needs escaping.
+func TestNotifySystemPassesUserDataAsArguments(t *testing.T) {
+	evil := `"; display dialog "pwned"; "`
+	body := `back\slash and 'quotes'`
+	name, args := notifySystemCmd(evil, body)
+
+	if name == "" || len(args) < 3 {
+		t.Fatalf("notifySystemCmd = %q %q, want a command and arguments", name, args)
+	}
+	// The data is the last two arguments, verbatim — not escaped, not
+	// mangled, and not interpolated into anything.
+	if got := args[len(args)-2]; got != evil {
+		t.Errorf("title argument = %q, want it passed through unchanged", got)
+	}
+	if got := args[len(args)-1]; got != body {
+		t.Errorf("body argument = %q, want it passed through unchanged", got)
+	}
+	// And it appears nowhere in the script that precedes them.
+	script := args[:len(args)-2]
+	for _, a := range script {
+		if strings.Contains(a, "pwned") || strings.Contains(a, evil) {
+			t.Errorf("user data reached the script body: %q", a)
+		}
+	}
+	// `--` has to separate the script from the data, or a title that begins
+	// with a dash parses as an option to the notifier.
+	end := false
+	for _, a := range script {
+		if a == "--" {
+			end = true
+		}
+	}
+	if !end {
+		t.Error("no `--` before the user data: a title starting with - would parse as a flag")
+	}
+}
+
+func TestNotifyViaDefaults(t *testing.T) {
+	// terminal is the default because it is the one that follows you over
+	// ssh. system is the escape hatch for a machine whose terminal cannot
+	// notify at all — see parseNotifyVia's comment for how that happens.
+	for in, want := range map[string]string{
+		"": "terminal", "terminal": "terminal", "nonsense": "terminal",
+		"system": "system", "SYSTEM": "system", " os ": "system",
+		"both": "both", "all": "both",
+	} {
+		if got := parseNotifyVia(in); got != want {
+			t.Errorf("parseNotifyVia(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // notifyTTY writes to a path taken from tmux. Refusing anything outside /dev
 // keeps a malformed or hostile client_tty from turning a notification into a
 // file write.

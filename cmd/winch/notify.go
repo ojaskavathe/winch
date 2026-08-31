@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -42,8 +44,79 @@ import (
 const (
 	optNotify      = "@winch-notify"       // off | blocked | all
 	optNotifyOSC   = "@winch-notify-osc"   // 777 | 9 | 99
+	optNotifyVia   = "@winch-notify-via"   // terminal | system | both
 	optNotifyDelay = "@winch-notify-delay" // milliseconds; the flap guard
 )
+
+// parseNotifyVia picks who gets asked to draw the notification.
+//
+//	terminal  write the OSC to the client's tty; the terminal decides
+//	system    ask the OS notification service directly
+//	both      belt and braces, for a machine where you are not sure yet
+//
+// `terminal` is the default everywhere, because it is the one that works
+// over ssh — the notification follows you to whatever machine you are
+// actually sitting at.
+//
+// macOS caveat, recorded because finding it cost hours: some terminals never
+// register with the OS notification service at all. When that happens no
+// dialect helps and nothing reports an error — the notification is simply
+// never delivered, silently, forever.
+//
+// kitty from nixpkgs is one such terminal. It does not appear in System
+// Settings -> Notifications, meaning it has never successfully asked for
+// authorization, so there is no permission available to grant.
+//
+// What it is NOT, each ruled out by a controlled comparison rather than by
+// reasoning: the ad-hoc code signature (nixpkgs' terminal-notifier carries
+// the identical defect — `codesign -dv` says Signature=adhoc, Info.plist=not
+// bound — and registers fine); the process tree the notifier runs in (the
+// same binary works from a login shell and from a tmux run-shell child); and
+// the OSC dialect (777, 9 and 99 all behave the same). terminal-notifier
+// prompts on first use and works once allowed; kitty never gets that far.
+//
+// `system` is the way out on such a machine.
+func parseNotifyVia(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "system", "os", "desktop":
+		return "system"
+	case "both", "all":
+		return "both"
+	default:
+		return "terminal"
+	}
+}
+
+// notifySystemCmd builds the command that asks the OS itself to notify.
+//
+// The argv form is not a style preference, it is the escaping boundary.
+// Titles and bodies are user data — session names, window names, whatever an
+// agent wrote into its terminal title — and building an AppleScript SOURCE
+// string out of them would make a quote in a session name into script
+// injection. Passing them as arguments means the script text is a constant
+// and the data never gets parsed as code.
+func notifySystemCmd(title, body string) (string, []string) {
+	switch runtime.GOOS {
+	case "darwin":
+		return "osascript", []string{
+			"-e", "on run argv",
+			"-e", "display notification (item 2 of argv) with title (item 1 of argv)",
+			"-e", "end run",
+			"--", title, body,
+		}
+	default:
+		return "notify-send", []string{"--", title, body}
+	}
+}
+
+func notifySystem(title, body string) error {
+	name, args := notifySystemCmd(title, body)
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return err
+	}
+	return exec.Command(path, args...).Run()
+}
 
 // notifyDefaultDelay is herdr's re-check idea: an agent that blocks and
 // unblocks inside the window never earns a notification. A prompt you answer
@@ -56,6 +129,7 @@ type notifyCfg struct {
 	blocked bool // notify when an agent stops for input
 	done    bool // notify when an agent finishes a turn
 	osc     string
+	via     string
 	delay   time.Duration
 }
 
@@ -111,19 +185,19 @@ func parseNotifyDelay(s string) time.Duration {
 // which is the normal case. A format reference answers "" for an unset user
 // option instead of failing, so this is both cheaper and quieter.
 func loadNotifyCfg(ctl *control) notifyCfg {
-	c := notifyCfg{osc: parseNotifyOSC(""), delay: notifyDefaultDelay}
+	c := notifyCfg{osc: parseNotifyOSC(""), via: parseNotifyVia(""), delay: notifyDefaultDelay}
 	c.blocked, c.done = parseNotifyMode("")
 	lines, err := ctl.run("display-message -p " +
-		f("#{"+optNotify+"}", "#{"+optNotifyOSC+"}", "#{"+optNotifyDelay+"}"))
+		f("#{"+optNotify+"}", "#{"+optNotifyOSC+"}", "#{"+optNotifyDelay+"}", "#{"+optNotifyVia+"}"))
 	if err != nil || len(lines) != 1 {
 		return c
 	}
 	p := strings.Split(lines[0], sep)
-	if len(p) != 3 {
+	if len(p) != 4 {
 		return c
 	}
 	c.blocked, c.done = parseNotifyMode(p[0])
-	c.osc, c.delay = parseNotifyOSC(p[1]), parseNotifyDelay(p[2])
+	c.osc, c.delay, c.via = parseNotifyOSC(p[1]), parseNotifyDelay(p[2]), parseNotifyVia(p[3])
 	return c
 }
 
@@ -134,9 +208,9 @@ func (c notifyCfg) String() string {
 	case !c.on():
 		return "off"
 	case c.done:
-		return fmt.Sprintf("blocked+done, OSC %s, %dms guard", c.osc, c.delay.Milliseconds())
+		return fmt.Sprintf("blocked+done, via %s (OSC %s), %dms guard", c.via, c.osc, c.delay.Milliseconds())
 	default:
-		return fmt.Sprintf("blocked, OSC %s, %dms guard", c.osc, c.delay.Milliseconds())
+		return fmt.Sprintf("blocked, via %s (OSC %s), %dms guard", c.via, c.osc, c.delay.Milliseconds())
 	}
 }
 
@@ -219,6 +293,19 @@ func notifyRipe(p pendingNote, cur string, now time.Time, delay time.Duration) (
 // command that either pops a toast or does not is worth more than any
 // amount of capability detection, and it needs no daemon.
 func cmdNotifyTest(tmuxSock, osc string) {
+	// `notify-test system` skips tmux entirely — no client, no tty, nothing
+	// to resolve. On a machine where the terminal cannot notify (see
+	// parseNotifyVia), this is the one that has to be tried.
+	if parseNotifyVia(osc) == "system" {
+		name, args := notifySystemCmd("winch", "if you can see this, notifications work")
+		if err := notifySystem("winch", "if you can see this, notifications work"); err != nil {
+			fmt.Fprintf(os.Stderr, "winch notify-test: %s: %v\n", name, err)
+			os.Exit(1)
+		}
+		fmt.Printf("asked the OS directly: %s %q\n", name, args)
+		fmt.Printf("saw it? make it the default: tmux set -g %s system\n", optNotifyVia)
+		return
+	}
 	t := eqTmux{sock: tmuxSock}
 	// display-message resolves "the current client" from the terminal that
 	// invoked it, which is empty when this is run from OUTSIDE tmux — and
@@ -246,9 +333,10 @@ func cmdNotifyTest(tmuxSock, osc string) {
 		os.Exit(1)
 	}
 	fmt.Printf("sent OSC %s to %s\n  %q\n", kind, tty, payload)
-	fmt.Printf("nothing appeared? try the other dialects:\n" +
-		"  winch notify-test 9\n  winch notify-test 99\n" +
-		"then set the one that works: tmux set -g " + optNotifyOSC + " <n>\n")
+	fmt.Printf("nothing appeared? try the other dialects, then the OS itself:\n" +
+		"  winch notify-test 9\n  winch notify-test 99\n  winch notify-test system\n" +
+		"then set what worked: tmux set -g " + optNotifyOSC + " <n>" +
+		"  /  tmux set -g " + optNotifyVia + " system\n")
 }
 
 // notifyTTY delivers one payload to one terminal. Errors are the caller's to

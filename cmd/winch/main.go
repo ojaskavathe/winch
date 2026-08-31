@@ -49,7 +49,8 @@ commands:
   equalize [pane]        equalize panes, nvim splits weighted (no daemon needed)
   tui                    the sidebar TUI (spawned by the daemon)
   doctor                 report what winch has done to this tmux, and check it
-  notify-test [777|9|99]  send one desktop notification to this terminal
+  notify-test [777|9|99|system]
+                         send one desktop notification, and say how it was sent
   sock                   print the tmux and winch socket paths and exit
 `)
 	os.Exit(2)

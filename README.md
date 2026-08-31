@@ -28,10 +28,31 @@ Check your terminal understands it, and which dialect it wants:
 
     tmux set -g @winch-notify        blocked   # off | blocked | all (adds turn-end)
     tmux set -g @winch-notify-osc    777
+    tmux set -g @winch-notify-via    terminal  # terminal | system | both
     tmux set -g @winch-notify-delay  1000      # ms a state must hold to notify
 
 The delay is a flap guard: agents flicker through blocked on their own, and
 a prompt you answered before the toast arrived did not need one.
+
+`via system` asks the OS instead of the terminal — `osascript` on macOS,
+`notify-send` elsewhere. It loses the works-over-ssh property (it notifies
+the machine the daemon is on), so `terminal` stays the default everywhere.
+
+**macOS:** if nothing appears, check System Settings → Notifications for your
+terminal *before* suspecting the sequence. Two different failures live there
+and neither reports an error:
+
+- **listed but off** — macOS prompted once, the prompt was dismissed, and the
+  app has been denied ever since. Flip it on.
+- **not listed at all** — the app has never successfully asked for
+  authorization, so there is nothing to grant. kitty from nixpkgs is in this
+  state. No dialect helps; use `winch notify-test system` and set
+  `@winch-notify-via system`.
+
+Not the cause, each ruled out by controlled comparison: the ad-hoc code
+signature nixpkgs gives its own builds (`terminal-notifier` has the identical
+`Signature=adhoc` / `Info.plist=not bound` and registers fine), the process
+tree the notifier runs in, and the OSC dialect.
 
 Manifest match rules under `cmd/winch/manifests/` are derived from
 [herdr](https://github.com/herdrdev/herdr) — see `manifests/LICENSE-herdr`.
