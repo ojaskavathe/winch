@@ -179,6 +179,29 @@ var listW = listWidth
 // fill — herdr's active_row_bg, distinct from the selection cursor.
 var curSess string
 
+// curAgent is the agent pane the client is sitting in — herdr's
+// is_active_pane, which its whole dim ladder hangs off (sidebar.rs:1503).
+// Derived from the world rather than plumbed: tmux already ships both flags
+// we need (window.Active = the session's current window, pane.Active = that
+// window's active pane).
+//
+// STICKY, and that is the entire point. Docking moves tmux's focus ONTO the
+// sidebar, so a live reading would blank the highlight at exactly the moment
+// you are looking at the list. Only another agent replaces it. A session
+// change clears it instead, because a highlight pointing into a session you
+// have left is worse than no highlight at all.
+var curAgent string
+
+// setCurSess moves the client's session and drops the sticky agent highlight
+// when the session actually changed. The two are one invariant, so they get
+// one function rather than two lines that have to be remembered together.
+func setCurSess(id string) {
+	if id != curSess {
+		curAgent = ""
+	}
+	curSess = id
+}
+
 // The inline text field. `r` renames the selected session, `n` names a new
 // one; while active it owns the keyboard until enter or esc, and paintList
 // renders its line as buffer + accent █ cursor.
@@ -289,13 +312,35 @@ func (st *store) rows(winPick map[string]string) []row {
 	rank := map[string]int{"blocked": 4, "done": 3, "working": 2, "idle": 1}
 	agg := map[string]string{}
 	var agents []pane
+	// The client's own agent, in the window it is actually on. Active is the
+	// answer whenever the user is IN the agent; Last is the answer the moment
+	// they are not, and docking makes that the common case — winch takes the
+	// focus for its own pane, so at the instant the sidebar first paints, the
+	// agent you were working in is active nowhere. Preferring Active keeps
+	// two agents in one window deterministic (map order otherwise decides).
+	var agentActive, agentLast string
 	for _, p := range st.panes {
 		if p.Agent != "" {
 			agents = append(agents, p)
+			if p.SessionID == curSess && st.windows[p.WindowID].Active {
+				if p.Active {
+					agentActive = p.ID
+				}
+				if p.Last {
+					agentLast = p.ID
+				}
+			}
 		}
 		if p.AgentState != "" && rank[p.AgentState] > rank[agg[p.SessionID]] {
 			agg[p.SessionID] = p.AgentState
 		}
+	}
+	// Only ever ASSIGNED, never cleared: curAgent is sticky, and the one
+	// thing that clears it is a session change (setCurSess).
+	if agentActive != "" {
+		curAgent = agentActive
+	} else if agentLast != "" {
+		curAgent = agentLast
 	}
 
 	for _, s := range sessions {
@@ -820,7 +865,7 @@ func cmdTui(tmuxSock, winchSock string) {
 			}
 		}
 		if w, ok := st.windows[win]; ok {
-			curSess = w.SessionID
+			setCurSess(w.SessionID)
 		}
 		return found
 	}
@@ -2019,6 +2064,13 @@ func paintList(rows []row, sel int) {
 				rowBG = pal.fill
 			case rows[i].sess != "" && rows[i].sess == curSess:
 				rowBG = pal.actFill
+			case rows[i].arow && rows[i].pane != "" && rows[i].pane == curAgent:
+				// The agent's whole card, continuation row included — they
+				// carry the same pane. Selection is checked FIRST on purpose:
+				// herdr keeps selection_bg and active_row_bg as separate
+				// tokens so the cursor stays visible while sitting on the
+				// active row, and ours have to stack the same way.
+				rowBG = pal.actFill
 			}
 		}
 		if i >= 0 {
@@ -2084,9 +2136,22 @@ func paintList(rows []row, sel int) {
 			case rows[i].session:
 				b.WriteString(rowBG + pal.subtext + string(label) + pad + "\033[49;39m")
 			case rows[i].arow && !rows[i].cont:
-				// Agent entry's WHERE row: bold subtext names, like herdr's
-				// unfocused entries.
-				b.WriteString(rowBG + pal.subtext + "\033[1m" + string(label) + pad + "\033[22;49;39m")
+				// Agent entry's WHERE row. herdr's ladder (sidebar.rs:1509):
+				// the workspace name carries the weight — text for the agent
+				// you are actually in, subtext for the rest, bold either way
+				// — and everything after it is chrome. The styled form is
+				// what mutes the `· tab · agent` tail; before this it was
+				// only ever reached on the selected row, so the tail read at
+				// full strength everywhere else.
+				name := pal.subtext
+				if rows[i].pane != "" && rows[i].pane == curAgent {
+					name = pal.text
+				}
+				if s := rows[i].styled; s != "" && len([]rune(rows[i].label)) <= lw {
+					b.WriteString(rowBG + name + "\033[1m" + s + pad + "\033[22;49;39m")
+				} else {
+					b.WriteString(rowBG + name + "\033[1m" + string(label) + pad + "\033[22;49;39m")
+				}
 			default:
 				if s := rows[i].styled; s != "" && len([]rune(rows[i].label)) <= lw {
 					b.WriteString(rowBG + s + pad + "\033[49m")

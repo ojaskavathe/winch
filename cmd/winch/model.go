@@ -37,7 +37,12 @@ type pane struct {
 	SessionID string `json:"session"`
 	Index     int    `json:"index"`
 	Active    bool   `json:"active"` // window's active pane
-	Width     int    `json:"width"`
+	// Last is tmux's own pane_last: the pane focus would return to. It is
+	// how the sidebar knows where you came from, which matters because
+	// docking moves focus ONTO winch — at that moment the agent you were
+	// working in is not active anywhere, and Last is the only record of it.
+	Last   bool `json:"last,omitempty"`
+	Width  int  `json:"width"`
 	Height    int    `json:"height"`
 	Command   string `json:"cmd"`
 	Path      string `json:"path"`
@@ -107,13 +112,13 @@ func fetchWorld(c *control) (world, error) {
 		})
 	}
 
-	lines, err = c.run("list-panes -a -F " + f("#{session_id}", "#{window_id}", "#{pane_id}", "#{pane_index}", "#{pane_active}", "#{pane_width}", "#{pane_height}", "#{pane_current_command}", "#{pane_current_path}", "#{pane_title}"))
+	lines, err = c.run("list-panes -a -F " + f("#{session_id}", "#{window_id}", "#{pane_id}", "#{pane_index}", "#{pane_active}", "#{pane_width}", "#{pane_height}", "#{pane_current_command}", "#{pane_current_path}", "#{pane_title}", "#{pane_last}"))
 	if err != nil {
 		return w, err
 	}
 	for _, ln := range lines {
 		p := strings.Split(ln, sep)
-		if len(p) != 10 {
+		if len(p) != 11 {
 			continue
 		}
 		idx, _ := strconv.Atoi(p[3])
@@ -122,7 +127,7 @@ func fetchWorld(c *control) (world, error) {
 		_, name := splitOrnament(p[9])
 		w.Panes = append(w.Panes, pane{
 			ID: p[2], WindowID: p[1], SessionID: p[0], Index: idx,
-			Active: p[4] == "1", Width: width, Height: height,
+			Active: p[4] == "1", Last: p[10] == "1", Width: width, Height: height,
 			// Title carries no ornament. It re-emits several times a second
 			// while an agent works, and diffWorlds compares whole pane
 			// structs, so folded in it made every animation frame read as a
