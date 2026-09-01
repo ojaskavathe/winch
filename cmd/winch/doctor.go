@@ -284,12 +284,14 @@ func (d *daemon) doctor(ctl *control) []string {
 
 	// Panes winch is responsible for that nothing is holding.
 	var orphanPanes []string
+	live := map[string]bool{}
 	if got, err := ctl.run("list-panes -a -F " + f("#{pane_id}", "#{@winch_sidebar}", "#{pane_start_command}")); err == nil {
 		for _, ln := range got {
 			c := strings.Split(ln, sep)
 			if len(c) != 3 {
 				continue
 			}
+			live[c[0]] = true
 			if c[1] == "1" && (p == nil || c[0] != p.pane) {
 				orphanPanes = append(orphanPanes, c[0]+" is a sidebar pane the daemon does not own")
 			}
@@ -299,6 +301,19 @@ func (d *daemon) doctor(ctl *control) []string {
 		}
 	}
 	r.check(len(orphanPanes) == 0, "no orphan sidebar panes or spacers", orphanPanes...)
+
+	// And the CONVERSE, which the check above cannot see: a carve whose
+	// spacer has gone. The two directions fail for opposite reasons — a
+	// stray spacer is litter nobody will collect, a missing one is a
+	// promise winch can no longer keep. Only the first was checked, so a
+	// daemon holding carves over dead panes reported itself perfectly
+	// healthy right up until the undock, where the release replays a layout
+	// against a window that no longer has the pane count it was saved with:
+	// that is what `have N panes but need M` in the log below is.
+	//
+	// Costs nothing — the pane set was already listed above.
+	lost := lostSpacers(p, live)
+	r.check(len(lost) == 0, "every carve still has its spacer", lost...)
 
 	// ---- recent errors on the paths that give things back ---------------
 	if fails := recentRestoreFailures(d.tmuxSock, 6); len(fails) > 0 {
@@ -326,6 +341,30 @@ func dockWhere(p *dockState) string {
 		return "not docked"
 	}
 	return "in " + p.sess
+}
+
+// lostSpacers names every carve whose spacer pane is gone from `live`.
+//
+// A separate function because reapEmptyCarves normally repairs this within a
+// tick, so the rig can never catch the check firing in situ — it can only
+// watch the recovery. Testing the predicate directly is the only way to know
+// the backstop works rather than merely stays quiet, and "stays quiet" is
+// indistinguishable from "is broken" from the outside.
+func lostSpacers(p *dockState, live map[string]bool) []string {
+	if p == nil {
+		return nil
+	}
+	var out []string
+	for wid, t := range p.carved {
+		if t.spacer == "" {
+			continue // the sidebar itself is in this window; no spacer is right
+		}
+		if !live[t.spacer] {
+			out = append(out, fmt.Sprintf("%s is held by carve %s, which no longer exists", wid, t.spacer))
+		}
+	}
+	sort.Strings(out) // map order, and this goes into a report
+	return out
 }
 
 func spacerHeld(p *dockState, pid string) bool {
