@@ -106,3 +106,24 @@ tree the notifier runs in, and the OSC dialect.
 
 Manifest match rules under `cmd/winch/manifests/` are derived from
 [herdr](https://github.com/herdrdev/herdr) — see `manifests/LICENSE-herdr`.
+
+## platform support
+
+The daemon and TUI are pure Go and platform-neutral. Everything OS-specific
+lives under `platform/`, and the split is enforced by build tags rather than
+by runtime checks, so a Linux build cannot compile a reference to a macOS
+path:
+
+    platform/darwin/notifier/   winch-notify.app — Objective-C, UserNotifications
+    platform/darwin/mkicns/     draws the .icns, stdlib only
+    cmd/winch/notify_darwin.go  the bundle route + notify-install
+    cmd/winch/notify_other.go   stubs; there is nothing to do elsewhere
+
+**Linux and BSD need none of it.** Notifications go to the terminal as an OSC
+(the default, and the one that follows you over ssh), or to `notify-send`
+with `@winch-notify-via system`. Neither has macOS's rule that a notification
+belongs to a registered app bundle, which is the only reason the bundle
+exists. `winch notify-install` says so and exits.
+
+The flake exposes `winch-notify` only on darwin, and only a darwin `winch`
+carries the `-X main.notifyApp=` ldflag.

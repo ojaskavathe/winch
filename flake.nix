@@ -43,8 +43,8 @@
             buildPhase = ''
               runHook preBuild
               export HOME=$TMPDIR GOCACHE=$TMPDIR/go GOFLAGS=-mod=mod
-              go run ./cmd/mkicns winch.icns
-              $CC -O2 -fobjc-arc -o winch-notify notifier/main.m \
+              go run ./platform/darwin/mkicns winch.icns
+              $CC -O2 -fobjc-arc -o winch-notify platform/darwin/notifier/main.m \
                 -framework Foundation -framework AppKit -framework UserNotifications
               runHook postBuild
             '';
@@ -54,7 +54,7 @@
               app=$out/Applications/winch-notify.app
               mkdir -p $app/Contents/MacOS $app/Contents/Resources
               cp winch-notify $app/Contents/MacOS/winch-notify
-              cp notifier/Info.plist $app/Contents/Info.plist
+              cp platform/darwin/notifier/Info.plist $app/Contents/Info.plist
               cp winch.icns $app/Contents/Resources/winch.icns
 
               # Ad-hoc, like every other unsigned nix-built app. Verified not
