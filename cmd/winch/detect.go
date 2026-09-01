@@ -506,15 +506,21 @@ func (d *daemon) notifyFire(ctl *control, w *world, id string, a *agentInfo) {
 	cfg := d.det.ncfg
 	var cmds []string
 	sent := 0
+	bundle := ""
 	for _, c := range w.Clients {
-		if cur[c.SessionID] == a.win {
-			continue // already looking at it
+		if notifySuppressed(cur[c.SessionID] == a.win, c.Focused) {
+			continue
+		}
+		if bundle == "" {
+			bundle = terminalBundleID(c.Term)
 		}
 		cmds = append(cmds, "display-message -c "+q(c.Name)+" "+q("winch: "+title+" in "+where))
 		if c.TTY == "" || cfg.via == "system" {
 			continue
 		}
-		if err := notifyTTY(c.TTY, notifyPayload(cfg.osc, title, body)); err != nil {
+		// Per client, not per config: two clients can be two different
+		// terminals, and a global dialect cannot be right for both.
+		if err := notifyTTY(c.TTY, notifyPayload(cfg.resolveOSC(c.Term), title, body)); err != nil {
 			log.Printf("notify %s: %v", c.Name, err)
 			continue
 		}
@@ -526,7 +532,7 @@ func (d *daemon) notifyFire(ctl *control, w *world, id string, a *agentInfo) {
 	// you are already looking at stays silent by the same rule.
 	osNote := false
 	if cfg.via != "terminal" && len(cmds) > 0 {
-		if err := notifySystem(title, body); err != nil {
+		if err := notifySystem(title, body, bundle); err != nil {
 			log.Printf("notify system: %v", err)
 		} else {
 			osNote = true

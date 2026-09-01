@@ -43,7 +43,7 @@ import (
 
 const (
 	optNotify      = "@winch-notify"       // off | blocked | all
-	optNotifyOSC   = "@winch-notify-osc"   // 777 | 9 | 99
+	optNotifyOSC   = "@winch-notify-osc"   // unset = auto from TERM; 777 | 9 | 99 pins it
 	optNotifyVia   = "@winch-notify-via"   // terminal | system | both
 	optNotifyDelay = "@winch-notify-delay" // milliseconds; the flap guard
 )
@@ -87,7 +87,8 @@ func parseNotifyVia(s string) string {
 	}
 }
 
-// notifySystemCmd builds the command that asks the OS itself to notify.
+// notifySystemCmd builds the fallback: ask the OS itself, with no terminal
+// involved. bundle is the app a click should raise, "" for none.
 //
 // The argv form is not a style preference, it is the escaping boundary.
 // Titles and bodies are user data — session names, window names, whatever an
@@ -95,7 +96,7 @@ func parseNotifyVia(s string) string {
 // string out of them would make a quote in a session name into script
 // injection. Passing them as arguments means the script text is a constant
 // and the data never gets parsed as code.
-func notifySystemCmd(title, body string) (string, []string) {
+func notifySystemCmd(title, body, bundle string) (string, []string) {
 	switch runtime.GOOS {
 	case "darwin":
 		return "osascript", []string{
@@ -109,8 +110,36 @@ func notifySystemCmd(title, body string) (string, []string) {
 	}
 }
 
-func notifySystem(title, body string) error {
-	name, args := notifySystemCmd(title, body)
+// notifyNotifierCmd is the PREFERRED macOS path when terminal-notifier is
+// installed. herdr prefers it for one reason and it is a good one: it can
+// `-activate` the hosting terminal, so clicking the notification takes you to
+// the agent instead of merely telling you about it. osascript's cannot.
+//
+// Returns ok=false when there is nothing to gain — not macOS, or no bundle we
+// can name confidently. A wrong bundle id would leave a notification that
+// looks clickable and does nothing.
+func notifyNotifierCmd(title, body, bundle string) (string, []string, bool) {
+	if runtime.GOOS != "darwin" || bundle == "" {
+		return "", nil, false
+	}
+	return "terminal-notifier", []string{
+		"-title", title, "-message", body, "-activate", bundle,
+	}, true
+}
+
+// notifySystem delivers one notification without the terminal's help,
+// preferring the clickable route when it is available.
+func notifySystem(title, body, bundle string) error {
+	if name, args, ok := notifyNotifierCmd(title, body, bundle); ok {
+		if path, err := exec.LookPath(name); err == nil {
+			if err := exec.Command(path, args...).Run(); err == nil {
+				return nil
+			}
+			// Fall through: a notifier that is installed but failing is not
+			// a reason to send nothing.
+		}
+	}
+	name, args := notifySystemCmd(title, body, bundle)
 	path, err := exec.LookPath(name)
 	if err != nil {
 		return err
@@ -161,15 +190,73 @@ func parseNotifyMode(s string) (blocked, done bool) {
 // the body is where the session and the reason go — a title-only
 // notification saying "claude needs you" with four claudes running is a
 // notification you have to go and investigate anyway.
+// parseNotifyOSC reads the option. Unset means AUTO — the dialect is then
+// chosen per client from its TERM (oscForTerm), because two clients can be
+// different terminals and a global setting cannot be right for both. Any
+// explicit value pins it and turns detection off.
 func parseNotifyOSC(s string) string {
 	switch strings.TrimSpace(s) {
 	case "9":
 		return "9"
 	case "99":
 		return "99"
+	case "777":
+		return "777"
+	default:
+		return "auto"
+	}
+}
+
+// oscForTerm picks a dialect from a client's TERM.
+//
+// TERM is a weaker signal than the TERM_PROGRAM/KITTY_WINDOW_ID environment
+// herdr reads (detect_backend), and that is not a fixable shortcoming: the
+// daemon is not the client's process and cannot see its environment. So this
+// recognises the terminals that announce themselves in TERM and falls back to
+// 777 for everyone else — which is the right fallback anyway, being the
+// widest sequence that carries a body.
+//
+// kitty gets 99, its own protocol, because it is the one terminal here whose
+// native form is strictly richer than the alternatives.
+func oscForTerm(term string) string {
+	t := strings.ToLower(term)
+	switch {
+	case strings.Contains(t, "kitty"):
+		return "99"
+	case strings.Contains(t, "ghostty"), strings.Contains(t, "wezterm"), strings.Contains(t, "iterm"):
+		return "9"
 	default:
 		return "777"
 	}
+}
+
+// resolveOSC combines the two: an explicit option always wins, so a user
+// whose terminal is misdetected has a way out that does not require winch to
+// be right.
+func (c notifyCfg) resolveOSC(term string) string {
+	if c.osc != "auto" {
+		return c.osc
+	}
+	return oscForTerm(term)
+}
+
+// terminalBundleID maps a client's TERM to the macOS bundle its notifications
+// should activate on click. Only terminals we can name confidently — a wrong
+// id means terminal-notifier cannot raise the window, which is worse than not
+// asking it to.
+func terminalBundleID(term string) string {
+	t := strings.ToLower(term)
+	switch {
+	case strings.Contains(t, "kitty"):
+		return "net.kovidgoyal.kitty"
+	case strings.Contains(t, "ghostty"):
+		return "com.mitchellh.ghostty"
+	case strings.Contains(t, "wezterm"):
+		return "com.github.wez.wezterm"
+	case strings.Contains(t, "iterm"):
+		return "com.googlecode.iterm2"
+	}
+	return ""
 }
 
 func parseNotifyDelay(s string) time.Duration {
@@ -228,6 +315,13 @@ func notifyClean(s string, semis bool) string {
 		switch {
 		case r < 0x20 || r == 0x7f: // C0 and DEL, including ESC
 			continue
+		case r >= 0x80 && r <= 0x9f:
+			// C1 controls. U+009C is ST — the single-character form of the
+			// ESC \ that TERMINATES this very sequence, so a title carrying
+			// one would end the OSC early and hand the rest to the terminal
+			// as commands. Exactly the ESC hole, one encoding along, and the
+			// original filter missed it because it only thought about C0.
+			continue
 		case r == ';' && semis:
 			b.WriteRune(',')
 		default:
@@ -265,6 +359,24 @@ func notifyPayload(osc, title, body string) string {
 	}
 }
 
+// notifySuppressed decides whether one client should be spared a
+// notification, given that it is looking at the agent's window and whether
+// its terminal actually has the OS focus.
+//
+// "You can already see it" is only true if you are LOOKING. Alt-tab to a
+// browser and the agent in your current tmux window is exactly as invisible
+// to you as one in another session — and it was the only agent winch stayed
+// quiet about. herdr draws the same distinction
+// (active_tab_suppresses_notifications).
+//
+// focused arrives true when tmux has no better idea, which is the case
+// whenever `focus-events` is off — tmux never asks the terminal to report
+// focus, so the flag never moves. That degrades to the old behaviour rather
+// than to silence, which is the right way round.
+func notifySuppressed(lookingAtWindow, focused bool) bool {
+	return lookingAtWindow && focused
+}
+
 // notifyRipe decides one armed notification: fire it, forget it, or leave it
 // waiting. Pulled out of the tick loop because this is the entire policy —
 // everything around it is bookkeeping — and because the interesting cases
@@ -296,17 +408,32 @@ func cmdNotifyTest(tmuxSock, osc string) {
 	// `notify-test system` skips tmux entirely — no client, no tty, nothing
 	// to resolve. On a machine where the terminal cannot notify (see
 	// parseNotifyVia), this is the one that has to be tried.
+	t := eqTmux{sock: tmuxSock}
 	if parseNotifyVia(osc) == "system" {
-		name, args := notifySystemCmd("winch", "if you can see this, notifications work")
-		if err := notifySystem("winch", "if you can see this, notifications work"); err != nil {
-			fmt.Fprintf(os.Stderr, "winch notify-test: %s: %v\n", name, err)
+		// The bundle only matters for the clickable route, and it comes from
+		// the same TERM the dialect does — so report what was actually used,
+		// including which of the two commands ran.
+		bundle := terminalBundleID(notifyTestTerm(t))
+		const body = "if you can see this, notifications work"
+		if err := notifySystem("winch", body, bundle); err != nil {
+			fmt.Fprintf(os.Stderr, "winch notify-test: %v\n", err)
 			os.Exit(1)
 		}
+		if name, args, ok := notifyNotifierCmd("winch", body, bundle); ok {
+			if _, err := exec.LookPath(name); err == nil {
+				fmt.Printf("asked %s (click activates %s): %q\n", name, bundle, args)
+				return
+			}
+		}
+		name, args := notifySystemCmd("winch", body, bundle)
 		fmt.Printf("asked the OS directly: %s %q\n", name, args)
+		if runtime.GOOS == "darwin" && bundle != "" {
+			fmt.Printf("install terminal-notifier for notifications that click\n" +
+				"through to your terminal; winch prefers it when present\n")
+		}
 		fmt.Printf("saw it? make it the default: tmux set -g %s system\n", optNotifyVia)
 		return
 	}
-	t := eqTmux{sock: tmuxSock}
 	// display-message resolves "the current client" from the terminal that
 	// invoked it, which is empty when this is run from OUTSIDE tmux — and
 	// running it from outside is the normal case for a one-shot check. Fall
@@ -326,17 +453,34 @@ func cmdNotifyTest(tmuxSock, osc string) {
 		fmt.Fprintln(os.Stderr, "winch notify-test: no attached client to notify")
 		os.Exit(1)
 	}
-	kind := parseNotifyOSC(osc)
+	term := notifyTestTerm(t)
+	kind := notifyCfg{osc: parseNotifyOSC(osc)}.resolveOSC(term)
 	payload := notifyPayload(kind, "winch", "if you can read this, notifications work")
 	if err := notifyTTY(tty, payload); err != nil {
 		fmt.Fprintf(os.Stderr, "winch notify-test: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("sent OSC %s to %s\n  %q\n", kind, tty, payload)
+	fmt.Printf("sent OSC %s to %s (TERM=%s)\n  %q\n", kind, tty, term, payload)
 	fmt.Printf("nothing appeared? try the other dialects, then the OS itself:\n" +
 		"  winch notify-test 9\n  winch notify-test 99\n  winch notify-test system\n" +
 		"then set what worked: tmux set -g " + optNotifyOSC + " <n>" +
 		"  /  tmux set -g " + optNotifyVia + " system\n")
+}
+
+// notifyTestTerm is the attached client's TERM, by the same
+// current-client-then-any-client rule the tty lookup uses. "" is fine: every
+// consumer falls back to the safe default.
+func notifyTestTerm(t eqTmux) string {
+	if term, _ := t.out("display-message", "-p", "#{client_termname}"); term != "" {
+		return term
+	}
+	out, _ := t.out("list-clients", "-F", "#{client_control_mode}"+sep+"#{client_termname}")
+	for _, ln := range strings.Split(out, "\n") {
+		if p := strings.Split(ln, sep); len(p) == 2 && p[0] != "1" && p[1] != "" {
+			return p[1]
+		}
+	}
+	return ""
 }
 
 // notifyTTY delivers one payload to one terminal. Errors are the caller's to

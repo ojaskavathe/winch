@@ -1,6 +1,8 @@
 package main
 
 import (
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -65,6 +67,20 @@ func TestNotifyPayloadCannotBeEscaped(t *testing.T) {
 	// The other two do not split on ';', so they must NOT mangle it.
 	if got := notifyPayload("9", "a;b", ""); got != "\033]9;a;b\033\\" {
 		t.Errorf("OSC 9 mangled a legitimate semicolon: %q", got)
+	}
+
+	// U+009C is ST — the single-character form of the ESC \ that terminates
+	// this very sequence. Filtering C0 is not enough: this is the same hole
+	// one encoding along, and it survives as the two UTF-8 bytes C2 9C.
+	for _, osc := range []string{"777", "9", "99"} {
+		got := notifyPayload(osc, "beforeafter", "body")
+		if strings.ContainsRune(got, '') || strings.Contains(got, "\xc2\x9c") {
+			t.Errorf("OSC %s: C1 ST survived: %q", osc, got)
+		}
+	}
+	// And the rest of C1 with it — none of it is text anyone meant to send.
+	if got := notifyPayload("777", "abc", ""); !strings.Contains(got, "abc") {
+		t.Errorf("C1 range not stripped: %q", got)
 	}
 
 	// Unbounded titles are a denial of service against the notification
@@ -136,8 +152,12 @@ func TestNotifyConfigDefaults(t *testing.T) {
 	if got := parseNotifyOSC(" 9 "); got != "9" {
 		t.Errorf("osc = %q, want 9", got)
 	}
-	if got := parseNotifyOSC("nonsense"); got != "777" {
-		t.Errorf("unknown osc = %q, want the 777 default", got)
+	// Unset and unrecognised both mean AUTO now — the dialect is resolved per
+	// client from its TERM, since two clients can be two terminals.
+	for _, in := range []string{"", "nonsense"} {
+		if got := parseNotifyOSC(in); got != "auto" {
+			t.Errorf("parseNotifyOSC(%q) = %q, want auto", in, got)
+		}
 	}
 	if got := parseNotifyDelay("250"); got != 250*time.Millisecond {
 		t.Errorf("delay = %v, want 250ms", got)
@@ -165,7 +185,7 @@ func TestNotifyConfigDefaults(t *testing.T) {
 func TestNotifySystemPassesUserDataAsArguments(t *testing.T) {
 	evil := `"; display dialog "pwned"; "`
 	body := `back\slash and 'quotes'`
-	name, args := notifySystemCmd(evil, body)
+	name, args := notifySystemCmd(evil, body, "net.kovidgoyal.kitty")
 
 	if name == "" || len(args) < 3 {
 		t.Fatalf("notifySystemCmd = %q %q, want a command and arguments", name, args)
@@ -195,6 +215,86 @@ func TestNotifySystemPassesUserDataAsArguments(t *testing.T) {
 	}
 	if !end {
 		t.Error("no `--` before the user data: a title starting with - would parse as a flag")
+	}
+}
+
+// The dialect is a property of the TERMINAL, not of the machine — two
+// clients on one server can be two different emulators. herdr reads
+// TERM_PROGRAM and KITTY_WINDOW_ID; the daemon is not the client's process
+// and cannot see its environment, so TERM is what we get.
+func TestOSCForTerm(t *testing.T) {
+	for term, want := range map[string]string{
+		"xterm-kitty":    "99", // kitty's own protocol, strictly richer
+		"xterm-ghostty":  "9",
+		"wezterm":        "9",
+		"iterm2":         "9",
+		"xterm-256color": "777", // says nothing: fall back to the widest with a body
+		"screen":         "777",
+		"":               "777",
+	} {
+		if got := oscForTerm(term); got != want {
+			t.Errorf("oscForTerm(%q) = %q, want %q", term, got, want)
+		}
+	}
+
+	// An explicit option always wins, so a misdetected terminal has a way out
+	// that does not require winch to be right about it.
+	pinned := notifyCfg{osc: "9"}
+	if got := pinned.resolveOSC("xterm-kitty"); got != "9" {
+		t.Errorf("explicit 9 on kitty = %q, want the pin to win", got)
+	}
+	auto := notifyCfg{osc: "auto"}
+	if got := auto.resolveOSC("xterm-kitty"); got != "99" {
+		t.Errorf("auto on kitty = %q, want 99", got)
+	}
+}
+
+// The clickable path. A wrong bundle id is worse than none: the notification
+// still appears but clicking it silently does nothing, so unknown terminals
+// must produce no id and no attempt.
+func TestTerminalBundleAndNotifierCommand(t *testing.T) {
+	if got := terminalBundleID("xterm-kitty"); got != "net.kovidgoyal.kitty" {
+		t.Errorf("kitty bundle = %q", got)
+	}
+	for _, term := range []string{"xterm-256color", "screen", "", "dumb"} {
+		if got := terminalBundleID(term); got != "" {
+			t.Errorf("terminalBundleID(%q) = %q, want none for a terminal we cannot name", term, got)
+		}
+	}
+
+	// No bundle, no clickable attempt — on any platform.
+	if _, _, ok := notifyNotifierCmd("t", "b", ""); ok {
+		t.Error("offered the clickable route with no bundle to activate")
+	}
+	if runtime.GOOS == "darwin" {
+		name, args, ok := notifyNotifierCmd("t", "b", "net.kovidgoyal.kitty")
+		if !ok || name != "terminal-notifier" {
+			t.Fatalf("darwin with a bundle = %q %v %v", name, args, ok)
+		}
+		if !slices.Contains(args, "-activate") || !slices.Contains(args, "net.kovidgoyal.kitty") {
+			t.Errorf("args %v carry no -activate; the click is the entire reason to prefer it", args)
+		}
+	} else if _, _, ok := notifyNotifierCmd("t", "b", "net.kovidgoyal.kitty"); ok {
+		t.Error("offered terminal-notifier off darwin")
+	}
+}
+
+// "You can already see it" is only true if you are LOOKING. Alt-tab away and
+// the agent in your current tmux window is as invisible as any other — and it
+// was the only one winch stayed quiet about.
+func TestNotifySuppressed(t *testing.T) {
+	for _, c := range []struct {
+		looking, focused, want bool
+		why                    string
+	}{
+		{true, true, true, "on the window and looking at the terminal"},
+		{true, false, false, "on the window but alt-tabbed away"},
+		{false, true, false, "another window entirely"},
+		{false, false, false, "another window, and not even looking"},
+	} {
+		if got := notifySuppressed(c.looking, c.focused); got != c.want {
+			t.Errorf("%s: suppressed=%v, want %v", c.why, got, c.want)
+		}
 	}
 }
 

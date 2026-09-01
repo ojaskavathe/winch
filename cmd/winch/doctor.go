@@ -114,19 +114,39 @@ func (d *daemon) doctor(ctl *control) []string {
 	// Asked of tmux rather than the cached world: this is the address a
 	// notification would actually be written to, and a stale one reads as
 	// working right up until it silently is not.
-	if cls, err := ctl.run("list-clients -F " + f("#{client_name}", "#{client_control_mode}", "#{client_tty}")); err == nil {
+	// focus-events gates the suppression rule entirely: with it off tmux never
+	// asks the terminal to report focus, every client reads as focused
+	// forever, and winch stays quiet about the window you are on even when you
+	// have alt-tabbed away from the terminal completely. Worth saying out
+	// loud, because the feature fails by doing nothing.
+	fe := "off"
+	if v, err := ctl.run("show-options -gqv focus-events"); err == nil && len(v) == 1 {
+		fe = v[0]
+	}
+	note := ""
+	if fe != "on" {
+		note = "  (agents in the window you are on stay quiet even when the terminal is unfocused)"
+	}
+	r.add("  %-22s %s%s", "focus-events", fe, note)
+	if cls, err := ctl.run("list-clients -F " + f("#{client_name}", "#{client_control_mode}",
+		"#{client_tty}", "#{client_termname}", "#{client_flags}")); err == nil {
 		for _, ln := range cls {
 			p := strings.Split(ln, sep)
-			if len(p) != 3 || p[1] == "1" {
+			if len(p) != 5 || p[1] == "1" {
 				continue
 			}
 			// A client's NAME is usually its tty path, so printing both
 			// reads as a bug rather than a fact.
+			label := "notify " + p[0]
 			if p[0] == p[2] {
-				r.add("  %-22s %s", "notify client", p[2])
-			} else {
-				r.add("  %-22s %s", "notify "+p[0], p[2])
+				label = "notify client"
 			}
+			focus := "unfocused"
+			if strings.Contains(","+p[4]+",", ",focused,") {
+				focus = "focused"
+			}
+			r.add("  %-22s %s  TERM=%s  OSC %s  %s", label, p[2], p[3],
+				loadNotifyCfg(ctl).resolveOSC(p[3]), focus)
 		}
 	}
 

@@ -66,6 +66,16 @@ type tclient struct {
 	// itself writes frames to. It is how a desktop notification gets out of
 	// tmux at all (notify.go); nothing renders from it.
 	TTY string `json:"tty,omitempty"`
+	// Term is the client's TERM, which is the only handle winch has on WHICH
+	// terminal is over there — and terminals disagree about which escape
+	// sequence means "tell the desktop". Used to pick the dialect per client
+	// rather than making the user configure one globally.
+	Term string `json:"term,omitempty"`
+	// Focused reports whether that terminal currently has the OS focus.
+	// Requires `focus-events on`; without it tmux never asks the terminal to
+	// report focus and this stays true forever, which degrades to the old
+	// behaviour rather than breaking.
+	Focused bool `json:"focused,omitempty"`
 }
 
 type world struct {
@@ -150,17 +160,22 @@ func fetchWorld(c *control) (world, error) {
 		})
 	}
 
-	lines, err = c.run("list-clients -F " + f("#{client_name}", "#{client_control_mode}", "#{session_id}", "#{client_tty}"))
+	lines, err = c.run("list-clients -F " + f("#{client_name}", "#{client_control_mode}", "#{session_id}",
+		"#{client_tty}", "#{client_termname}", "#{client_flags}"))
 	if err != nil {
 		return w, err
 	}
 	attached := map[string]bool{}
 	for _, ln := range lines {
 		p := strings.Split(ln, sep)
-		if len(p) != 4 || p[1] == "1" {
+		if len(p) != 6 || p[1] == "1" {
 			continue // skip control clients (including ourselves)
 		}
-		w.Clients = append(w.Clients, tclient{Name: p[0], SessionID: p[2], TTY: p[3]})
+		// tmux carries focus in the flag STRING; there is no #{client_focused}.
+		w.Clients = append(w.Clients, tclient{
+			Name: p[0], SessionID: p[2], TTY: p[3], Term: p[4],
+			Focused: strings.Contains(","+p[5]+",", ",focused,"),
+		})
 		attached[p[2]] = true
 	}
 	for i := range w.Sessions {
