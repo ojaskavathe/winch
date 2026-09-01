@@ -64,7 +64,15 @@ type pendingCmd struct {
 // target is whatever tmux picks (most recently used); the daemon does not care
 // which session it sits on, only that the connection exists.
 func dialControl(tmuxSock string) (*control, error) {
-	cmd := exec.Command(tmuxPath, "-S", tmuxSock, "-C", "attach-session")
+	// -f ignore-size, or the daemon RESIZES the session it lands on. A
+	// control client is still a client: it carries a size (the 80x24
+	// default-size, since nothing ever tells it otherwise), and under
+	// `window-size latest` — tmux's default — a session sizes itself to the
+	// most recently attached client. So merely connecting shrank whichever
+	// session the daemon attached to down to 80 columns, and the sidebar
+	// then measured itself inside that and wrote the shrunken width back to
+	// @winch-width, persisting the damage across restarts.
+	cmd := exec.Command(tmuxPath, "-S", tmuxSock, "-C", "attach-session", "-f", "ignore-size")
 	// Never look nested, even when the daemon is spawned from inside tmux.
 	env := os.Environ()
 	filtered := env[:0]
