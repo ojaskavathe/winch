@@ -254,6 +254,42 @@ func TestIdleNeedsAStillScreen(t *testing.T) {
 	}
 }
 
+// Regression, from six live completions logged on 2026-09-01: every false
+// one carried confirms=0 or 1 and every genuine one confirms=2, because
+// motion left the still-run's clock set and idleCap then read as already
+// expired — so the first still sample after any stretch of streaming
+// completed the turn with no confirmations at all. A pause in the middle of
+// a stream is exactly that shape, and it must still take the full hold.
+func TestMotionDoesNotBypassTheHold(t *testing.T) {
+	d := &daemon{}
+	novis := map[string]bool{}
+	a := &agentInfo{kind: "claude", state: "working", win: "@2"}
+
+	// A still sample starts a run, so the run's clock is now set...
+	if d.applyAgentState("%1", a, "idle", false, novis, false) {
+		t.Fatal("one still sample completed the turn")
+	}
+	// ...the stream resumes and keeps going past idleCap...
+	a.pendingAt = a.pendingAt.Add(-idleCap - time.Second)
+	if d.applyAgentState("%1", a, "idle", false, novis, true) {
+		t.Fatal("moving sample completed the turn")
+	}
+	if !a.pendingAt.IsZero() {
+		t.Fatal("motion left the still-run clock set — idleCap now reads as expired")
+	}
+	// ...and the next pause must still serve the full hold, not walk
+	// straight through the escape hatch on a clock nobody reset.
+	if d.applyAgentState("%1", a, "idle", false, novis, false) {
+		t.Fatal("first still sample after motion completed the turn")
+	}
+	if d.applyAgentState("%1", a, "idle", false, novis, false) {
+		t.Fatal("second still sample after motion completed the turn")
+	}
+	if a.state != "working" {
+		t.Fatalf("agent left working without the full hold, got %s", a.state)
+	}
+}
+
 // motionCap is the backstop: a screen that never stops moving under an idle
 // verdict must not pin an agent in "working" forever.
 func TestMotionCapReleases(t *testing.T) {
@@ -265,7 +301,7 @@ func TestMotionCapReleases(t *testing.T) {
 		t.Fatal("first sample published")
 	}
 	// Backdate the hold past the cap rather than sleeping through it.
-	a.pendingAt = time.Now().Add(-motionCap - time.Second)
+	a.idleFirst = time.Now().Add(-motionCap - time.Second)
 	if !d.applyAgentState("%1", a, "idle", false, novis, true) || a.state != "done" {
 		t.Fatalf("motionCap did not release the hold, state=%s", a.state)
 	}

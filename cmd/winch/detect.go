@@ -91,6 +91,7 @@ type agentInfo struct {
 	lastActivity int64     // window_activity at the last screen scan
 	win          string    // pane's window (for done/notify bookkeeping)
 	lastGrid     uint64    // hash of the last scanned screen; see applyAgentState
+	idleFirst    time.Time // first idle verdict of this run, motion or not
 }
 
 type detectState struct {
@@ -673,36 +674,41 @@ func (d *daemon) applyAgentState(id string, a *agentInfo, want string, visible b
 		return false // done IS idle, flagged unseen; keep the flag
 	}
 	if want == "idle" && a.state == "working" {
-		// Keyed on pendingAt itself, not on the counter: the motion gate
-		// below zeroes the counter on every moving tick, so counting would
-		// restart this clock forever and motionCap could never elapse.
-		if a.pendingAt.IsZero() {
-			a.pendingAt = time.Now()
+		// TWO clocks, and conflating them cost a live afternoon of false
+		// completions. pendingAt times the current run of STILL samples and
+		// dies with it, because idleCap is that run's escape hatch: leaving
+		// it set across a stretch of motion makes it read as already
+		// expired, and then the first still sample completes the turn with
+		// no confirmations at all. idleFirst times idle verdicts however
+		// the screen behaves, and only motionCap reads it.
+		if a.idleFirst.IsZero() {
+			a.idleFirst = time.Now()
 		}
-		a.pendingIdle++
 		// A still screen is part of the evidence, not just a way to save a
 		// capture. While claude streams a long message the spinner line is
 		// gone (the text is using that row) and the footer shows the
 		// permissions-mode hint rather than "esc to interrupt", so nothing
 		// matches live_turn_working and the bare prompt box wins at 950 —
-		// idle, mid-turn. That frame is genuinely indistinguishable from a
-		// finished turn; what separates them is that one of them is still
-		// moving. So idle only accrues over ticks where the screen held
-		// still, and motion resets the count.
-		//
-		// pendingAt is deliberately NOT reset with it: it dates the first
-		// idle verdict, which is what motionCap measures from.
+		// idle, mid-turn. That frame is indistinguishable from a finished
+		// turn by inspection; what separates them is that one is still
+		// moving. So confirmations only accrue over ticks where the screen
+		// held still, and motion discards the run outright.
 		if moved {
-			a.pendingIdle = 0
+			a.pendingIdle, a.pendingAt = 0, time.Time{}
+		} else {
+			if a.pendingAt.IsZero() {
+				a.pendingAt = time.Now()
+			}
+			a.pendingIdle++
 		}
-		if time.Since(a.pendingAt) >= motionCap {
+		if time.Since(a.idleFirst) >= motionCap {
 			log.Printf("agent %s pane=%s idle over a moving screen for %s; believing it",
 				a.kind, id, motionCap)
 		} else if a.pendingIdle < idleConfirms && (moved || time.Since(a.pendingAt) < idleCap) {
 			return false
 		}
 	}
-	a.pendingIdle, a.pendingAt = 0, time.Time{}
+	a.pendingIdle, a.pendingAt, a.idleFirst = 0, time.Time{}, time.Time{}
 	if want == "idle" && (a.state == "working" || a.state == "blocked") && !vis[a.win] {
 		want = "done"
 	}
