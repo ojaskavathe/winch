@@ -74,6 +74,49 @@ func cmdLs(tmuxSock, winchSock string) {
 // the installed one: binds bake the store path in, and a tmux server that
 // hasn't re-sourced its config keeps executing the old binary forever —
 // while every fix ships into the new one. run-shell displays this output.
+// installedStorePath is the nix store path of the winch on the user's PATH,
+// or "" if this is not a nix install.
+func installedStorePath() string {
+	p, err := filepath.EvalSymlinks(os.Getenv("HOME") + "/.nix-profile/bin/winch")
+	if err != nil || !strings.HasPrefix(p, "/nix/store/") {
+		return ""
+	}
+	return storePrefix(p)
+}
+
+// bindStorePath is the store path baked into the M-s bind tmux is CURRENTLY
+// holding — which is whatever the config said when it was last sourced, and
+// tmux never re-reads it on its own.
+func bindStorePath(ctl *control) string {
+	if ctl == nil {
+		return ""
+	}
+	lines, err := ctl.run("list-keys -T root")
+	if err != nil {
+		return ""
+	}
+	for _, ln := range lines {
+		if !strings.Contains(ln, "winch") || !strings.Contains(ln, "toggle") {
+			continue
+		}
+		if i := strings.Index(ln, "/nix/store/"); i >= 0 {
+			return storePrefix(ln[i:])
+		}
+	}
+	return ""
+}
+
+// storePrefix trims a path down to its store entry: two paths differ as
+// builds exactly when this differs, and comparing the rest is noise.
+func storePrefix(p string) string {
+	const pre = "/nix/store/"
+	rest := strings.TrimPrefix(p, pre)
+	if i := strings.IndexAny(rest, "/\"' "); i >= 0 {
+		rest = rest[:i]
+	}
+	return pre + rest
+}
+
 func staleBindWarning() string {
 	exe, err := os.Executable()
 	if err != nil {

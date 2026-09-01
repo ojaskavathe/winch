@@ -237,9 +237,26 @@ func (d *daemon) doctor(ctl *control) []string {
 
 	// ---- checks ---------------------------------------------------------
 	r.head("checks")
-	if w := staleBindWarning(); w != "" {
-		r.check(false, "the M-s bind runs the installed build", strings.Split(w, "\n")[1:]...)
-	} else {
+	// Read the BIND, not this process. staleBindWarning compares
+	// os.Executable() to the profile, which is exactly right when a bind
+	// invokes a stale winch and it warns on its own behalf — but useless
+	// here, because doctor is normally run AS the installed binary, so it
+	// compared the profile to itself and passed while the bind was stale.
+	// Observed 2026-09-01: "all checks passed" on a server whose M-s still
+	// pointed at the previous generation. tmux never re-reads its config, so
+	// this is the normal state after every rebuild and the check that claims
+	// to catch it has to actually look.
+	bind, prof := bindStorePath(ctl), installedStorePath()
+	switch {
+	case bind == "" || prof == "":
+		r.check(true, "the M-s bind runs the installed build",
+			"not comparable (no nix store path on one side)")
+	case bind != prof:
+		r.check(false, "the M-s bind runs the installed build",
+			"bind:      "+bind,
+			"installed: "+prof,
+			"fix: tmux -S "+d.tmuxSock+" source-file ~/.config/tmux/tmux.conf")
+	default:
 		r.check(true, "the M-s bind runs the installed build")
 	}
 
