@@ -74,6 +74,20 @@ var screenScrolled = []string{
 	"  ⏵⏵ bypass permissions on (shift+tab to cycle)",
 }
 
+// Captured live 2026-09-01 from the pane that fired a false "claude
+// finished" mid-turn. The shells chip is LAST on the footer with nothing
+// after it — the case background_shell_working's trailing \s+ could not
+// match, which left NO screen rule matching and handed the verdict to the
+// weak ✳-idle title.
+var screenBgShellChipLast = []string{
+	"  1.",
+	"──────────── Database and server startup ─",
+	"❯ ",
+	"────────────",
+	"  Opus 4.8 · example-svc · ctx 38% (382k/1.0M)",
+	"  ⏵⏵ bypass permissions on · ← 2 agents · PR #7 · 2 shells",
+}
+
 // Every one of these was captured live on 2026-09-01 leading the tail of a
 // logged completion — i.e. each was classified idle, mid-turn, and fired a
 // false "claude finished". They differ from the fixtures above only in the
@@ -142,6 +156,9 @@ func TestClaudeScreenStates(t *testing.T) {
 		// shell is still going. Calling it working cost the completion
 		// notification entirely — the agent never reached one.
 		{"bg shell is background, not working", screenBgShell, "", "background", false},
+		// The chip ends the line. Must still outrank the ✳-idle title.
+		{"bg shell chip last on footer", screenBgShellChipLast,
+			"✳ Database and server startup", "background", false},
 		{"api retry is still the turn", screenAPIRetry, "", "working", false},
 		{"scrolled transcript freezes", screenScrolled, "", "", true},
 		// blocked screen evidence outranks the weak ✳-idle title

@@ -23,7 +23,7 @@
 #     the rest of each pattern (a verb, an ellipsis, an elapsed time) is
 #     specific enough that widening the bullet cannot false-positive.
 id = "claude"
-version = "2026.09.01.1"
+version = "2026.09.01.2"
 aliases = ["claude-code"]
 
 [[rules]]
@@ -150,12 +150,20 @@ line_regex = ['^\s*[\x{002A}\x{00B7}\x{2722}-\x{273F}].*\b[1-9]\d*\s+shells?\s+s
 [[rules]]
 id = "background_shell_working"
 # winch: state changed from herdr's working, per shells_still_running.
+#
+# \s* after the shell count, not \s+. The chip is usually LAST on the
+# footer, so there is nothing after it to match:
+#   ⏵⏵ bypass permissions on · ← 2 agents · PR #7 · 2 shells
+# With \s+ this rule never fired on that line, no screen rule matched at
+# all, and the weak osc_title_idle (prio 250) won by default — so a pane
+# with live background shells read as done rather than background.
+# Observed on a real capture 2026-09-01.
 label = "shell still running"
 state = "background"
 priority = 965
 region = "bottom_non_empty_lines(5)"
 visible_working = true
-line_regex = ['^\s*[⏸⏵].*·\s+[1-9]\d*\s+shells?\s+(·|$)']
+line_regex = ['^\s*[⏸⏵].*·\s+[1-9]\d*\s+shells?\s*(·|$)']
 
 [[rules]]
 id = "background_mcp_task_working"
