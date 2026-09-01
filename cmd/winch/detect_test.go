@@ -325,8 +325,16 @@ func TestBackgroundIsACompletion(t *testing.T) {
 	novis := map[string]bool{}
 
 	a := &agentInfo{kind: "claude", state: "working", win: "@2"}
-	if !d.applyAgentState("%1", a, "background", false, novis, false) {
-		t.Fatal("background held back; it is positive evidence, not inferred")
+	// Confirmed like any other soft transition. It publishes on positive
+	// text, but that text is a footer chip that truncates as the pane
+	// rewraps — see TestBackgroundDoesNotFlap.
+	for i := 0; i < idleConfirms-1; i++ {
+		if d.applyAgentState("%1", a, "background", false, novis, true) {
+			t.Fatalf("background published on sample %d", i)
+		}
+	}
+	if !d.applyAgentState("%1", a, "background", false, novis, true) {
+		t.Fatal("background never published")
 	}
 	if a.state != "background" {
 		t.Fatalf("want background, got %s", a.state)
@@ -338,6 +346,88 @@ func TestBackgroundIsACompletion(t *testing.T) {
 	}
 	if a.state != "idle" {
 		t.Fatalf("side work finishing should land on idle, got %s", a.state)
+	}
+}
+
+// Measured live on 2026-09-01, pane %2824:
+//
+//	16:02:07.261  working->background
+//	16:02:07.561  background->working    300ms, one tick
+//	16:02:09.274  working->background
+//	16:02:09.574  background->working
+//
+// The footer chip truncates in and out as the pane rewraps, so the verdict
+// alternates every scan. Neither side may publish while it does — and the
+// confirm count is per target, or three samples split across two verdicts
+// would publish whichever happened to land third.
+func TestBackgroundDoesNotFlap(t *testing.T) {
+	d := &daemon{}
+	novis := map[string]bool{}
+	a := &agentInfo{kind: "claude", state: "working", win: "@2"}
+
+	for i := 0; i < 20; i++ {
+		want := "background"
+		if i%2 == 1 {
+			want = "working"
+		}
+		if d.applyAgentState("%1", a, want, false, novis, true) {
+			t.Fatalf("sample %d (%s) published mid-flap", i, want)
+		}
+	}
+	if a.state != "working" {
+		t.Fatalf("flap moved the agent to %s", a.state)
+	}
+	// The chip settles: three in a row now earns it.
+	for i := 0; i < idleConfirms-1; i++ {
+		d.applyAgentState("%1", a, "background", false, novis, true)
+	}
+	if !d.applyAgentState("%1", a, "background", false, novis, true) || a.state != "background" {
+		t.Fatalf("settled chip never published, state=%s", a.state)
+	}
+}
+
+// The confirm count is per TARGET, and this is the case that needs it:
+// working -> idle and working -> background are BOTH held, so alternating
+// between them never hits the unconditional reset that an unheld sample
+// would trigger. Without a per-target counter, three samples split across
+// two disagreeing verdicts publish whichever lands third — an agent
+// declared finished by votes that never agreed on anything.
+func TestSplitVerdictsDoNotAccumulate(t *testing.T) {
+	d := &daemon{}
+	novis := map[string]bool{}
+	a := &agentInfo{kind: "claude", state: "working", win: "@2"}
+
+	for i := 0; i < 20; i++ {
+		want := "idle"
+		if i%2 == 1 {
+			want = "background"
+		}
+		if d.applyAgentState("%1", a, want, false, novis, false) {
+			t.Fatalf("sample %d (%s) published on a split verdict", i, want)
+		}
+	}
+	if a.state != "working" {
+		t.Fatalf("split verdicts moved the agent to %s", a.state)
+	}
+}
+
+// The still-screen requirement must NOT reach the reflow transitions. A
+// running turn repaints constantly, so demanding stillness for
+// background -> working is a condition that can never be met, and the agent
+// would sit in background for the whole next turn.
+func TestReflowDoesNotRequireAStillScreen(t *testing.T) {
+	d := &daemon{}
+	novis := map[string]bool{}
+	a := &agentInfo{kind: "claude", state: "background", win: "@2"}
+
+	for i := 0; i < idleConfirms-1; i++ {
+		d.applyAgentState("%1", a, "working", false, novis, true) // moving
+	}
+	if !d.applyAgentState("%1", a, "working", false, novis, true) {
+		t.Fatal("a moving screen could not confirm background -> working")
+	}
+	if a.state != "working" {
+		t.Fatalf("stuck in %s", a.state)
 	}
 }
 

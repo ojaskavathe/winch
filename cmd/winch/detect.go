@@ -79,6 +79,7 @@ type agentInfo struct {
 	grace        time.Time
 	pendingIdle  int       // consecutive idle samples held back
 	pendingAt    time.Time // when the hold started
+	pendingWant  string    // the state those samples are voting FOR
 	title        string    // conversation name (title minus ornament), for the card
 	seq          int64     // monotonic stamp of the last state change (ordering)
 	lastActivity int64     // window_activity at the last screen scan
@@ -668,6 +669,35 @@ func (d *daemon) wrappedKind(pid string) string {
 	return kind
 }
 
+// holdRule says whether a transition must be confirmed before it publishes,
+// and whether a STILL screen is part of that confirmation.
+//
+// Three groups, and the distinction is what the verdict is made of:
+//
+//   - Absence of evidence — working/background -> idle. The turn looks over
+//     because nothing says otherwise, which is also what a pause mid-turn
+//     looks like. Confirm, and require the screen to hold still, because a
+//     screen that is still changing is the one thing that separates them.
+//   - Reflow — working <-> background. Both sides have positive text, but
+//     the footer chip ("· 1 shell ·") truncates in and out as the pane
+//     rewraps, and measured live on 2026-09-01 that alternated every
+//     single tick: working->background->working, 300ms each way. Confirm,
+//     but do NOT ask for stillness: a running turn repaints constantly, so
+//     that condition could never be met and the agent would stick.
+//   - Everything else publishes instantly. Blocked is urgent and its
+//     evidence is a whole prompt box. idle -> working is the moment a turn
+//     starts, and making you wait for it buys nothing.
+func holdRule(from, want string) (hold, needStill bool) {
+	switch {
+	case want == "idle" && (from == "working" || from == "background"):
+		return true, true
+	case from == "working" && want == "background",
+		from == "background" && want == "working":
+		return true, false
+	}
+	return false, false
+}
+
 // applyAgentState runs the anti-flap policy and publishes the transition.
 // Blocked and working land instantly; working -> idle must survive
 // idleConfirms CONSECUTIVE samples (or idleCap of wall time) first — even
@@ -679,7 +709,16 @@ func (d *daemon) applyAgentState(id string, a *agentInfo, want string, visible b
 	if want == "idle" && a.state == "done" {
 		return false // done IS idle, flagged unseen; keep the flag
 	}
-	if want == "idle" && a.state == "working" {
+	hold, needStill := holdRule(a.state, want)
+	// The count is per TARGET. A screen alternating background/working
+	// would otherwise accrue three samples between two different verdicts
+	// and publish whichever landed third, which is the flap wearing the
+	// anti-flap's clothes.
+	if want != a.pendingWant {
+		a.pendingIdle, a.pendingAt, a.pendingWant = 0, time.Time{}, want
+	}
+	if hold {
+		moved = moved && needStill
 		// pendingAt times the CURRENT RUN of still samples and dies with it.
 		// idleCap is that run's escape hatch, so leaving the stamp set
 		// across a stretch of motion makes it read as already expired, and
@@ -708,7 +747,7 @@ func (d *daemon) applyAgentState(id string, a *agentInfo, want string, visible b
 			return false
 		}
 	}
-	a.pendingIdle, a.pendingAt = 0, time.Time{}
+	a.pendingIdle, a.pendingAt, a.pendingWant = 0, time.Time{}, ""
 	// A completion nobody watched becomes "done" and keeps the unseen flag.
 	// Deliberately NOT reachable from "background": that transition is the
 	// side work finishing, and the turn it belonged to already announced
