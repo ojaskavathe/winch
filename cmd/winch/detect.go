@@ -520,6 +520,58 @@ func (d *daemon) notifyDue(ctl *control, w *world, now time.Time) {
 	}
 }
 
+// notifyWhere names the agent's location the way the sidebar does, and for
+// the same reason: tmux renames a window after its foreground process, so
+// the raw name is "nvim", or ".claude-wrapped" once nix has wrapped it.
+// "claude finished in winch:.claude-wrapped" tells you nothing you did not
+// already know from the word "claude".
+//
+// So a window name that merely echoes what is running is dropped, exactly as
+// tabLabel/autoNamed do it (tui.go), and the index stands in — but only when
+// the session has more than one window, since "sr · 1" is noise when 1 is
+// the only one there is. This is also herdr's rule: their tab_display_name
+// is the user's custom name or the tab number, never a process name.
+func notifyWhere(w *world, winID string) string {
+	var sess, name string
+	idx := 0
+	for _, x := range w.Windows {
+		if x.ID == winID {
+			sess, name, idx = x.SessionID, x.Name, x.Index
+			break
+		}
+	}
+	if sess == "" {
+		return ""
+	}
+	label := ""
+	for _, s := range w.Sessions {
+		if s.ID == sess {
+			label = s.Name
+			break
+		}
+	}
+	auto := name == ""
+	for _, p := range w.Panes {
+		if !auto && p.WindowID == winID && baseCmd(name) == baseCmd(p.Command) {
+			auto = true
+			break
+		}
+	}
+	if !auto {
+		return label + " · " + name
+	}
+	n := 0
+	for _, x := range w.Windows {
+		if x.SessionID == sess {
+			n++
+		}
+	}
+	if n > 1 {
+		return label + " · " + strconv.Itoa(idx)
+	}
+	return label
+}
+
 // notifyFire delivers one agent's notification two ways: a tmux message to
 // attached clients that are NOT looking at the pane (they can't already see
 // it needs them), and a desktop notification to those same clients' terminals
@@ -541,17 +593,24 @@ func (d *daemon) notifyFire(ctl *control, w *world, id string, a *agentInfo) {
 	for _, s := range w.Sessions {
 		sessName[s.ID] = s.Name
 	}
-	where := sessName[sessOf[a.win]] + ":" + winName[a.win]
+	where := notifyWhere(w, a.win)
 
+	// The conversation name leads, because it is what tells you WHICH agent
+	// this is; the location is how to get there, and clicking the
+	// notification already does that. herdr's toast carries only the
+	// location (actions.rs:3244) — it has no per-conversation name to use.
 	title, body := a.kind+" needs you", where
 	if a.state == "done" || a.state == "background" {
 		title = a.kind + " finished"
 	}
+	if a.title != "" {
+		body = a.title
+		if where != "" {
+			body += " · " + where
+		}
+	}
 	if a.reason != "" {
 		body += " — " + a.reason
-	}
-	if a.title != "" {
-		body += " — " + a.title
 	}
 
 	cfg := d.det.ncfg
@@ -565,7 +624,7 @@ func (d *daemon) notifyFire(ctl *control, w *world, id string, a *agentInfo) {
 		if bundle == "" {
 			bundle = terminalBundleID(c.Term)
 		}
-		cmds = append(cmds, "display-message -c "+q(c.Name)+" "+q("winch: "+title+" in "+where))
+		cmds = append(cmds, "display-message -c "+q(c.Name)+" "+q("winch: "+title+" — "+body))
 		if c.TTY == "" || cfg.via == "system" {
 			continue
 		}
