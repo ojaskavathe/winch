@@ -86,9 +86,34 @@
           #
           # nix's laziness is what makes this work: with the flag false the
           # ldflags never reference winch-notify, so it is never built.
+          # withTmux pins the tmux BINARY winch runs. Off by default, and the
+          # default is the correctness argument rather than the size one.
+          #
+          # winch never starts a server; it attaches to one somebody else
+          # started (control.go, equalize.go). tmux checks PROTOCOL_VERSION on
+          # connect and a client that disagrees is refused outright —
+          # "protocol version mismatch (client N, server M)", exit 1
+          # (client.c:670). So the binary has to match the SERVER's version,
+          # which is a property of the user's tmux, not of winch's build day.
+          # Pinning guarantees exactly the wrong one the moment winch's
+          # nixpkgs drifts from theirs; it works today only because both
+          # resolve to the same tmux-3.7b. Unpinned, tmuxPath falls back to
+          # "tmux" on PATH — and winch is invariably invoked from a tmux
+          # bind, so that is the very binary running the server.
+          #
+          # It also drops tmux, ncurses and libevent (~6MB) from the closure,
+          # which is most of it.
+          #
+          # Turn it on where winch's PATH will not have tmux — launchd, or a
+          # GUI-spawned process. It does NOT make winch self-contained: a
+          # server still has to come from somewhere, since winch only ever
+          # attaches to one.
+          #
+          #   winch.override { withTmux = true; }
           mkWinch = pkgs.lib.makeOverridable (
             {
               withNotifier ? isDarwin,
+              withTmux ? false,
             }:
             pkgs.buildGoModule {
               pname = "winch";
@@ -98,7 +123,7 @@
               subPackages = [ "cmd/winch" ];
               vendorHash = "sha256-W78PHNVSHhTrtZ6/7HfdmD+LjniySClfNbWpLaKTDRY=";
 
-              ldflags = [
+              ldflags = pkgs.lib.optionals withTmux [
                 "-X"
                 "main.tmuxPath=${pkgs.tmux}/bin/tmux"
               ]
