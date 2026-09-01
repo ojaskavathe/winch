@@ -85,6 +85,7 @@ type agentInfo struct {
 	lastActivity int64     // window_activity at the last screen scan
 	win          string    // pane's window (for done/notify bookkeeping)
 	lastGrid     uint64    // hash of the last scanned screen; see applyAgentState
+	lastRule     string    // manifest rule behind the latest verdict, for the log
 }
 
 type detectState struct {
@@ -384,6 +385,11 @@ func (d *daemon) detectTickRun(ctl *control, w *world) {
 				// the daemon means racing a screen that has already moved
 				// on — which is exactly how this went the first time.
 				was, confirms := s.a.state, s.a.pendingIdle
+				// Which rule spoke, carried on the agent so the transition
+				// log can name it. Every state line without this is a
+				// verdict with no attribution, and chasing a flap without
+				// knowing which two rules are disagreeing is guesswork.
+				s.a.lastRule = v.rule
 				switch {
 				case !ok:
 					apply(s.id, s.a, "idle", false, "", moved) // known agent, silent screen
@@ -759,7 +765,7 @@ func (d *daemon) applyAgentState(id string, a *agentInfo, want string, visible b
 	if a.state == want {
 		return false
 	}
-	log.Printf("agent %s pane=%s state=%s->%s", a.kind, id, orDash(a.state), want)
+	log.Printf("agent %s pane=%s state=%s->%s rule=%s", a.kind, id, orDash(a.state), want, orDash(a.lastRule))
 	a.state = want
 	// Stamp WHEN, monotonically. Equal-attention agents order by most
 	// recently changed — herdr's priority tie-break — because among five
