@@ -74,6 +74,38 @@ var screenScrolled = []string{
 	"  ⏵⏵ bypass permissions on (shift+tab to cycle)",
 }
 
+// Every one of these was captured live on 2026-09-01 leading the tail of a
+// logged completion — i.e. each was classified idle, mid-turn, and fired a
+// false "claude finished". They differ from the fixtures above only in the
+// bullet glyph, which herdr's six-literal class does not contain.
+var spinnerBullets = []string{
+	"✳ Whirring… (16m 14s · ↓ 69.0k tokens)",
+	"✳ Elucidating… (1m 3s · ↓ 3.6k tokens)",
+	"✳ Puzzling… (25s · ↓ 1.2k tokens)",
+	"✳ Sautéing… (3m 44s · ↓ 16.8k tokens)",
+	"✻ Cogitating… (1m 14s · ↓ 2.0k tokens)",
+	"✽ Pondering… (34s · ↓ 2.1k tokens · thinking)",
+}
+
+func TestEverySpinnerBulletReadsWorking(t *testing.T) {
+	m := claudeManifest(t)
+	for _, line := range spinnerBullets {
+		screen := []string{
+			line,
+			"────────────────────────────────",
+			"❯ ",
+			"────────────────────────────────",
+			"  Opus 4.8 · demo-web · ctx 8% (76k/1.0M)",
+			"  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+		}
+		v, ok := m.eval(newSnapshot(screen, "✳ JS heap leak"), false)
+		if !ok || v.state != "working" {
+			t.Errorf("%q: got ok=%v state=%q rule=%s, want working",
+				line, ok, v.state, v.rule)
+		}
+	}
+}
+
 func claudeManifest(t *testing.T) *cManifest {
 	t.Helper()
 	m := loadManifests()["claude"]

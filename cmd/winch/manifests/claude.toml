@@ -14,6 +14,14 @@
 #     completion notification entirely
 #   - api_retry_working and scrolled_transcript, neither of which herdr has
 #   - `label` on blocked/background rules, which feeds the card's reason
+#   - the status-bullet class is a RANGE, \x{2722}-\x{273F}, not herdr's six
+#     literals. Their set omits ✳ U+2733, and claude's spinner uses it:
+#     nine distinct "✳ Whirring… (16m 14s · ↓ 69.0k tokens)" lines were
+#     captured live on 2026-09-01, every one classified idle and every one
+#     firing a false completion — one of them sixteen minutes into a turn.
+#     Enumerating glyphs loses to claude adding one; the range cannot, and
+#     the rest of each pattern (a verb, an ellipsis, an elapsed time) is
+#     specific enough that widening the bullet cannot false-positive.
 id = "claude"
 version = "2026.09.01.1"
 aliases = ["claude-code"]
@@ -41,7 +49,7 @@ state = "working"
 priority = 972
 region = "bottom_non_empty_lines(12)"
 visible_working = true
-line_regex = ['^\s*[\x{002A}\x{00B7}\x{2722}\x{2736}\x{273B}\x{273D}]\s+.*\bwill retry in\b']
+line_regex = ['^\s*[\x{002A}\x{00B7}\x{2722}-\x{273F}]\s+.*\bwill retry in\b']
 
 [[rules]]
 id = "scrolled_transcript"
@@ -121,7 +129,7 @@ region = "bottom_non_empty_lines(12)"
 visible_working = true
 any = [
   { line_regex = ['^\s*[⏸⏵].*esc to interrupt(\s|·|$)'] },
-  { line_regex = ['^\s*[\x{002A}\x{00B7}\x{2722}\x{2736}\x{273B}\x{273D}]\s+\S.*…(\s+\(\d+[smh](\s|·)|\s*$)'] },
+  { line_regex = ['^\s*[\x{002A}\x{00B7}\x{2722}-\x{273F}]\s+\S.*…(\s+\(\d+[smh](\s|·)|\s*$)'] },
 ]
 
 [[rules]]
@@ -137,7 +145,7 @@ state = "background"
 priority = 966
 region = "bottom_non_empty_lines(12)"
 visible_working = true
-line_regex = ['^\s*[\x{002A}\x{00B7}\x{2722}\x{2736}\x{273B}\x{273D}].*\b[1-9]\d*\s+shells?\s+still running']
+line_regex = ['^\s*[\x{002A}\x{00B7}\x{2722}-\x{273F}].*\b[1-9]\d*\s+shells?\s+still running']
 
 [[rules]]
 id = "background_shell_working"
@@ -160,7 +168,7 @@ state = "background"
 priority = 965
 region = "bottom_non_empty_lines(12)"
 visible_working = true
-regex = ['(?m)^[\x{002A}\x{00B7}\x{2722}\x{2736}\x{273B}\x{273D}][ \t]+\S[^\n]*?(\n[ \t]+[^\n]*?){0,3}·([ \t]+|\n[ \t]*)[1-9]\d*([ \t]+|\n[ \t]*)MCP([ \t]+|\n[ \t]*)tasks?([ \t]+|\n[ \t]*)still([ \t]+|\n[ \t]*)running[ \t]*$']
+regex = ['(?m)^[\x{002A}\x{00B7}\x{2722}-\x{273F}][ \t]+\S[^\n]*?(\n[ \t]+[^\n]*?){0,3}·([ \t]+|\n[ \t]*)[1-9]\d*([ \t]+|\n[ \t]*)MCP([ \t]+|\n[ \t]*)tasks?([ \t]+|\n[ \t]*)still([ \t]+|\n[ \t]*)running[ \t]*$']
 not = [
   { contains = ["do you want to proceed?"] },
   { contains = ["esc to cancel"] },
@@ -176,7 +184,7 @@ state = "working"
 priority = 965
 region = "last_non_empty_above_prompt_box"
 visible_working = true
-line_regex = ['^\s*[\x{002A}\x{00B7}\x{2722}\x{2736}\x{273B}\x{273D}]\s+Waiting for [1-9]\d* background agents? to finish\s*$']
+line_regex = ['^\s*[\x{002A}\x{00B7}\x{2722}-\x{273F}]\s+Waiting for [1-9]\d* background agents? to finish\s*$']
 
 [[rules]]
 id = "mcp_elicitation_prompt"
