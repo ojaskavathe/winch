@@ -290,20 +290,23 @@ func TestMotionDoesNotBypassTheHold(t *testing.T) {
 	}
 }
 
-// motionCap is the backstop: a screen that never stops moving under an idle
-// verdict must not pin an agent in "working" forever.
-func TestMotionCapReleases(t *testing.T) {
+// A screen that never settles must NEVER complete the turn, however long it
+// goes on. A 30s cap that "believed" the idle verdict after enough motion
+// shipped on 2026-09-01 and immediately notified against a live progress bar
+// at 40%; the premise was backwards. Waiting cannot turn evidence of work
+// into evidence of completion.
+func TestMovingScreenNeverCompletes(t *testing.T) {
 	d := &daemon{}
 	novis := map[string]bool{}
 
 	a := &agentInfo{kind: "claude", state: "working", win: "@2"}
-	if d.applyAgentState("%1", a, "idle", false, novis, true) {
-		t.Fatal("first sample published")
+	for i := 0; i < 500; i++ {
+		if d.applyAgentState("%1", a, "idle", false, novis, true) {
+			t.Fatalf("sample %d completed the turn over a moving screen", i)
+		}
 	}
-	// Backdate the hold past the cap rather than sleeping through it.
-	a.idleFirst = time.Now().Add(-motionCap - time.Second)
-	if !d.applyAgentState("%1", a, "idle", false, novis, true) || a.state != "done" {
-		t.Fatalf("motionCap did not release the hold, state=%s", a.state)
+	if a.state != "working" {
+		t.Fatalf("agent left working, got %s", a.state)
 	}
 }
 

@@ -62,22 +62,15 @@ var detectTick, detectFastTick, idleCap, detectIdleTick, startupGrace = func() (
 		3 * time.Second // a just-spawned agent is not judged yet
 }()
 
-// motionCap is the backstop on the still-screen gate in applyAgentState: how
-// long idle verdicts may keep arriving over a MOVING screen before we stop
-// disbelieving them.
-//
-// It should never fire. It exists because the gate's failure mode is an agent
-// stuck working forever, which costs you the notification you were waiting
-// for, and there is no way to be certain no pane animates something under an
-// idle verdict indefinitely. Generous on purpose: a streaming message is
-// seconds, so this cannot manufacture the false completion it exists to
-// prevent, and it logs when it trips so the case stops being hypothetical.
-var motionCap = func() time.Duration {
-	if testFast {
-		return 2 * time.Second
-	}
-	return 30 * time.Second
-}()
+// There is deliberately NO wall-clock cap on the still-screen gate. One was
+// tried (30s, "believe the idle verdict if the screen never settles") to stop
+// a pane animating something forever from pinning an agent in "working". It
+// fired on 2026-09-01 against a live progress bar at 40% and sent a
+// "finished" notification for an agent that was plainly working, because the
+// premise is backwards: a screen that keeps moving is evidence AGAINST idle,
+// so waiting longer must never convert it into a completion. The failure
+// mode it guarded costs a missed notification; the one it caused costs a
+// wrong one, and any genuinely idle screen goes still within three ticks.
 
 type agentInfo struct {
 	kind         string // manifest id: claude | codex | grok | ...
@@ -91,7 +84,6 @@ type agentInfo struct {
 	lastActivity int64     // window_activity at the last screen scan
 	win          string    // pane's window (for done/notify bookkeeping)
 	lastGrid     uint64    // hash of the last scanned screen; see applyAgentState
-	idleFirst    time.Time // first idle verdict of this run, motion or not
 }
 
 type detectState struct {
@@ -674,16 +666,13 @@ func (d *daemon) applyAgentState(id string, a *agentInfo, want string, visible b
 		return false // done IS idle, flagged unseen; keep the flag
 	}
 	if want == "idle" && a.state == "working" {
-		// TWO clocks, and conflating them cost a live afternoon of false
-		// completions. pendingAt times the current run of STILL samples and
-		// dies with it, because idleCap is that run's escape hatch: leaving
-		// it set across a stretch of motion makes it read as already
-		// expired, and then the first still sample completes the turn with
-		// no confirmations at all. idleFirst times idle verdicts however
-		// the screen behaves, and only motionCap reads it.
-		if a.idleFirst.IsZero() {
-			a.idleFirst = time.Now()
-		}
+		// pendingAt times the CURRENT RUN of still samples and dies with it.
+		// idleCap is that run's escape hatch, so leaving the stamp set
+		// across a stretch of motion makes it read as already expired, and
+		// then the first still sample completes the turn with no
+		// confirmations at all — measured live, and the reason this
+		// comment exists.
+		//
 		// A still screen is part of the evidence, not just a way to save a
 		// capture. While claude streams a long message the spinner line is
 		// gone (the text is using that row) and the footer shows the
@@ -701,14 +690,11 @@ func (d *daemon) applyAgentState(id string, a *agentInfo, want string, visible b
 			}
 			a.pendingIdle++
 		}
-		if time.Since(a.idleFirst) >= motionCap {
-			log.Printf("agent %s pane=%s idle over a moving screen for %s; believing it",
-				a.kind, id, motionCap)
-		} else if a.pendingIdle < idleConfirms && (moved || time.Since(a.pendingAt) < idleCap) {
+		if a.pendingIdle < idleConfirms && (moved || time.Since(a.pendingAt) < idleCap) {
 			return false
 		}
 	}
-	a.pendingIdle, a.pendingAt, a.idleFirst = 0, time.Time{}, time.Time{}
+	a.pendingIdle, a.pendingAt = 0, time.Time{}
 	if want == "idle" && (a.state == "working" || a.state == "blocked") && !vis[a.win] {
 		want = "done"
 	}
