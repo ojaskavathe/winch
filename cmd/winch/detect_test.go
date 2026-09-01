@@ -53,6 +53,27 @@ var screenBgShell = []string{
 	"  Opus 4.8 · demo-copilot-v45",
 }
 
+// Both captured live on 2026-09-01 from panes that fired a false
+// "claude finished". The retry screen is STILL while it counts down, so
+// only its text can save it; the scrolled one is a view we cannot judge.
+var screenAPIRetry = []string{
+	"✻ Waiting for API response · will retry in 2m 40s · check your network",
+	"────────────────────────────────",
+	"❯ ",
+	"────────────────────────────────",
+	"  Opus 4.8 · demo-api · ctx 12% (123k/1.0M)",
+	"  ⏵⏵ bypass permissions on (shift+tab to cycle) · PR #123",
+}
+
+var screenScrolled = []string{
+	"  ⎿  $ app docs list 2>&1 | head -60          Jump to bottom (click) ↓",
+	"────────────────────────────────",
+	"❯ ",
+	"────────────────────────────────",
+	"  Opus 4.8 · demo-api · ctx 13% (129k/1.0M)",
+	"  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+}
+
 func claudeManifest(t *testing.T) *cManifest {
 	t.Helper()
 	m := loadManifests()["claude"]
@@ -85,7 +106,12 @@ func TestClaudeScreenStates(t *testing.T) {
 		{"working beats prompt box", screenWorking, "", "working", false},
 		{"permission prompt", screenBlocked, "", "blocked", false},
 		{"transcript viewer freezes", screenViewer, "", "", true},
-		{"bg shell still working", screenBgShell, "", "working", false},
+		// Not "working": the turn ended, the agent takes input, only the
+		// shell is still going. Calling it working cost the completion
+		// notification entirely — the agent never reached one.
+		{"bg shell is background, not working", screenBgShell, "", "background", false},
+		{"api retry is still the turn", screenAPIRetry, "", "working", false},
+		{"scrolled transcript freezes", screenScrolled, "", "", true},
 		// blocked screen evidence outranks the weak ✳-idle title
 		{"blocked beats idle title", screenBlocked, "✳ some task", "blocked", false},
 	} {
@@ -287,6 +313,31 @@ func TestMotionDoesNotBypassTheHold(t *testing.T) {
 	}
 	if a.state != "working" {
 		t.Fatalf("agent left working without the full hold, got %s", a.state)
+	}
+}
+
+// A turn that ends with a background shell running is a turn that ended:
+// it publishes immediately (positive evidence, unlike inferred idle), and
+// the side work finishing afterwards must NOT look like a second
+// completion — one turn, one notification.
+func TestBackgroundIsACompletion(t *testing.T) {
+	d := &daemon{}
+	novis := map[string]bool{}
+
+	a := &agentInfo{kind: "claude", state: "working", win: "@2"}
+	if !d.applyAgentState("%1", a, "background", false, novis, false) {
+		t.Fatal("background held back; it is positive evidence, not inferred")
+	}
+	if a.state != "background" {
+		t.Fatalf("want background, got %s", a.state)
+	}
+	// Shells exit: idle, NOT done. done here would arm a second
+	// notification for a turn that already announced itself.
+	for i := 0; i < idleConfirms; i++ {
+		d.applyAgentState("%1", a, "idle", false, novis, false)
+	}
+	if a.state != "idle" {
+		t.Fatalf("side work finishing should land on idle, got %s", a.state)
 	}
 }
 

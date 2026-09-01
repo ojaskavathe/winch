@@ -176,7 +176,9 @@ func compileManifest(b []byte) (*cManifest, error) {
 			return nil, fmt.Errorf("rule %s: %w", rt.ID, err)
 		}
 		switch rt.State {
-		case "", "idle", "working", "blocked", "unknown":
+		// "background" is winch-only: the turn is over and the agent takes
+		// input, but side work it spawned is still going. See claude.toml.
+		case "", "idle", "working", "blocked", "background", "unknown":
 		default:
 			return nil, fmt.Errorf("rule %s: bad state %q", rt.ID, rt.State)
 		}

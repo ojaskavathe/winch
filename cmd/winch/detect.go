@@ -254,11 +254,20 @@ func (d *daemon) detectTickRun(ctl *control, w *world) {
 			if a.state == "done" && prev != "done" {
 				doneNew = append(doneNew, id)
 			}
+			// A turn that ends with side work still going is a turn that
+			// ended. Gated on the window being unwatched for exactly the
+			// reason "done" is: a completion you were already looking at is
+			// not news. Without this the agent sat in working until the last
+			// shell exited and the turn's notification never came at all.
+			if a.state == "background" && (prev == "working" || prev == "blocked") && !vis[a.win] {
+				doneNew = append(doneNew, id)
+			}
 		}
-		// The reason rides the state: set while blocked (even when the
-		// matching rule changes without a transition), gone otherwise.
+		// The reason rides the state: set while blocked or in background
+		// (even when the matching rule changes without a transition), gone
+		// otherwise.
 		want = a.state
-		if want != "blocked" {
+		if want != "blocked" && want != "background" {
 			label = ""
 		}
 		if a.reason != label {
@@ -522,7 +531,7 @@ func (d *daemon) notifyFire(ctl *control, w *world, id string, a *agentInfo) {
 	where := sessName[sessOf[a.win]] + ":" + winName[a.win]
 
 	title, body := a.kind+" needs you", where
-	if a.state == "done" {
+	if a.state == "done" || a.state == "background" {
 		title = a.kind + " finished"
 	}
 	if a.reason != "" {
@@ -577,13 +586,15 @@ func (d *daemon) notifyFire(ctl *control, w *world, id string, a *agentInfo) {
 // can reference for free: "!2 ✓1 ✻3" (blocked / done / working counts;
 // empty when quiet). Zero-cost render — no #() and no process spawns.
 func (d *daemon) pushStatusOpt(ctl *control, w *world) {
-	nb, nd, nw := 0, 0, 0
+	nb, nd, ng, nw := 0, 0, 0, 0
 	for _, a := range d.det.agents {
 		switch a.state {
 		case "blocked":
 			nb++
 		case "done":
 			nd++
+		case "background":
+			ng++
 		case "working":
 			nw++
 		}
@@ -594,6 +605,9 @@ func (d *daemon) pushStatusOpt(ctl *control, w *world) {
 	}
 	if nd > 0 {
 		parts = append(parts, fmt.Sprintf("#[fg=green]✓%d#[default]", nd))
+	}
+	if ng > 0 {
+		parts = append(parts, fmt.Sprintf("#[fg=magenta]⚙%d#[default]", ng))
 	}
 	if nw > 0 {
 		parts = append(parts, fmt.Sprintf("#[fg=yellow]✻%d#[default]", nw))
@@ -695,6 +709,11 @@ func (d *daemon) applyAgentState(id string, a *agentInfo, want string, visible b
 		}
 	}
 	a.pendingIdle, a.pendingAt = 0, time.Time{}
+	// A completion nobody watched becomes "done" and keeps the unseen flag.
+	// Deliberately NOT reachable from "background": that transition is the
+	// side work finishing, and the turn it belonged to already announced
+	// itself when it entered background. Promoting again would notify twice
+	// for one turn.
 	if want == "idle" && (a.state == "working" || a.state == "blocked") && !vis[a.win] {
 		want = "done"
 	}

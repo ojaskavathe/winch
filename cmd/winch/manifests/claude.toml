@@ -1,9 +1,21 @@
-# claude code detection rules. Ported from herdr's manifest (Apache 2.0,
-# v2026.08.19.1) with winch adjustments: no osc_progress rules (tmux
-# swallows OSC 9;4), plus a steadier background-shell working rule (the
-# footer "· 1 shell ·" chip truncates in and out on narrow panes).
+# claude code detection rules. Resynced from herdr's manifest (Apache 2.0,
+# v2026.08.29.1). Their min_engine_version key is theirs, not ours: it gates
+# their hosted manifest updates against engine features (3 is required for
+# top_non_empty_lines), and we bundle at build time, so it is dropped.
+#
+# Deliberate winch differences, all marked "winch:" at the rule:
+#   - no osc_progress rules: tmux swallows OSC 9;4, so the region is always
+#     empty and an idle rule reading it can only ever mislead
+#   - a steadier background-shell rule (the footer "· 1 shell ·" chip
+#     truncates in and out on narrow panes)
+#   - permission_prompt_anywhere, for the numbered yes/no list unboxed
+#   - state = "background" where herdr says working: side work outliving a
+#     turn is not the turn still running, and calling it working cost the
+#     completion notification entirely
+#   - api_retry_working and scrolled_transcript, neither of which herdr has
+#   - `label` on blocked/background rules, which feeds the card's reason
 id = "claude"
-version = "2026.08.21.1"
+version = "2026.09.01.1"
 aliases = ["claude-code"]
 
 [[rules]]
@@ -14,6 +26,38 @@ region = "osc_title"
 visible_working = true
 # Braille covers <= 2.1.227; half-circles are the 2.1.228 busy spinner.
 regex = ['^[\x{2800}-\x{28FF}\x{25D0}-\x{25D3}] ']
+
+[[rules]]
+id = "api_retry_working"
+# winch: neither project had this. Claude parks on a retry countdown when
+# the API call fails — the turn is very much alive, but the spinner line is
+# replaced by this one, which carries no ellipsis and so misses
+# live_turn_working's second alternative. Observed firing a false
+# "finished" on 2026-09-01:
+#   ✻ Waiting for API response · will retry in 2m 40s · check your network
+# The screen is genuinely STILL while it counts down, so no amount of
+# anti-flap or motion gating can catch it — only the text can.
+state = "working"
+priority = 972
+region = "bottom_non_empty_lines(12)"
+visible_working = true
+line_regex = ['^\s*[\x{002A}\x{00B7}\x{2722}\x{2736}\x{273B}\x{273D}]\s+.*\bwill retry in\b']
+
+[[rules]]
+id = "scrolled_transcript"
+# winch: neither project had this. When the transcript is scrolled off the
+# bottom, claude marks it in the right margin and the live status line is
+# simply not on screen — the capture shows old content above an empty
+# prompt box, which reads idle. We cannot judge a view we are not seeing,
+# so freeze the previous state exactly as transcript_viewer does.
+state = "unknown"
+priority = 1000
+region = "whole_recent"
+skip_state_update = true
+any = [
+  { contains = ["jump to bottom (click)"] },
+  { contains = ["new message (click)"] },
+]
 
 [[rules]]
 id = "transcript_viewer"
@@ -82,9 +126,14 @@ any = [
 
 [[rules]]
 id = "shells_still_running"
-# winch addition: the post-turn status line while background shells live.
-# Short and never truncated — steadier than the footer chip below.
-state = "working"
+# winch: the POST-turn status line while background shells live. herdr calls
+# this working; we do not. The turn has ended and the agent takes input —
+# the only thing still going is side work — and classifying it working meant
+# the agent never reached a completion, so no "finished" notification ever
+# fired for that turn. Short and never truncated, so steadier than the
+# footer chip below.
+label = "shell still running"
+state = "background"
 priority = 966
 region = "bottom_non_empty_lines(12)"
 visible_working = true
@@ -92,11 +141,34 @@ line_regex = ['^\s*[\x{002A}\x{00B7}\x{2722}\x{2736}\x{273B}\x{273D}].*\b[1-9]\d
 
 [[rules]]
 id = "background_shell_working"
-state = "working"
+# winch: state changed from herdr's working, per shells_still_running.
+label = "shell still running"
+state = "background"
 priority = 965
 region = "bottom_non_empty_lines(5)"
 visible_working = true
 line_regex = ['^\s*[⏸⏵].*·\s+[1-9]\d*\s+shells?\s+(·|$)']
+
+[[rules]]
+id = "background_mcp_task_working"
+# Ported from herdr v2026.08.29.1; state changed from their working, per
+# shells_still_running. Their note: claude renders activity summaries at
+# column zero and wrapped continuations indented, and keeping that shape
+# stops user prompt text impersonating the signal.
+label = "MCP task still running"
+state = "background"
+priority = 965
+region = "bottom_non_empty_lines(12)"
+visible_working = true
+regex = ['(?m)^[\x{002A}\x{00B7}\x{2722}\x{2736}\x{273B}\x{273D}][ \t]+\S[^\n]*?(\n[ \t]+[^\n]*?){0,3}·([ \t]+|\n[ \t]*)[1-9]\d*([ \t]+|\n[ \t]*)MCP([ \t]+|\n[ \t]*)tasks?([ \t]+|\n[ \t]*)still([ \t]+|\n[ \t]*)running[ \t]*$']
+not = [
+  { contains = ["do you want to proceed?"] },
+  { contains = ["esc to cancel"] },
+  { contains = ["waiting for permission"] },
+  { contains = ["do you want to allow this connection?"] },
+  { contains = ["tab to amend"] },
+  { contains = ["ctrl+e to explain"] },
+]
 
 [[rules]]
 id = "background_agents_working"
@@ -105,6 +177,27 @@ priority = 965
 region = "last_non_empty_above_prompt_box"
 visible_working = true
 line_regex = ['^\s*[\x{002A}\x{00B7}\x{2722}\x{2736}\x{273B}\x{273D}]\s+Waiting for [1-9]\d* background agents? to finish\s*$']
+
+[[rules]]
+id = "mcp_elicitation_prompt"
+# Ported from herdr v2026.08.29.1, verbatim. Their note: MCP elicitation
+# dialogs (elicitation/create) show Accept/Decline controls with an "Esc to
+# cancel" footer but no Enter hint, so live_blocked_form cannot see them
+# (their issue #3283). Gate on the invariant header line, the
+# Accept/Decline control line, and the cancel footer.
+label = "MCP server wants input"
+state = "blocked"
+priority = 980
+region = "whole_recent"
+visible_blocker = true
+contains = ["esc to cancel"]
+line_regex = ['(?i)^\s*MCP server ["\x{201C}].+["\x{201D}] requests your input\s*$']
+all = [
+  { any = [
+    { line_regex = ['^\s*\x{276F}?\s*Accept\b'] },
+    { line_regex = ['^\s*\x{276F}?\s*Decline\b'] },
+  ] },
+]
 
 [[rules]]
 id = "live_prompt_box"
@@ -217,4 +310,6 @@ state = "idle"
 priority = 250
 region = "osc_title"
 visible_idle = true
-regex = ['^\x{2733}']
+# Trailing space is herdr's, and load-bearing: ✳ alone, or ✳ glued to a
+# word, is not claude's idle ornament.
+regex = ['^\x{2733} ']

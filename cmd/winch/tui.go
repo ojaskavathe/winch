@@ -145,6 +145,7 @@ type palette struct {
 	yellow  string // working
 	teal    string // done (finished unseen)
 	green   string // idle
+	peach   string // background (turn done, side work live)
 }
 
 func rgb(r, g, b int) string   { return fmt.Sprintf("\033[38;2;%d;%d;%dm", r, g, b) }
@@ -157,12 +158,14 @@ var themes = map[string]palette{
 		bg: seamGround.bg(), fill: rgbBG(49, 50, 68), actFill: rgbBG(30, 30, 46),
 		red: rgb(243, 139, 168), yellow: rgb(249, 226, 175),
 		teal: rgb(148, 226, 213), green: rgb(166, 227, 161),
+		peach: rgb(250, 179, 135),
 	},
 	"terminal": {
 		text: "", subtext: "\033[37m", muted: "\033[90m",
 		accent: "\033[34m", mauve: "\033[35m",
 		bg: "", fill: "\033[100m", actFill: "\033[100m",
 		red: "\033[91m", yellow: "\033[33m", teal: "\033[36m", green: "\033[32m",
+		peach: "\033[95m",
 	},
 }
 
@@ -344,8 +347,11 @@ func (st *store) rows(winPick map[string]string) []row {
 	}
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].Name < sessions[j].Name })
 
-	// Worst agent state per session: blocked > done > working > idle.
-	rank := map[string]int{"blocked": 4, "done": 3, "working": 2, "idle": 1}
+	// Worst agent state per session: blocked > done > background > working
+	// > idle. background outranks working because it wants you (the turn is
+	// done) and sits under done because its side work may yet change what
+	// the answer is.
+	rank := map[string]int{"blocked": 5, "done": 4, "background": 3, "working": 2, "idle": 1}
 	agg := map[string]string{}
 	var agents []pane
 	for _, p := range st.panes {
@@ -2305,6 +2311,11 @@ func agentGlyph(state string) (string, string) {
 		return "●", pal.red
 	case "done":
 		return "●", pal.teal
+	case "background":
+		// Its own glyph, not a dot: the turn is over and the agent takes
+		// input, so reading it as one more coloured dot in the ladder would
+		// invite exactly the wrong conclusion about whether to go there.
+		return "⚙", pal.peach
 	case "working":
 		return "●", pal.yellow
 	case "idle":
