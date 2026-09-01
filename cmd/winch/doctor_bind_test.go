@@ -9,10 +9,10 @@ import "testing"
 // because tmux never re-reads its config.
 func TestStorePrefixIdentifiesTheBuild(t *testing.T) {
 	for in, want := range map[string]string{
-		"/nix/store/abc123-winch-0.4.0/bin/winch":   "/nix/store/abc123-winch-0.4.0",
-		"/nix/store/abc123-winch-0.4.0/bin/winch\"": "/nix/store/abc123-winch-0.4.0",
+		"/nix/store/abc123-winch-0.4.0/bin/winch":                      "/nix/store/abc123-winch-0.4.0",
+		"/nix/store/abc123-winch-0.4.0/bin/winch\"":                    "/nix/store/abc123-winch-0.4.0",
 		`/nix/store/xyz-winch-0.4.0/bin/winch toggle "#{client_name}"`: "/nix/store/xyz-winch-0.4.0",
-		"/nix/store/only":                           "/nix/store/only",
+		"/nix/store/only": "/nix/store/only",
 	} {
 		if got := storePrefix(in); got != want {
 			t.Errorf("storePrefix(%q) = %q want %q", in, got, want)
