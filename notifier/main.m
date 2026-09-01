@@ -36,7 +36,9 @@ static NSString *const kSocket = @"socket"; // tmux socket the pane lives on
 static NSString *const kPane   = @"pane";   // %N to jump to
 static NSString *const kBundle = @"bundle"; // terminal to raise, e.g. net.kovidgoyal.kitty
 
-@interface Delegate : NSObject <UNUserNotificationCenterDelegate>
+static void notelog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1, 2);
+
+@interface Delegate : NSObject <UNUserNotificationCenterDelegate, NSApplicationDelegate>
 @property(nonatomic) BOOL done;
 @property(nonatomic) int rc;
 @end
@@ -51,16 +53,17 @@ static NSString *const kBundle = @"bundle"; // terminal to raise, e.g. net.kovid
 	NSDictionary *info = response.notification.request.content.userInfo;
 	NSString *winch = info[kWinch], *sock = info[kSocket], *pane = info[kPane];
 
+	notelog(@"click: winch=%@ sock=%@ pane=%@ bundle=%@", winch, sock, pane, info[kBundle]);
 	if (winch.length && sock.length && pane.length) {
 		NSTask *t = [NSTask new];
 		t.executableURL = [NSURL fileURLWithPath:winch];
 		t.arguments = @[ @"-S", sock, @"focus", pane ];
 		NSError *err = nil;
 		if (![t launchAndReturnError:&err]) {
-			fprintf(stderr, "winch-notify: focus: %s\n",
-			        [[err localizedDescription] UTF8String]);
+			notelog(@"click: focus failed: %@", err);
 		} else {
 			[t waitUntilExit];
+			notelog(@"click: focus exited %d", t.terminationStatus);
 		}
 	}
 	// Raising is best-effort and deliberately not fatal: the jump already
@@ -77,6 +80,9 @@ static NSString *const kBundle = @"bundle"; // terminal to raise, e.g. net.kovid
 	completionHandler();
 	self.done = YES;
 	self.rc = 0;
+	notelog(@"click: handled, terminating");
+	// The app exists only to service this one click.
+	if (NSApp.delegate == self) [NSApp terminate:nil];
 }
 
 // Show the banner even when winch's own terminal is frontmost. macOS
@@ -90,6 +96,26 @@ static NSString *const kBundle = @"bundle"; // terminal to raise, e.g. net.kovid
 	h(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionSound);
 }
 @end
+
+// A click lands in a process with no terminal attached, so stderr goes
+// nowhere. Without a log there is no way to tell "macOS never relaunched us"
+// from "we ran and the jump failed" — two completely different bugs.
+static void notelog(NSString *fmt, ...) {
+	va_list ap;
+	va_start(ap, fmt);
+	NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:ap];
+	va_end(ap);
+	NSString *path = [NSString stringWithFormat:@"%@winch-notify.log", NSTemporaryDirectory()];
+	NSString *line = [NSString stringWithFormat:@"%@ %@\n", [NSDate date], msg];
+	NSFileHandle *h = [NSFileHandle fileHandleForWritingAtPath:path];
+	if (!h) {
+		[line writeToFile:path atomically:NO encoding:NSUTF8StringEncoding error:nil];
+		return;
+	}
+	[h seekToEndOfFile];
+	[h writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+	[h closeFile];
+}
 
 static NSString *arg(NSArray<NSString *> *a, NSString *flag) {
 	NSUInteger i = [a indexOfObject:flag];
@@ -124,8 +150,28 @@ int main(int argc, const char *argv[]) {
 		// No --title: LaunchServices started us for a click. Sit on the run
 		// loop long enough for the delegate to be handed the response.
 		if (!title.length) {
-			pump(d, 10);
-			return d.done ? d.rc : 0;
+			notelog(@"serve: relaunched by LaunchServices, argv=%@", a);
+			// [NSApp run], not a hand-rolled NSRunLoop spin, and the
+			// difference is the whole bug. Measured 2026-09-01: with
+			// sharedApplication + finishLaunching + runMode:, macOS
+			// relaunched the app on every click ("serve: relaunched" in this
+			// log, twice) and the delegate was NEVER handed the response —
+			// ten seconds, done=0. The response is dispatched through
+			// AppKit's own event loop, so nothing short of running it will
+			// see it.
+			//
+			// Accessory policy because LSUIElement: no Dock bounce on a
+			// launch the user did not ask for.
+			[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+			NSApp.delegate = d;
+			[NSTimer scheduledTimerWithTimeInterval:10.0
+			                                repeats:NO
+			                                  block:^(NSTimer *t) {
+				                                  notelog(@"serve: timed out with no response");
+				                                  [NSApp terminate:nil];
+			                                  }];
+			[NSApp run];
+			return d.rc;
 		}
 
 		// Ask the system what it thinks of us BEFORE requesting anything.
