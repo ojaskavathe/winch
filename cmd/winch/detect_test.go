@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Fixtures mirror REAL claude chrome captured live 2026-08-21 (plain
@@ -189,6 +190,87 @@ func TestPromptBoxRegion(t *testing.T) {
 	}
 }
 
+// screenStreaming is the real screen from pane %3291 at 14:01:28 on
+// 2026-09-01, the tick that fired a false "claude finished" while the agent
+// was mid-turn. Claude was streaming a long message: the text has taken the
+// row the spinner would use, so live_turn_working matches nothing, the
+// footer carries the permissions-mode hint instead of "esc to interrupt",
+// and live_prompt_box wins at 950 on the empty box. Idle, mid-turn.
+//
+// Kept verbatim because the point of the fixture is that it is NOT
+// distinguishable from a finished turn by looking at it.
+var screenStreaming = []string{
+	"⏺ Nailed it. The local (dev) trace deanonymized everything — the leak is in AgentsModelsSessionStore.startProgressUpdateTimer.",
+	"",
+	"  Root cause",
+	"",
+	"  // AgentsModelsSessionStore.ts:9401",
+	"  private startProgressUpdateTimer() {",
+	"    const updateLoop = () => {",
+	"      if (this.projectDataStore.hasActiveWork) {",
+	"",
+	"────────────────────────────────────────────────────────────",
+	"❯ ",
+	"────────────────────────────────────────────────────────────",
+	"  Opus 4.8 · demo-web · ctx 8% (76k/1.0M)",
+	"  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 2 agents",
+}
+
+// The screen that fooled us reads idle to the manifest, and always will —
+// so assert the manifest really does say idle here, then assert the gate
+// above it holds anyway while the text is still moving.
+func TestStreamingScreenReadsIdle(t *testing.T) {
+	m := claudeManifest(t)
+	v, ok := m.eval(newSnapshot(screenStreaming, "✳ JS heap leak"), false)
+	if !ok || v.state != "idle" {
+		t.Fatalf("streaming screen: want an idle verdict (the bug), got ok=%v %+v", ok, v)
+	}
+}
+
+// The still-screen gate. Idle verdicts over a MOVING screen never accrue,
+// however many arrive, because a streaming turn produces exactly that; the
+// same verdicts over a still screen complete the hold as before.
+func TestIdleNeedsAStillScreen(t *testing.T) {
+	d := &daemon{}
+	novis := map[string]bool{}
+
+	a := &agentInfo{kind: "claude", state: "working", win: "@2"}
+	for i := 0; i < idleConfirms*4; i++ {
+		if d.applyAgentState("%1", a, "idle", false, novis, true) {
+			t.Fatalf("sample %d: idle published over a moving screen", i)
+		}
+	}
+	if a.state != "working" {
+		t.Fatalf("streaming agent left working, got %s", a.state)
+	}
+	// The screen stops: the turn really did end, and it lands as before.
+	for i := 0; i < idleConfirms-1; i++ {
+		if d.applyAgentState("%1", a, "idle", false, novis, false) {
+			t.Fatalf("still sample %d published early", i)
+		}
+	}
+	if !d.applyAgentState("%1", a, "idle", false, novis, false) || a.state != "done" {
+		t.Fatalf("still screen should complete the hold, got %s", a.state)
+	}
+}
+
+// motionCap is the backstop: a screen that never stops moving under an idle
+// verdict must not pin an agent in "working" forever.
+func TestMotionCapReleases(t *testing.T) {
+	d := &daemon{}
+	novis := map[string]bool{}
+
+	a := &agentInfo{kind: "claude", state: "working", win: "@2"}
+	if d.applyAgentState("%1", a, "idle", false, novis, true) {
+		t.Fatal("first sample published")
+	}
+	// Backdate the hold past the cap rather than sleeping through it.
+	a.pendingAt = time.Now().Add(-motionCap - time.Second)
+	if !d.applyAgentState("%1", a, "idle", false, novis, true) || a.state != "done" {
+		t.Fatalf("motionCap did not release the hold, state=%s", a.state)
+	}
+}
+
 // The anti-flap hold: working -> idle needs idleConfirms consecutive
 // samples — visible evidence included (alternating screens flap through
 // any bypass). Blocked publishes instantly. Completions in an unwatched
@@ -199,13 +281,13 @@ func TestIdleHoldAndDone(t *testing.T) {
 	vis := map[string]bool{"@1": true}
 
 	a := &agentInfo{kind: "claude", state: "working", win: "@1"}
-	if d.applyAgentState("%1", a, "idle", true, vis) {
+	if d.applyAgentState("%1", a, "idle", true, vis, false) {
 		t.Fatal("first idle sample published")
 	}
-	if d.applyAgentState("%1", a, "idle", true, vis) {
+	if d.applyAgentState("%1", a, "idle", true, vis, false) {
 		t.Fatal("second idle sample published")
 	}
-	if !d.applyAgentState("%1", a, "idle", true, vis) {
+	if !d.applyAgentState("%1", a, "idle", true, vis, false) {
 		t.Fatal("third idle sample held")
 	}
 	if a.state != "idle" {
@@ -215,30 +297,30 @@ func TestIdleHoldAndDone(t *testing.T) {
 	// completion in an unwatched window -> done, and later idle samples
 	// must not clear the flag
 	a = &agentInfo{kind: "claude", state: "working", win: "@2"}
-	d.applyAgentState("%2", a, "idle", false, novis)
-	d.applyAgentState("%2", a, "idle", false, novis)
-	if !d.applyAgentState("%2", a, "idle", false, novis) || a.state != "done" {
+	d.applyAgentState("%2", a, "idle", false, novis, false)
+	d.applyAgentState("%2", a, "idle", false, novis, false)
+	if !d.applyAgentState("%2", a, "idle", false, novis, false) || a.state != "done" {
 		t.Fatalf("unwatched completion should be done, got %s", a.state)
 	}
-	if d.applyAgentState("%2", a, "idle", false, novis) || a.state != "done" {
+	if d.applyAgentState("%2", a, "idle", false, novis, false) || a.state != "done" {
 		t.Fatal("idle sample cleared the done flag")
 	}
 
 	// blocked publishes instantly, from anywhere
 	a = &agentInfo{kind: "claude", state: "working", win: "@1"}
-	if !d.applyAgentState("%3", a, "blocked", true, vis) {
+	if !d.applyAgentState("%3", a, "blocked", true, vis, false) {
 		t.Fatal("blocked must publish instantly")
 	}
 	// blocked -> idle unwatched is also a completion -> done, no hold
-	if !d.applyAgentState("%3", a, "idle", false, novis) || a.state != "done" {
+	if !d.applyAgentState("%3", a, "idle", false, novis, false) || a.state != "done" {
 		t.Fatalf("blocked completion should be done instantly, got %s", a.state)
 	}
 
 	// an interleaved working sample clears the pending hold
 	a = &agentInfo{kind: "claude", state: "working", win: "@1"}
-	d.applyAgentState("%4", a, "idle", false, vis)
-	d.applyAgentState("%4", a, "working", true, vis)
-	if d.applyAgentState("%4", a, "idle", false, vis) {
+	d.applyAgentState("%4", a, "idle", false, vis, false)
+	d.applyAgentState("%4", a, "working", true, vis, false)
+	if d.applyAgentState("%4", a, "idle", false, vis, false) {
 		t.Fatal("hold did not restart after working interrupted it")
 	}
 }

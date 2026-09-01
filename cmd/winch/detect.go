@@ -62,6 +62,23 @@ var detectTick, detectFastTick, idleCap, detectIdleTick, startupGrace = func() (
 		3 * time.Second // a just-spawned agent is not judged yet
 }()
 
+// motionCap is the backstop on the still-screen gate in applyAgentState: how
+// long idle verdicts may keep arriving over a MOVING screen before we stop
+// disbelieving them.
+//
+// It should never fire. It exists because the gate's failure mode is an agent
+// stuck working forever, which costs you the notification you were waiting
+// for, and there is no way to be certain no pane animates something under an
+// idle verdict indefinitely. Generous on purpose: a streaming message is
+// seconds, so this cannot manufacture the false completion it exists to
+// prevent, and it logs when it trips so the case stops being hypothetical.
+var motionCap = func() time.Duration {
+	if testFast {
+		return 2 * time.Second
+	}
+	return 30 * time.Second
+}()
+
 type agentInfo struct {
 	kind         string // manifest id: claude | codex | grok | ...
 	state        string // "" (unknown) | working | blocked | idle | done
@@ -73,6 +90,7 @@ type agentInfo struct {
 	seq          int64     // monotonic stamp of the last state change (ordering)
 	lastActivity int64     // window_activity at the last screen scan
 	win          string    // pane's window (for done/notify bookkeeping)
+	lastGrid     uint64    // hash of the last scanned screen; see applyAgentState
 }
 
 type detectState struct {
@@ -229,9 +247,9 @@ func (d *daemon) detectTickRun(ctl *control, w *world) {
 	// lighter path than a state change: the statusline write and the blocked
 	// notifications have no business firing for a rename.
 	soft := false
-	apply := func(id string, a *agentInfo, want string, visible bool, label string) {
+	apply := func(id string, a *agentInfo, want string, visible bool, label string, moved bool) {
 		prev := a.state
-		if d.applyAgentState(id, a, want, visible, vis) {
+		if d.applyAgentState(id, a, want, visible, vis, moved) {
 			changed = true
 			if a.state == "blocked" && prev != "blocked" {
 				blockedNew = append(blockedNew, id)
@@ -308,8 +326,12 @@ func (d *daemon) detectTickRun(ctl *control, w *world) {
 		}
 		if v, ok := m.eval(newSnapshot(nil, title), true); ok && v.prio > m.maxScreenPrio {
 			// Title verdict outranks every screen rule: conclusive, free.
+			// moved=false costs nothing here: outranking every screen rule
+			// takes a priority above maxScreenPrio, and no manifest's idle
+			// title rule is anywhere near that, so this path cannot carry
+			// the idle verdict the gate exists to hold back.
 			if !v.skip {
-				apply(id, a, v.state, v.visible, v.label)
+				apply(id, a, v.state, v.visible, v.label, false)
 			}
 			continue
 		}
@@ -348,15 +370,18 @@ func (d *daemon) detectTickRun(ctl *control, w *world) {
 					break
 				}
 				s.a.lastActivity = s.act
+				h := gridHash(grids[i])
+				moved := h != s.a.lastGrid
+				s.a.lastGrid = h
 				m := d.det.manifests[s.a.kind]
 				v, ok := m.eval(newSnapshot(grids[i], s.title), false)
 				switch {
 				case !ok:
-					apply(s.id, s.a, "idle", false, "") // known agent, silent screen
+					apply(s.id, s.a, "idle", false, "", moved) // known agent, silent screen
 				case v.skip:
 					// viewer overlay: freeze the previous state
 				default:
-					apply(s.id, s.a, v.state, v.visible, v.label)
+					apply(s.id, s.a, v.state, v.visible, v.label, moved)
 				}
 			}
 		}
@@ -632,20 +657,41 @@ func (d *daemon) wrappedKind(pid string) string {
 // scan; any bypass turns that into a flap). A completion transition
 // ((working|blocked) -> idle) in a window nobody is looking at publishes
 // as "done" and sticks until the user visits the window.
-func (d *daemon) applyAgentState(id string, a *agentInfo, want string, visible bool, vis map[string]bool) bool {
+func (d *daemon) applyAgentState(id string, a *agentInfo, want string, visible bool, vis map[string]bool, moved bool) bool {
 	if want == "idle" && a.state == "done" {
 		return false // done IS idle, flagged unseen; keep the flag
 	}
 	if want == "idle" && a.state == "working" {
-		if a.pendingIdle == 0 {
+		// Keyed on pendingAt itself, not on the counter: the motion gate
+		// below zeroes the counter on every moving tick, so counting would
+		// restart this clock forever and motionCap could never elapse.
+		if a.pendingAt.IsZero() {
 			a.pendingAt = time.Now()
 		}
 		a.pendingIdle++
-		if a.pendingIdle < idleConfirms && time.Since(a.pendingAt) < idleCap {
+		// A still screen is part of the evidence, not just a way to save a
+		// capture. While claude streams a long message the spinner line is
+		// gone (the text is using that row) and the footer shows the
+		// permissions-mode hint rather than "esc to interrupt", so nothing
+		// matches live_turn_working and the bare prompt box wins at 950 —
+		// idle, mid-turn. That frame is genuinely indistinguishable from a
+		// finished turn; what separates them is that one of them is still
+		// moving. So idle only accrues over ticks where the screen held
+		// still, and motion resets the count.
+		//
+		// pendingAt is deliberately NOT reset with it: it dates the first
+		// idle verdict, which is what motionCap measures from.
+		if moved {
+			a.pendingIdle = 0
+		}
+		if time.Since(a.pendingAt) >= motionCap {
+			log.Printf("agent %s pane=%s idle over a moving screen for %s; believing it",
+				a.kind, id, motionCap)
+		} else if a.pendingIdle < idleConfirms && (moved || time.Since(a.pendingAt) < idleCap) {
 			return false
 		}
 	}
-	a.pendingIdle = 0
+	a.pendingIdle, a.pendingAt = 0, time.Time{}
 	if want == "idle" && (a.state == "working" || a.state == "blocked") && !vis[a.win] {
 		want = "done"
 	}
@@ -661,6 +707,21 @@ func (d *daemon) applyAgentState(id string, a *agentInfo, want string, visible b
 	d.det.seq++
 	a.seq = d.det.seq
 	return true
+}
+
+// gridHash fingerprints a captured screen so the next tick can tell whether
+// anything moved. FNV-1a over the rows with a separator, so that shifting a
+// line break cannot collide with the same bytes laid out differently.
+func gridHash(rows []string) uint64 {
+	const off, prime = uint64(14695981039346656037), uint64(1099511628211)
+	h := off
+	for _, r := range rows {
+		for i := 0; i < len(r); i++ {
+			h = (h ^ uint64(r[i])) * prime
+		}
+		h = (h ^ '\n') * prime
+	}
+	return h
 }
 
 func orDash(s string) string {
