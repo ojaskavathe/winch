@@ -507,6 +507,21 @@ func cmdNotifyTest(tmuxSock, osc string) {
 			fmt.Fprintf(os.Stderr, "winch notify-test: %v\n", err)
 			os.Exit(1)
 		}
+		// Report the route that ACTUALLY ran, in notifySystem's own order of
+		// preference. Reporting a different command than the one that fired
+		// makes this worse than no check at all: it was doing exactly that
+		// after the bundle shipped, still naming osascript.
+		if name, args, ok := notifyAppCmd("winch", body, bundle, "", ""); ok {
+			if err := exec.Command(name, args...).Run(); err == nil {
+				fmt.Printf("asked winch's own bundle: %s\n", notifyApp)
+				fmt.Printf("that banner carries winch's name and icon, and clicking one\n" +
+					"from the daemon jumps tmux to the agent that sent it\n")
+				fmt.Printf("saw it? make it the default: tmux set -g %s system\n", optNotifyVia)
+				return
+			}
+			fmt.Printf("winch's own bundle did not deliver; run `winch notify-install`,\n" +
+				"then enable winch in System Settings > Notifications\n")
+		}
 		if name, args, ok := notifyNotifierCmd("winch", body, bundle); ok {
 			if _, err := exec.LookPath(name); err == nil {
 				fmt.Printf("asked %s (click activates %s): %q\n", name, bundle, args)
@@ -515,9 +530,9 @@ func cmdNotifyTest(tmuxSock, osc string) {
 		}
 		name, args := notifySystemCmd("winch", body, bundle)
 		fmt.Printf("asked the OS directly: %s %q\n", name, args)
-		if runtime.GOOS == "darwin" && bundle != "" {
-			fmt.Printf("install terminal-notifier for notifications that click\n" +
-				"through to your terminal; winch prefers it when present\n")
+		if runtime.GOOS == "darwin" {
+			fmt.Printf("this route wears Script Editor's identity — a click opens it.\n" +
+				"`winch notify-install` registers winch's own bundle instead\n")
 		}
 		fmt.Printf("saw it? make it the default: tmux set -g %s system\n", optNotifyVia)
 		return
