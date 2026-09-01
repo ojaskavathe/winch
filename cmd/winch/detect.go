@@ -335,6 +335,12 @@ func (d *daemon) detectTickRun(ctl *control, w *world) {
 			// title rule is anywhere near that, so this path cannot carry
 			// the idle verdict the gate exists to hold back.
 			if !v.skip {
+				// Attribute here too. This path never scans, so without
+				// it the transition log reports whichever rule won the
+				// last capture — a stale name on precisely the
+				// transitions the title decided, which is worse than no
+				// name at all because it reads as evidence.
+				a.lastRule = v.rule
 				apply(id, a, v.state, v.visible, v.label, false)
 			}
 			continue
