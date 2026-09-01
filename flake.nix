@@ -72,23 +72,44 @@
             dontStrip = true;
           };
 
-          winch = pkgs.buildGoModule {
-            pname = "winch";
-            version = "0.4.0";
+          # withNotifier is a real build switch, not just config. Referencing
+          # winch-notify from the ldflags makes it a build AND runtime
+          # dependency, so a darwin `winch` cannot otherwise be built without
+          # an Objective-C toolchain and a codesign step, and the .app lands
+          # in the closure of anyone who only wanted the tmux daemon.
+          #
+          # On by default because notifications are a headline feature and a
+          # silent absence is the worst way to discover a missing one. Off is
+          # one line:
+          #
+          #   winch.override { withNotifier = false; }
+          #
+          # nix's laziness is what makes this work: with the flag false the
+          # ldflags never reference winch-notify, so it is never built.
+          mkWinch = pkgs.lib.makeOverridable (
+            {
+              withNotifier ? isDarwin,
+            }:
+            pkgs.buildGoModule {
+              pname = "winch";
+              version = "0.4.0";
 
-            src = self;
-            subPackages = [ "cmd/winch" ];
-            vendorHash = "sha256-W78PHNVSHhTrtZ6/7HfdmD+LjniySClfNbWpLaKTDRY=";
+              src = self;
+              subPackages = [ "cmd/winch" ];
+              vendorHash = "sha256-W78PHNVSHhTrtZ6/7HfdmD+LjniySClfNbWpLaKTDRY=";
 
-            ldflags = [
-              "-X"
-              "main.tmuxPath=${pkgs.tmux}/bin/tmux"
-            ]
-            ++ pkgs.lib.optionals isDarwin [
-              "-X"
-              "main.notifyApp=${winch-notify}/Applications/winch-notify.app"
-            ];
-          };
+              ldflags = [
+                "-X"
+                "main.tmuxPath=${pkgs.tmux}/bin/tmux"
+              ]
+              ++ pkgs.lib.optionals (withNotifier && isDarwin) [
+                "-X"
+                "main.notifyApp=${winch-notify}/Applications/winch-notify.app"
+              ];
+            }
+          );
+
+          winch = mkWinch { };
         in
         {
           inherit winch;
@@ -133,34 +154,45 @@
           options.programs.winch = {
             enable = lib.mkEnableOption "winch, a sidebar for tmux";
 
-            package = lib.mkOption {
-              type = lib.types.package;
-              default = self.packages.${pkgs.stdenv.hostPlatform.system}.winch;
-              defaultText = lib.literalExpression "winch.packages.\${system}.winch";
-              description = "The winch package to install.";
-            };
-
-            registerNotifier = lib.mkOption {
+            notifications = lib.mkOption {
               type = lib.types.bool;
               default = pkgs.stdenv.hostPlatform.isDarwin;
               defaultText = lib.literalExpression "stdenv.hostPlatform.isDarwin";
               description = ''
-                Re-register winch's notification bundle with LaunchServices on
-                every activation (macOS only; a no-op elsewhere).
+                Build winch with its macOS notification bundle and keep it
+                registered with LaunchServices.
 
-                Without this, desktop notifications on macOS fail silently
-                after the first rebuild, because the registration points at a
-                store path that has moved. You still have to enable winch once
-                in System Settings > Notifications — every macOS app needs
-                that, and nothing can do it for you.
+                This is a BUILD switch, not just configuration: the bundle is
+                referenced from winch's ldflags, so with it off the
+                Objective-C helper is never compiled and never enters the
+                closure. Someone who wants only the tmux daemon should not
+                have to build a GUI app to get it.
+
+                On elsewhere than macOS it does nothing — Linux and BSD
+                notify through the terminal or notify-send, neither of which
+                needs anything registered.
+
+                You still have to enable winch once in System Settings >
+                Notifications. Every macOS app needs that and nothing can
+                consent on your behalf.
               '';
+            };
+
+            package = lib.mkOption {
+              type = lib.types.package;
+              default = self.packages.${pkgs.stdenv.hostPlatform.system}.winch.override {
+                withNotifier = cfg.notifications;
+              };
+              defaultText = lib.literalExpression ''
+                winch.packages.''${system}.winch.override { inherit withNotifier; }'';
+              description = "The winch package to install.";
             };
           };
 
           config = lib.mkIf cfg.enable {
             home.packages = [ cfg.package ];
 
-            home.activation = lib.mkIf (cfg.registerNotifier && pkgs.stdenv.hostPlatform.isDarwin) {
+            home.activation = lib.mkIf (cfg.notifications && pkgs.stdenv.hostPlatform.isDarwin) {
               winchNotifyInstall = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
                 run ${cfg.package}/bin/winch notify-install > /dev/null || \
                   echo "winch: notify-install failed; desktop notifications may not work"
