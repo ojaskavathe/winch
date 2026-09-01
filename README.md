@@ -88,21 +88,38 @@ a prompt you answered before the toast arrived did not need one.
 `notify-send` elsewhere. It loses the works-over-ssh property (it notifies
 the machine the daemon is on), so `terminal` stays the default everywhere.
 
-**macOS:** if nothing appears, check System Settings → Notifications for your
-terminal *before* suspecting the sequence. Two different failures live there
-and neither reports an error:
+### macOS
 
-- **listed but off** — macOS prompted once, the prompt was dismissed, and the
-  app has been denied ever since. Flip it on.
-- **not listed at all** — the app has never successfully asked for
-  authorization, so there is nothing to grant. kitty from nixpkgs is in this
-  state. No dialect helps; use `winch notify-test system` and set
-  `@winch-notify-via system`.
+On macOS winch ships **its own app bundle**, so the banner carries winch's
+name and icon and clicking one jumps tmux to the agent that sent it:
 
-Not the cause, each ruled out by controlled comparison: the ad-hoc code
-signature nixpkgs gives its own builds (`terminal-notifier` has the identical
-`Signature=adhoc` / `Info.plist=not bound` and registers fine), the process
-tree the notifier runs in, and the OSC dialect.
+    winch notify-install     # once; then enable winch in System Settings
+    winch notify-test system
+
+A macOS notification is attributed to an *app*, not a process. Without a
+bundle the modern API refuses outright; `osascript` borrows Script Editor's
+identity (which is why clicking one opens Script Editor); `terminal-notifier`
+borrows its own and has to be installed by hand. Hence the bundle.
+
+**Why `notify-install` is unavoidable.** `UNUserNotificationCenter` only
+talks to apps LaunchServices knows about, and LaunchServices only scans
+`/Applications` and `~/Applications` — never the nix store. Unregistered,
+`requestAuthorization` returns *"Notifications are not allowed for this
+application"*, the app never appears in System Settings, and every
+notification fails silently. Every rebuild moves the store path, so
+activation should re-run it.
+
+That is also the full explanation for a puzzle worth recording, because it
+looks like a signing problem and is not: **kitty from nixpkgs never appears
+in System Settings → Notifications**, while `terminal-notifier` from the same
+store does. kitty uses the modern API and is unregistered;
+terminal-notifier uses the *deprecated* `NSUserNotification` API, which has no
+such requirement and works from anywhere. Identical ad-hoc signatures,
+opposite outcomes. Ruled out by controlled comparison first: the signature,
+the process tree, and the OSC dialect.
+
+So if your terminal's own OSC notifications never arrive, that is why — use
+`@winch-notify-via system` and winch's bundle instead.
 
 Manifest match rules under `cmd/winch/manifests/` are derived from
 [herdr](https://github.com/herdrdev/herdr) — see `manifests/LICENSE-herdr`.
