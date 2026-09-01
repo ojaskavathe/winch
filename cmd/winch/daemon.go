@@ -90,6 +90,17 @@ func (d *daemon) clientView(ctl *control, client string) (sid, wid string, cw, c
 // snapshot so the TUI paints in the right palette from its first frame.
 var uiTheme string
 
+// uiAgentRowsRaw is @winch-agent-rows verbatim, and uiAgentRows is it
+// parsed. The daemon carries the RAW string because the TUI is a separate
+// process and parsing belongs where the rendering is — the daemon only
+// validates so a typo is reported to the log with the daemon's timestamps
+// rather than discovered as a card with a hole in it.
+var uiAgentRowsRaw string
+
+// uiAgentRows is set in the daemon from tmux and in the TUI from the
+// snapshot that carries it, same as uiNav.
+var uiAgentRows = defaultAgentRows()
+
 // uiBorderLines is tmux's own pane-border-lines, read at attach so the status
 // pad can end in the same glyph tmux draws down the sidebar's border column.
 // Same lifetime as uiTheme: changing it mid-session needs a daemon restart.

@@ -452,59 +452,38 @@ func (st *store) rows(winPick map[string]string) []row {
 			// separator (" · " between tokens; the plain space after the
 			// icon is already there because winch paints it separately).
 			//
-			// The agent kind rides here rather than owning a row of its
-			// own. herdr's default spends a whole line on it, which is a
+			// The card's rows are the user's (agentrows.go). The default
+			// keeps the agent kind riding the head row rather than owning
+			// one, as herdr's default spends a whole line on it — a
 			// reasonable default for someone running four different agents
 			// and a wasted line for anyone running one.
-			sess := st.sessions[p.SessionID].Name
-			toks := []string{sess}
-			if tab := st.tabLabel(p.SessionID, p.WindowID); tab != "" {
-				toks = append(toks, tab)
-			}
-			if p.Agent != "" {
-				toks = append(toks, p.Agent)
-			}
-			// Drop trailing tokens rather than truncate: a half-written
-			// agent name reads as breakage, and everything after the
-			// workspace is context the row can live without.
-			for len(toks) > 1 && len([]rune(strings.Join(toks, " · "))) > avail {
-				toks = toks[:len(toks)-1]
-			}
-			head := "   " + strings.Join(toks, " · ")
-			headStyled := ""
-			if len(toks) > 1 {
-				headStyled = "   " + toks[0] + pal.muted +
-					" · " + strings.Join(toks[1:], " · ") + "\033[39m"
-			}
-			// The dot itself is paintList's business: a working row spins
-			// there, off the sidebar's own clock. Baking a frame into the
-			// row would mean rebuilding every row eight times a second to
-			// animate one cell.
-			out = append(out, row{
-				label: head, styled: headStyled,
-				window: p.WindowID, pane: p.ID, agent: p.AgentState, arow: true,
-			})
-
-			// Row two: terminal_title_stripped — the agent's own name for
-			// this conversation. A blocked pane's title is the STALE
-			// pre-prompt task, so the reason ("permission prompt") speaks
-			// instead; that is a winch addition and worth keeping, since
-			// the stale title actively misleads about why it stopped.
-			//
-			// Truncated, never dropped: this row is the card's identity
-			// now, so it has to degrade rather than vanish. Whole tokens
-			// go first (herdr's solver) — mid-word cuts read as breakage —
-			// and the billboard still holds the full text.
-			text := agentTaskTitle(p.Title)
-			if p.AgentState == "blocked" && p.AgentReason != "" {
-				text = p.AgentReason
-			}
-			if text != "" {
-				name := fitTokens(text, avail)
-				out = append(out, row{
-					label: "   " + name, styled: "   " + pal.subtext + name + "\033[39m",
-					window: p.WindowID, pane: p.ID, arow: true, cont: true,
-				})
+			for ri, spec := range uiAgentRows.rows {
+				vals := uiAgentRows.values(spec, st, p)
+				if len(vals) == 0 {
+					continue
+				}
+				// The first rendered row carries the glyph and the state;
+				// later ones are continuations. The dot itself is
+				// paintList's business — a working row spins there, off the
+				// sidebar's own clock. Baking a frame into the row would
+				// mean rebuilding every row eight times a second to animate
+				// one cell.
+				head := ri == 0
+				// The ambient colour paintList will be using for this row,
+				// so a token that has to restore it can.
+				ambient := pal.subtext
+				if p.ID == curAgent {
+					ambient = pal.text
+				}
+				label, styled := fitAgentRow(vals, avail, head, ambient)
+				r := row{
+					label: label, styled: styled,
+					window: p.WindowID, pane: p.ID, arow: true, cont: !head,
+				}
+				if head {
+					r.agent = p.AgentState
+				}
+				out = append(out, r)
 			}
 
 		}
@@ -1177,6 +1156,12 @@ func cmdTui(tmuxSock, winchSock string) {
 					if m.Nav != nil {
 						uiNav = m.Nav.resolved()
 					}
+					// Card layout before the first paint, for the same
+					// reason as the theme: repainting into the user's
+					// layout after showing the default is a visible jump.
+					// The daemon already logged any parse error; here the
+					// fallback just has to be silent and correct.
+					uiAgentRows, _ = parseAgentRows(m.Rows)
 					// Width before the first paint: laying out at the default
 					// and correcting to the user's dragged width is a jump.
 					if m.Width >= 18 {

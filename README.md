@@ -14,6 +14,56 @@ manifests, overridable in `~/.config/winch/agents`). Needs tmux >= 3.6
   `go test -count=1 -parallel 2 .` (full parallel oversubscribes timing tests)
 - `flake.nix` — `packages.winch`, `packages.winch` (sidebar launcher), overlay
 
+## agent cards
+
+Each agent is a card: a head row of context and a row carrying the agent's
+own name for the conversation. Both are yours.
+
+    tmux set -g @winch-agent-rows "state_text workspace tab agent | title"
+
+Rows are separated by `|`, tokens by whitespace. Tokens:
+
+| token        | is                                                     |
+|--------------|--------------------------------------------------------|
+| `state_text` | `blocked` / `background` / `working` / `done` / `idle`  |
+| `workspace`  | session name                                           |
+| `tab`        | window label                                           |
+| `agent`      | manifest id — `claude`, `codex`, …                     |
+| `title`      | the agent's name for this conversation                 |
+| `reason`     | why it stopped — `permission prompt`, `shell still running` |
+
+State words are coloured herdr's way: blocked red, working yellow, done
+teal, idle green, plus peach for winch's own `background`. There is no
+`state_icon` token — the glyph lives in the mark column with the session and
+window marks, which is what makes a card read as one thing.
+
+The head row **drops** trailing tokens when the sidebar is narrow (a
+half-written agent name reads as breakage); the rows under it **truncate**
+on whole tokens instead, so a card never loses its identity. An unknown
+token is ignored with a line in the daemon log and the default layout is
+used — one typo should not render a card with a hole in it.
+
+Left unset, the default is `state_text workspace tab agent | title` with one
+adjustment: the state word is suppressed for `working`, `done` and `idle`,
+where the glyph's colour already says it. Set the option explicitly and it
+is never second-guessed. herdr does the same thing
+(`default_agent_rows_remove_redundant_state_text`).
+
+### agent states
+
+| state        | means                                                            |
+|--------------|------------------------------------------------------------------|
+| `working`    | the turn is running                                              |
+| `blocked`    | it wants you — permission prompt, form, elicitation              |
+| `background` | the turn ENDED and the agent takes input; side work is still live |
+| `done`       | the turn ended in a window nobody was watching, still unvisited  |
+| `idle`       | ended and seen                                                   |
+
+`background` is winch-only. herdr classifies "1 shell still running" as
+working, which means the agent never reaches a completion and the turn's
+notification never fires at all while the shell lives. Here it is a
+completion: it notifies once, then falls to `idle` when the side work ends.
+
 ## desktop notifications
 
 A blocked agent notifies your terminal, not just tmux — winch writes the

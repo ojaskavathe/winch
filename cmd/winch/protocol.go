@@ -53,6 +53,7 @@ type snapshotMsg struct {
 	Type  string `json:"type"`            // snapshot
 	Tmux  string `json:"tmux"`            // tmux server socket path
 	Theme string `json:"theme,omitempty"` // @winch-theme at attach; "" = default
+	Rows  string `json:"rows,omitempty"`  // @winch-agent-rows verbatim; "" = default layout
 	// The keys this user's tmux moves between panes with, so the sidebar
 	// answers to the same ones. Resolved daemon-side (it is the process that
 	// can read tmux's key table) and carried here because the TUI is a
@@ -155,6 +156,7 @@ type wireMsg struct {
 	Pane       string      `json:"pane"`
 	Quiet      bool        `json:"quiet"`
 	Theme      string      `json:"theme"`
+	Rows       string      `json:"rows"`
 	Nav        *navKeys    `json:"nav"`
 	Select     string      `json:"select"`
 	SelectPane string      `json:"selectpane"`

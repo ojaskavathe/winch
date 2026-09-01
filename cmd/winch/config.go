@@ -233,6 +233,10 @@ const (
 // painting a default and correcting.
 func (d *daemon) loadConfig(ctl *control) {
 	uiTheme = strings.TrimSpace(optStr(ctl, optTheme))
+	uiAgentRowsRaw = strings.TrimSpace(optStr(ctl, optAgentRows))
+	if _, why := parseAgentRows(uiAgentRowsRaw); why != "" {
+		log.Printf("config: %s: %s, using the default layout", optAgentRows, why)
+	}
 	uiBorderLines = borderLines(ctl)
 	loadSeamStyle(ctl)
 	loadNavKeys(ctl)

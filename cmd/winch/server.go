@@ -127,7 +127,7 @@ func (h *hub) setWorld(w world, ops []op, resync bool, tmuxSock string) {
 	h.world = w
 	var payload []byte
 	if resync {
-		payload = marshalLine(snapshotMsg{V: 1, Type: "snapshot", Tmux: tmuxSock, Theme: uiTheme, Nav: navPtr(), world: w})
+		payload = marshalLine(snapshotMsg{V: 1, Type: "snapshot", Tmux: tmuxSock, Theme: uiTheme, Rows: uiAgentRowsRaw, Nav: navPtr(), world: w})
 	} else {
 		if len(ops) == 0 {
 			return
@@ -149,7 +149,7 @@ func (h *hub) setWorld(w world, ops []op, resync bool, tmuxSock string) {
 func (h *hub) add(conn net.Conn, tmuxSock string) *subscriber {
 	s := &subscriber{conn: conn, ch: make(chan []byte, 256)}
 	h.mu.Lock()
-	s.ch <- marshalLine(snapshotMsg{V: 1, Type: "snapshot", Tmux: tmuxSock, Theme: uiTheme, Nav: navPtr(),
+	s.ch <- marshalLine(snapshotMsg{V: 1, Type: "snapshot", Tmux: tmuxSock, Theme: uiTheme, Rows: uiAgentRowsRaw, Nav: navPtr(),
 		Select: h.selWin, SelectPane: h.selPane, Width: h.width, Split: h.split, world: h.world})
 	h.subs[s] = struct{}{}
 	h.mu.Unlock()
