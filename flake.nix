@@ -101,6 +101,74 @@
         winch = self.packages.${prev.stdenv.hostPlatform.system}.winch;
       };
 
+      # home-manager module. Installs winch and, on darwin, keeps its
+      # notification bundle registered.
+      #
+      #   imports = [ inputs.winch.homeManagerModules.default ];
+      #   programs.winch.enable = true;
+      #
+      # The registration is the whole reason this module exists rather than
+      # just `home.packages = [ winch ]`. macOS delivers a notification on
+      # behalf of an APP, and UNUserNotificationCenter only talks to apps
+      # LaunchServices knows about — which it learns by scanning
+      # /Applications and ~/Applications, never the nix store. So the bundle
+      # needs an explicit lsregister, and since every rebuild moves its store
+      # path, a registration made once is stranded by the next switch.
+      # Notifications then fail SILENTLY: no error, nothing in System
+      # Settings, no clue anywhere.
+      #
+      # Nobody should have to know that to get a working notification, which
+      # is exactly why it belongs here and not in each user's config.
+      homeManagerModules.default =
+        {
+          config,
+          lib,
+          pkgs,
+          ...
+        }:
+        let
+          cfg = config.programs.winch;
+        in
+        {
+          options.programs.winch = {
+            enable = lib.mkEnableOption "winch, a sidebar for tmux";
+
+            package = lib.mkOption {
+              type = lib.types.package;
+              default = self.packages.${pkgs.stdenv.hostPlatform.system}.winch;
+              defaultText = lib.literalExpression "winch.packages.\${system}.winch";
+              description = "The winch package to install.";
+            };
+
+            registerNotifier = lib.mkOption {
+              type = lib.types.bool;
+              default = pkgs.stdenv.hostPlatform.isDarwin;
+              defaultText = lib.literalExpression "stdenv.hostPlatform.isDarwin";
+              description = ''
+                Re-register winch's notification bundle with LaunchServices on
+                every activation (macOS only; a no-op elsewhere).
+
+                Without this, desktop notifications on macOS fail silently
+                after the first rebuild, because the registration points at a
+                store path that has moved. You still have to enable winch once
+                in System Settings > Notifications — every macOS app needs
+                that, and nothing can do it for you.
+              '';
+            };
+          };
+
+          config = lib.mkIf cfg.enable {
+            home.packages = [ cfg.package ];
+
+            home.activation = lib.mkIf (cfg.registerNotifier && pkgs.stdenv.hostPlatform.isDarwin) {
+              winchNotifyInstall = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+                run ${cfg.package}/bin/winch notify-install > /dev/null || \
+                  echo "winch: notify-install failed; desktop notifications may not work"
+              '';
+            };
+          };
+        };
+
       devShells = forAll (pkgs: {
         default = pkgs.mkShell {
           packages = [
