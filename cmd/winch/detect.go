@@ -375,6 +375,12 @@ func (d *daemon) detectTickRun(ctl *control, w *world) {
 				s.a.lastGrid = h
 				m := d.det.manifests[s.a.kind]
 				v, ok := m.eval(newSnapshot(grids[i], s.title), false)
+				// The evidence behind a completion, recorded before apply
+				// consumes it. A turn end is rare, it is the one verdict
+				// that pings you, and diagnosing a wrong one from outside
+				// the daemon means racing a screen that has already moved
+				// on — which is exactly how this went the first time.
+				was, confirms := s.a.state, s.a.pendingIdle
 				switch {
 				case !ok:
 					apply(s.id, s.a, "idle", false, "", moved) // known agent, silent screen
@@ -382,6 +388,11 @@ func (d *daemon) detectTickRun(ctl *control, w *world) {
 					// viewer overlay: freeze the previous state
 				default:
 					apply(s.id, s.a, v.state, v.visible, v.label, moved)
+				}
+				if was == "working" && (s.a.state == "idle" || s.a.state == "done") {
+					log.Printf("agent %s pane=%s completed: rule=%s moved=%v confirms=%d title=%q tail=%q",
+						s.a.kind, s.id, orDash(v.rule), moved, confirms, s.title,
+						lastNonEmpty(grids[i], 6))
 				}
 			}
 		}
