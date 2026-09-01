@@ -146,6 +146,12 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 		if d.dock != nil && !d.dock.scrubbing {
 			_, err = ctl.run("select-pane -R -t " + q(d.dock.pane))
 		}
+	case "goto":
+		// A clicked notification. Unlike every other command here this one
+		// arrives from OUTSIDE tmux — the notifier relaunched by macOS — so
+		// it cannot assume a dock, a scrub, or even that the pane is in the
+		// session any client is currently on.
+		err = d.gotoPane(ctl, env.msg.Pane)
 	case "commit":
 		if d.dock != nil {
 			if d.dock.scrubbing {
@@ -344,6 +350,52 @@ func (d *daemon) createSession(ctl *control, from, name string) error {
 // the session you are sitting in could cost you both your sidebar and your
 // terminal. winch is the one pulling the trigger, so it does not get to leave
 // that to the user's tmux settings: move first, then kill.
+// gotoPane takes every attached client to a pane: its session, its window,
+// the pane itself. This is what clicking a desktop notification runs.
+//
+// All three steps, in that order, because the pane may be anywhere: a
+// different window of the session you are on, or a session no client has
+// looked at in an hour. select-pane alone would silently do nothing, which
+// is the worst outcome for a click — you asked to be taken somewhere and the
+// screen did not move.
+//
+// Control clients are skipped. winch's own connection is one, and switching
+// it does nothing except confuse the daemon's idea of where the user is.
+func (d *daemon) gotoPane(ctl *control, pane string) error {
+	if pane == "" {
+		return errors.New("focus needs a pane")
+	}
+	w, err := fetchWorld(ctl)
+	if err != nil {
+		return err
+	}
+	var win, sess string
+	for _, p := range w.Panes {
+		if p.ID == pane {
+			win, sess = p.WindowID, p.SessionID
+			break
+		}
+	}
+	if win == "" {
+		// The agent's pane died between the notification and the click.
+		// Not an error worth surfacing: the notification was true when sent.
+		log.Printf("focus %s: pane is gone", pane)
+		return nil
+	}
+	cmds := []string{}
+	for _, c := range w.Clients {
+		if c.Name == "" || c.SessionID == sess {
+			continue
+		}
+		cmds = append(cmds, "switch-client -c "+q(c.Name)+" -t "+q(sess))
+	}
+	cmds = append(cmds,
+		"select-window -t "+q(win),
+		"select-pane -t "+q(pane))
+	_, err = ctl.runSeq(cmds...)
+	return err
+}
+
 func (d *daemon) killTarget(ctl *control, sess, pane string) error {
 	switch {
 	case sess == "" && pane == "":

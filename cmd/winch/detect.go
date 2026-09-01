@@ -583,7 +583,7 @@ func (d *daemon) notifyFire(ctl *control, w *world, id string, a *agentInfo) {
 	// you are already looking at stays silent by the same rule.
 	osNote := false
 	if cfg.via != "terminal" && len(cmds) > 0 {
-		if err := notifySystem(title, body, bundle); err != nil {
+		if err := notifySystemTo(title, body, bundle, d.tmuxSock, id); err != nil {
 			log.Printf("notify system: %v", err)
 		} else {
 			osNote = true

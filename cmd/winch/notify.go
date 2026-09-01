@@ -129,7 +129,52 @@ func notifyNotifierCmd(title, body, bundle string) (string, []string, bool) {
 
 // notifySystem delivers one notification without the terminal's help,
 // preferring the clickable route when it is available.
+// notifyApp is winch-notify.app, baked in by the flake on darwin. Empty
+// elsewhere, and empty on a non-nix darwin build, in which case the
+// terminal-notifier and osascript fallbacks below still apply.
+var notifyApp = ""
+
+// notifyAppCmd is the preferred macOS route: winch's OWN bundle, so the
+// banner carries winch's name and icon rather than Script Editor's or
+// terminal-notifier's, and clicking it can jump tmux to the pane.
+//
+// target is the pane the notification is about; it and the winch path ride
+// in userInfo, because the click is delivered to a RELAUNCHED copy of the
+// app that has no argv and never met the process that posted.
+func notifyAppCmd(title, body, bundle, sock, pane string) (string, []string, bool) {
+	if notifyApp == "" {
+		return "", nil, false
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		exe = "winch"
+	}
+	args := []string{"--title", title, "--body", body, "--winch", exe}
+	if sock != "" {
+		args = append(args, "--socket", sock)
+	}
+	if pane != "" {
+		args = append(args, "--pane", pane)
+	}
+	if bundle != "" {
+		args = append(args, "--bundle", bundle)
+	}
+	return notifyApp + "/Contents/MacOS/winch-notify", args, true
+}
+
 func notifySystem(title, body, bundle string) error {
+	return notifySystemTo(title, body, bundle, "", "")
+}
+
+func notifySystemTo(title, body, bundle, sock, pane string) error {
+	if name, args, ok := notifyAppCmd(title, body, bundle, sock, pane); ok {
+		if err := exec.Command(name, args...).Run(); err == nil {
+			return nil
+		}
+		// Fall through. An unregistered bundle exits non-zero and says so on
+		// stderr; sending nothing at all would be worse than sending it
+		// under somebody else's name.
+	}
 	if name, args, ok := notifyNotifierCmd(title, body, bundle); ok {
 		if path, err := exec.LookPath(name); err == nil {
 			if err := exec.Command(path, args...).Run(); err == nil {
@@ -145,6 +190,49 @@ func notifySystem(title, body, bundle string) error {
 		return err
 	}
 	return exec.Command(path, args...).Run()
+}
+
+// cmdNotifyInstall registers winch-notify.app with LaunchServices.
+//
+// This is the one step a nix install cannot skip, and the reason took a whole
+// afternoon to find. UNUserNotificationCenter only talks to apps
+// LaunchServices knows about, and it only knows about apps in the places it
+// scans — /Applications, ~/Applications — never the nix store. Unregistered,
+// requestAuthorization returns "Notifications are not allowed for this
+// application", the app never appears in System Settings, and every
+// notification fails silently.
+//
+// It is also the entire explanation for a puzzle that had nothing to do with
+// signing: kitty uses this API and never registers from the store, while
+// terminal-notifier uses the DEPRECATED NSUserNotification API, which has no
+// such requirement and works from anywhere. Identical ad-hoc signatures,
+// opposite outcomes.
+//
+// Idempotent, so a home-manager activation script can just run it.
+func cmdNotifyInstall() {
+	if runtime.GOOS != "darwin" {
+		fmt.Println("notify-install is macOS only; elsewhere winch notifies through the terminal")
+		return
+	}
+	if notifyApp == "" {
+		fmt.Fprintln(os.Stderr, "this winch was built without winch-notify.app\n"+
+			"(the flake adds it on darwin; a plain `go build` does not)")
+		os.Exit(1)
+	}
+	if _, err := os.Stat(notifyApp); err != nil {
+		fmt.Fprintf(os.Stderr, "winch-notify.app is missing at %s: %v\n", notifyApp, err)
+		os.Exit(1)
+	}
+	const lsregister = "/System/Library/Frameworks/CoreServices.framework/" +
+		"Frameworks/LaunchServices.framework/Support/lsregister"
+	out, err := exec.Command(lsregister, "-f", notifyApp).CombinedOutput()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "lsregister: %v\n%s", err, out)
+		os.Exit(1)
+	}
+	fmt.Printf("registered %s\n\n", notifyApp)
+	fmt.Println("Now enable it once: System Settings > Notifications > winch.")
+	fmt.Println("Then check it works:  winch notify-test system")
 }
 
 // notifyDefaultDelay is herdr's re-check idea: an agent that blocks and

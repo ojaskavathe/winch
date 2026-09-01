@@ -116,6 +116,16 @@ func main() {
 			osc = args[1]
 		}
 		cmdNotifyTest(tmuxSock, osc)
+	case "notify-install":
+		cmdNotifyInstall()
+	case "focus":
+		// What clicking a desktop notification does: take me to that agent.
+		// Named for the user's intent; on the wire it is "goto", because
+		// "focus" already means C-l pane navigation from the sidebar.
+		if len(args) < 2 {
+			usage()
+		}
+		sendCmd(tmuxSock, winchSock, cmdMsg{Cmd: "goto", Pane: args[1]})
 	case "sock":
 		fmt.Printf("tmux:  %s\nwinch: %s\n", tmuxSock, winchSock)
 	default:
