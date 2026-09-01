@@ -320,6 +320,13 @@ func (d *daemon) detectTickRun(ctl *control, w *world) {
 		// identity. As a droppable tail it could be stale for a long time
 		// and nobody could tell.
 		_, name := splitOrnament(title)
+		// tmux's DEFAULT pane_title is the hostname, so a pane whose program
+		// never set one reports "camille" and winch would present that as
+		// the conversation's name — on the card, and worse, leading the
+		// notification. It is not a name, it is the absence of one.
+		if name == d.hostName {
+			name = ""
+		}
 		if a.title != name {
 			a.title = name
 			soft = true

@@ -43,7 +43,7 @@ func TestBlockedAgentNotifiesTheTerminal(t *testing.T) {
 	// four claudes running is one you have to investigate anyway.
 	r.Chk("OSC 777 reached the terminal", strings.Contains(got, "\033]777;notify;"))
 	r.Chk("it says which agent", strings.Contains(got, "claude needs you"))
-	r.Chk("it says where, and why", strings.Contains(got, "work:gamma") &&
+	r.Chk("it says where, and why", strings.Contains(got, "work · gamma") &&
 		strings.Contains(got, "permission prompt"))
 	if !strings.Contains(got, "\033]777;notify;") {
 		if i := strings.Index(got, "777"); i >= 0 {
@@ -71,7 +71,8 @@ func TestNotifyDialectIsConfigurable(t *testing.T) {
 	r.Chk("OSC 9 reached the terminal", strings.Contains(got, "\033]9;claude needs you"))
 	// OSC 9 has no body field, so the context is folded into the one string
 	// it does have rather than dropped on the floor.
-	r.Chk("the body was folded in, not lost", strings.Contains(got, "— work:gamma"))
+	r.Chk("the body was folded in, not lost", strings.Contains(got, "claude needs you — ") &&
+		strings.Contains(got, "work · gamma"))
 	r.Chk("and not ALSO sent as 777", !strings.Contains(got, "\033]777;"))
 }
 

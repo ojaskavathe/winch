@@ -25,6 +25,10 @@ var testFast = os.Getenv("WINCH_TEST_FAST") != ""
 // consume loop, so none of it needs locking.
 type daemon struct {
 	tmuxSock string
+	// hostName is tmux's #{host}, which is also its DEFAULT pane_title:
+	// a pane whose program never set a title reports the hostname, and
+	// that is the absence of a name, not a name.
+	hostName string
 	h        *hub
 
 	pv   previewState // billboard capture engine (preview.go)
@@ -180,6 +184,10 @@ func runDaemon(tmuxSock, winchSock string) {
 		// the same keys. Convention: @winch-<name> with a HYPHEN is user
 		// config, @winch_<name> with an underscore is daemon runtime state.
 		d.loadConfig(ctl)
+		// tmux's default pane_title, so titles equal to it mean "unset".
+		if v, herr := ctl.run("display-message -p '#{host}'"); herr == nil && len(v) == 1 {
+			d.hostName = v[0]
+		}
 		if lines, aerr := ctl.run("show-options -gwqv alternate-screen"); aerr == nil && len(lines) == 1 {
 			altScreen = strings.TrimSpace(lines[0]) != "off"
 			if !altScreen {
