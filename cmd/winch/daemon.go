@@ -63,6 +63,13 @@ type daemon struct {
 	focusC    <-chan time.Time
 	focusPane string
 
+	// closeT/closeC/pendingClose: a two-phase undock's deferred second
+	// half (dock.go) — focus first, kill+widen dockFocusDelay later, so a
+	// Claude Code pane never gets focus-in and resize in the same instant.
+	closeT       *time.Timer
+	closeC       <-chan time.Time
+	pendingClose *pendingClose
+
 	// opts owns every option winch takes from the user (owned.go): what each
 	// one held before it was claimed, what winch last wrote over it, and the
 	// commands to put it back. Nothing else in the daemon writes an option
@@ -341,6 +348,9 @@ func consume(d *daemon, ctl *control, w world, sig chan os.Signal) bool {
 					d.h.setWorld(w, ops, false, d.tmuxSock)
 				}
 			}
+		case <-d.closeC:
+			d.closeC = nil
+			d.flushPendingClose(ctl)
 		case <-d.focusC:
 			d.focusC = nil
 			if p := d.dock; p != nil && p.pane == d.focusPane &&

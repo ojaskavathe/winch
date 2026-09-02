@@ -585,6 +585,9 @@ func (d *daemon) dockOpen(ctl *control, client string) error {
 	if client == "" {
 		return errors.New("dock needs a client name")
 	}
+	// A close still in its focus-settle window must finish before a new
+	// sidebar splits in, or two sidebars share a window.
+	d.flushPendingClose(ctl)
 	sid, wid, cw, ch, err := d.clientView(ctl, client)
 	if err != nil {
 		return err
@@ -1256,12 +1259,61 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 	if restore != "" {
 		seq = append(seq, "select-layout -t "+q(p.win)+" "+q(restore))
 	}
-	seq = append(seq, "select-pane -t "+q(focus))
-	if _, err := ctl.runSeq(seq...); err != nil {
+	if moving {
+		// The landed window was never resized (uncarved or restored in the
+		// switch batch), so the kill/restore of the window being LEFT can
+		// run at once — it is off screen.
+		seq = append(seq, "select-pane -t "+q(focus))
+		if _, err := ctl.runSeq(seq...); err != nil {
+			log.Printf("undock: %v", err)
+		}
+		d.deferReleases(p)
+		return nil
+	}
+	// Staying put, the close is TWO-PHASE: focus lands in the target pane
+	// now, and the kill + widen follow dockFocusDelay later as a lone
+	// resize. Landed with focus-in in the same batch, live Claude Code
+	// panes DROPPED their resize repaint: a captured close painted the
+	// widened pane with its bottom blank (the grow-reflow pulls content
+	// up) and CC's correction only arrived seconds later, poked by
+	// something else — the blank flash this whole hunt was for. A solo
+	// resize is handled cleanly (probed, and the user's own one-shot
+	// resize never flickered). The sidebar visibly lingers those ~120ms.
+	if _, err := ctl.run("select-pane -t " + q(focus)); err != nil {
+		log.Printf("undock focus: %v", err)
+	}
+	d.pendingClose = &pendingClose{seq: seq, p: p}
+	if d.closeT != nil {
+		d.closeT.Stop()
+	}
+	d.closeT = time.NewTimer(dockFocusDelay)
+	d.closeC = d.closeT.C
+	return nil
+}
+
+// pendingClose is a two-phase close's second half: the batch that kills the
+// sidebar and restores the layout, plus the dock state whose releases drain
+// after it. Flushed by the timer, or early by anything that needs the close
+// complete (a re-open, another close).
+type pendingClose struct {
+	seq []string
+	p   *dockState
+}
+
+func (d *daemon) flushPendingClose(ctl *control) {
+	pc := d.pendingClose
+	if pc == nil {
+		return
+	}
+	d.pendingClose = nil
+	if d.closeT != nil {
+		d.closeT.Stop()
+	}
+	d.closeC = nil
+	if _, err := ctl.runSeq(pc.seq...); err != nil {
 		log.Printf("undock: %v", err)
 	}
-	d.deferReleases(p)
-	return nil
+	d.deferReleases(pc.p)
 }
 
 // leaveLayout picks what a window being released should get back: its exact
