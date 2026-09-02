@@ -193,9 +193,18 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 		// painted from the snapshot, then this took it away.
 		if d.dock != nil {
 			// The TUI is on screen: lift the open-transition tint (dockOpen)
-			// so billboard frames render default-background cells normally.
-			_, _ = ctl.run("set-option -p -uq -t " + q(d.dock.pane) + " window-style ; " +
-				"set-option -p -uq -t " + q(d.dock.pane) + " window-active-style")
+			// so billboard frames render default-background cells normally,
+			// and take the focus the split deliberately left behind (-d) —
+			// handing it over only now keeps the origin pane's focus-out
+			// repaint clear of its resize repaint.
+			lift := "set-option -p -uq -t " + q(d.dock.pane) + " window-style ; " +
+				"set-option -p -uq -t " + q(d.dock.pane) + " window-active-style"
+			if time.Since(d.dock.openedAt) < 2*time.Second {
+				// A hello long after the open is a TUI reconnect (daemon
+				// restart, respawn) — those must not steal the keyboard.
+				lift += " ; select-pane -t " + q(d.dock.pane)
+			}
+			_, _ = ctl.run(lift)
 			selWin, selPane, selQuiet := d.h.getSelect()
 			if selWin == "" {
 				selWin = d.dock.win

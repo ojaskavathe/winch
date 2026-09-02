@@ -616,7 +616,16 @@ func (d *daemon) dockOpen(ctl *control, client string) error {
 	install, _, commit := d.dockPlan(ctl, p)
 	seq := install
 	seq = append(seq,
-		fmt.Sprintf("split-window -hb -f -l %d -P -F '#{pane_id}' -t %s %s",
+		// -d: the sidebar spawns UNFOCUSED and takes focus at hello instead
+		// (router.go), once its first paint is up and the mains' resize
+		// repaints have settled. Focus-out at the same instant as the
+		// resize made the previously-active pane repaint mid-repaint —
+		// probed with a focus-reporting primary-screen app: 5 presented
+		// repaints when focused at open vs 3 when not, and live Claude
+		// Code panes visibly flickered exactly and only when active at
+		// open. A blur landing ~50ms later on a settled UI is the same
+		// event a pane navigator delivers all day without artifact.
+		fmt.Sprintf("split-window -d -hb -f -l %d -P -F '#{pane_id}' -t %s %s",
 			d.width(), q(wid), q(tuiCmd)),
 		"set-option -p -t "+q(wid+".{top-left}")+" @winch_sidebar 1",
 		// Tint the pane the sidebar's own ground colour for the frames
