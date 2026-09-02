@@ -188,8 +188,15 @@ const (
 	// frames in 700ms, probed against the real binary — which the user
 	// sees as the pane blanking and churning. At 50ms separation the same
 	// probe presents 5 frames. 120ms clears the threshold with margin and
-	// is still under a keystroke.
+	// is still under a keystroke; on the open side the wait is invisible.
 	dockFocusDelay = 120 * time.Millisecond
+	// dockCloseDelay is the close's counterpart — the gap between focus
+	// landing in the target pane and the kill+widen. Here the wait IS
+	// visible (the sidebar lingers), so it is as short as the data allows:
+	// the storm probe was clean at 50ms separation and a focus render
+	// completes in ~60ms; 75ms keeps the events apart without the close
+	// reading as slow. If the blank flash ever returns, raise this first.
+	dockCloseDelay = 75 * time.Millisecond
 )
 
 // releaseItem is one spacer-held window awaiting restore after undock.
@@ -1286,7 +1293,7 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 	if d.closeT != nil {
 		d.closeT.Stop()
 	}
-	d.closeT = time.NewTimer(dockFocusDelay)
+	d.closeT = time.NewTimer(dockCloseDelay)
 	d.closeC = d.closeT.C
 	return nil
 }
