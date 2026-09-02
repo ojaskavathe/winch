@@ -71,6 +71,7 @@ type dockState struct {
 	originWin  string
 	snap       winSnap   // pre-dock geometry of win
 	openedAt   time.Time // dockOpen time; hello-list logs TUI spawn latency
+	openedBy   string    // "agents" when the agent switcher opened the dock
 
 	// scrubbing: the sidebar pane is ZOOMED and the main area shows live
 	// billboards of the selection instead of real windows. Zoom leaves the
@@ -181,6 +182,14 @@ const (
 	// it releases immediately, typing or not.
 	releaseRetry    = 750 * time.Millisecond
 	releaseIdleSecs = 2
+	// dockFocusDelay is the guaranteed gap between the open's split-resize
+	// and the sidebar taking focus. A focus-out within ~50ms of a resize
+	// throws Claude Code (Ink) panes into a render storm — ~760 presented
+	// frames in 700ms, probed against the real binary — which the user
+	// sees as the pane blanking and churning. At 50ms separation the same
+	// probe presents 5 frames. 120ms clears the threshold with margin and
+	// is still under a keystroke.
+	dockFocusDelay = 120 * time.Millisecond
 )
 
 // releaseItem is one spacer-held window awaiting restore after undock.

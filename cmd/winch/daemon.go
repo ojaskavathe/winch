@@ -53,6 +53,16 @@ type daemon struct {
 	// exact carve geometry (shadow.go).
 	shadow shadowState
 
+	// focusT/focusC: the delayed focus handoff after a dock open. A
+	// focus-out landing within ~50ms of the open's resize throws Claude
+	// Code panes into a render storm (~760 presented frames, probed), so
+	// hello arms this timer instead of selecting the sidebar directly; the
+	// fire-time guards skip a dock that has moved, begun scrubbing, or
+	// closed since — those placed focus deliberately.
+	focusT    *time.Timer
+	focusC    <-chan time.Time
+	focusPane string
+
 	// opts owns every option winch takes from the user (owned.go): what each
 	// one held before it was claimed, what winch last wrote over it, and the
 	// commands to put it back. Nothing else in the daemon writes an option
@@ -331,6 +341,13 @@ func consume(d *daemon, ctl *control, w world, sig chan os.Signal) bool {
 					d.h.setWorld(w, ops, false, d.tmuxSock)
 				}
 			}
+		case <-d.focusC:
+			d.focusC = nil
+			if p := d.dock; p != nil && p.pane == d.focusPane &&
+				p.win == p.originWin && !p.scrubbing {
+				_, _ = ctl.run("select-pane -t " + q(p.pane))
+			}
+			d.focusPane = ""
 		case <-d.releaseC:
 			d.releaseC = nil
 			if len(d.pendingRelease) == 0 {

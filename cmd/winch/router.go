@@ -197,14 +197,30 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 			// and take the focus the split deliberately left behind (-d) —
 			// handing it over only now keeps the origin pane's focus-out
 			// repaint clear of its resize repaint.
-			lift := "set-option -p -uq -t " + q(d.dock.pane) + " window-style ; " +
-				"set-option -p -uq -t " + q(d.dock.pane) + " window-active-style"
-			if time.Since(d.dock.openedAt) < 2*time.Second {
-				// A hello long after the open is a TUI reconnect (daemon
-				// restart, respawn) — those must not steal the keyboard.
-				lift += " ; select-pane -t " + q(d.dock.pane)
+			_, _ = ctl.run("set-option -p -uq -t " + q(d.dock.pane) + " window-style ; " +
+				"set-option -p -uq -t " + q(d.dock.pane) + " window-active-style")
+			// The focus handoff is DELAYED to dockFocusDelay past the open:
+			// a focus-out within ~50ms of the split's resize throws Claude
+			// Code panes into a render storm (the open flicker; ~760
+			// presented frames probed vs 5 at 50ms separation), and hello
+			// alone lands 26-60ms in — astride the threshold. Only the
+			// select-pane waits; everything else hello carries stays
+			// immediate. A hello long after the open is a TUI reconnect
+			// (daemon restart, respawn) — those must not steal the keyboard
+			// at all; a dock that moves or scrubs before the timer fires is
+			// skipped at fire time (daemon.go).
+			if age := time.Since(d.dock.openedAt); age < 2*time.Second {
+				wait := dockFocusDelay - age
+				if wait < time.Millisecond {
+					wait = time.Millisecond
+				}
+				d.focusPane = d.dock.pane
+				if d.focusT != nil {
+					d.focusT.Stop()
+				}
+				d.focusT = time.NewTimer(wait)
+				d.focusC = d.focusT.C
 			}
-			_, _ = ctl.run(lift)
 			selWin, selPane, selQuiet := d.h.getSelect()
 			if selWin == "" {
 				selWin = d.dock.win
@@ -690,9 +706,17 @@ func (d *daemon) agentsOpen(ctl *control, client string) error {
 		// exactly what M-s means — there is no agent to anchor on when you
 		// are looking at the list, and this press is the closing one. (Off
 		// the dock's window select-pane cannot reach anyway, so closing is
-		// the honest answer there too.)
+		// the honest answer there too.) A dock the switcher itself JUST
+		// opened counts as keyboard-in-sidebar even before the delayed
+		// focus handoff (tui.go's held-back hello) has landed — without
+		// that, a quick M-a M-a re-anchored instead of closing.
 		if d.dock.scrubbing || fw != d.dock.win || fp == d.dock.pane {
 			return d.toggle(ctl, client)
+		}
+		if d.dock.openedBy == "agents" && time.Since(d.dock.openedAt) < 2*time.Second {
+			// Straight to close: toggle would read the keyboard as being in
+			// a content pane and focus the sidebar instead.
+			return d.dockClose(ctl, false)
 		}
 	}
 	rank := map[string]int{"blocked": 4, "done": 3, "working": 2, "idle": 1}
@@ -747,6 +771,7 @@ func (d *daemon) agentsOpen(ctl *control, client string) error {
 		if err := d.dockOpen(ctl, client); err != nil {
 			return err
 		}
+		d.dock.openedBy = "agents"
 	} else if _, err := ctl.run("select-pane -t " + q(d.dock.pane)); err != nil {
 		return err
 	}

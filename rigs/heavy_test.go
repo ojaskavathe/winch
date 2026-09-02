@@ -64,6 +64,9 @@ func TestHeavyHistory(t *testing.T) {
 	r.SendKeys(sp, "l")
 	r.Settle()
 	r.SendKeys(sp, "Enter")
+	// Await like the first entry does: under full-suite load a bare Settle
+	// races the commit and this flaked.
+	r.WaitUntil(3000, func() bool { return r.ClientWin() == heavy })
 	r.Settle()
 	r.Chk("re-entered heavy", r.ClientWin() == heavy)
 	// Enter committed and put the keyboard in heavy's own pane, so M-s there
