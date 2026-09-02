@@ -49,6 +49,10 @@ type daemon struct {
 	releaseT       *time.Timer
 	releaseC       <-chan time.Time
 
+	// shadow: the hidden layout-oracle window emulated billboards ask for
+	// exact carve geometry (shadow.go).
+	shadow shadowState
+
 	// opts owns every option winch takes from the user (owned.go): what each
 	// one held before it was claimed, what winch last wrote over it, and the
 	// commands to put it back. Nothing else in the daemon writes an option
@@ -337,8 +341,18 @@ func consume(d *daemon, ctl *control, w world, sig chan os.Signal) bool {
 				d.armRelease(releaseTick)
 				continue
 			}
-			it := d.pendingRelease[0]
-			d.pendingRelease = d.pendingRelease[1:]
+			// A visibly spacer-held window releases now; otherwise the
+			// stall waits for the user's typing to go quiet.
+			pick, idle := d.releasePick(ctl)
+			if pick < 0 && !idle {
+				d.armRelease(releaseRetry)
+				continue
+			}
+			if pick < 0 {
+				pick = 0
+			}
+			it := d.pendingRelease[pick]
+			d.pendingRelease = append(d.pendingRelease[:pick], d.pendingRelease[pick+1:]...)
 			d.releaseOne(ctl, it)
 			if len(d.pendingRelease) > 0 {
 				d.armRelease(releaseTick)

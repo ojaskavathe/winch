@@ -318,27 +318,32 @@ func (d *daemon) preview(ctl *control, wid string, prefetch, stream bool) error 
 		}
 	}
 	var panes []framePane
+	var aux []capAux
 	var caps []string
 	var rects string
 	var activity int64
+	dockW, dockH := 0, 0
+	layout := ""
 	for attempt := 0; ; attempt++ {
 		query := []string{
 			"list-panes -t " + q(wid) + " -F " +
 				f("#{pane_id}", "#{pane_left}", "#{pane_top}", "#{pane_width}", "#{pane_height}", "#{pane_active}", "#{history_size}",
-					"#{cursor_x}", "#{cursor_y}", "#{cursor_flag}"),
-			"display-message -p -t " + q(wid) + " -F " + f("#{window_width}", "#{window_height}", "#{window_activity}"),
+					"#{cursor_x}", "#{cursor_y}", "#{cursor_flag}", "#{alternate_on}"),
+			"display-message -p -t " + q(wid) + " -F " + f("#{window_width}", "#{window_height}", "#{window_activity}", "#{window_layout}"),
 			"display-message -p -t " + q(d.dock.win) + " -F " + f("#{window_width}", "#{window_height}"),
 		}
 		lines, err := ctl.runSeq(query...)
 		if err != nil {
 			return err
 		}
-		tgtW, tgtH, dockW, dockH := 0, 0, 0, 0
+		tgtW, tgtH := 0, 0
+		dockW, dockH, layout = 0, 0, ""
 		if len(lines) >= 2 {
-			if p := strings.Split(lines[len(lines)-2], sep); len(p) == 3 {
+			if p := strings.Split(lines[len(lines)-2], sep); len(p) == 4 {
 				tgtW, _ = strconv.Atoi(p[0])
 				tgtH, _ = strconv.Atoi(p[1])
 				activity, _ = strconv.ParseInt(p[2], 10, 64)
+				layout = p[3]
 			}
 			dockW, dockH = parseDims(lines[len(lines)-1])
 			lines = lines[:len(lines)-2]
@@ -349,16 +354,29 @@ func (d *daemon) preview(ctl *control, wid string, prefetch, stream bool) error 
 		// pays a surprise resize reflow. Normalize to the docked window's
 		// size while billboarding instead.
 		sizeStale := dockW > 0 && (tgtW != dockW || tgtH != dockH)
-		panes, caps, rects = panes[:0], caps[:0], ""
-		history := 0
+		panes, aux, caps, rects = panes[:0], aux[:0], caps[:0], ""
+		// Reflow cost is per pane whose WIDTH changes, and tmux skips the
+		// reflow outright for panes sitting in the alternate screen
+		// (window.c passes reflow = saved_grid == NULL — verified on 3.7b:
+		// 5ms vs 497ms on the same 1.5M-row pane). So the carve gate prices
+		// primary-screen history only. Alt-pane history isn't free forever —
+		// tmux settles it when the app leaves the alternate screen at a
+		// changed width (screen_alternate_off resizes with reflow) — so it
+		// gets its own, looser cap rather than a free pass: past that, a :q
+		// in a docked window would stall the server mid-session.
+		history, altHistory := 0, 0
 		for _, ln := range lines {
 			p := strings.Split(ln, sep)
-			if len(p) != 10 {
+			if len(p) != 11 {
 				continue
 			}
 			rects += strings.Join(p[:6], ",") + ";"
 			if h, _ := strconv.Atoi(p[6]); h > 0 {
-				history += h
+				if p[10] == "1" {
+					altHistory += h
+				} else {
+					history += h
+				}
 			}
 			if p[0] == d.dock.pane || (skipPane != "" && p[0] == skipPane) {
 				continue
@@ -375,6 +393,8 @@ func (d *daemon) preview(ctl *control, wid string, prefetch, stream bool) error 
 			// billboard puts the cursor in the agent's pane.
 			panes = append(panes, framePane{ID: p[0], Left: left, Top: top, Width: width, Height: height, Active: p[5] == "1",
 				Cursor: p[9] == "1", CursorX: cx, CursorY: cy})
+			hist, _ := strconv.Atoi(p[6])
+			aux = append(aux, capAux{alt: p[10] == "1", hist: hist, w1: width, h1: height})
 			// -N keeps trailing cells the app actually painted (a BCE bar's
 			// fill), which is what makes an EMPTY captured line mean "this row
 			// has no non-default cell" rather than "same state, nothing to
@@ -385,7 +405,8 @@ func (d *daemon) preview(ctl *control, wid string, prefetch, stream bool) error 
 			return fmt.Errorf("no panes in %s", wid)
 		}
 		if canCarve && attempt == 0 && d.dock.carved[wid] == nil &&
-			history <= carveHistoryMax && !d.otherClientOn(wid) {
+			history <= carveHistoryMax && altHistory <= carveAltHistoryMax &&
+			!d.otherClientOn(wid) {
 			// The resize (when stale) rides the carve batch: the orig layout
 			// is captured AFTER it, so a later release restores the window
 			// full-width at its normalized size. window-size snaps back to
@@ -492,6 +513,53 @@ func (d *daemon) preview(ctl *control, wid string, prefetch, stream bool) error 
 			return nil
 		}
 	}
+	// Emulated billboard: the window is NOT at docked geometry — too heavy
+	// to carve, another client watching it, or the carve batch failed. The
+	// shadow oracle (shadow.go) supplies the exact carve geometry and
+	// primary-screen panes are rewrapped to it (emulate.go), so the frame
+	// still shows the truth about entering. Alt-screen panes can't be
+	// predicted (the app repaints itself at the new size); their content
+	// ships as-is into the predicted cell and the painter clips it — the
+	// gate above keeps windows where that matters on the real-carve path.
+	// Any oracle trouble falls back to the raw frame, which is exactly the
+	// old behavior.
+	emulated := false
+	if canCarve && d.dock.carved[wid] == nil && dockW > 0 && layout != "" {
+		rects2, err := d.predictDock(ctl, layout, dockW, dockH, d.width())
+		if err != nil {
+			log.Printf("emulate %s: %v", wid, err)
+		}
+		ok := rects2 != nil
+		for i := range panes {
+			if _, have := rects2[panes[i].ID]; !have {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			emulated = true
+			caps = caps[:0]
+			for i := range panes {
+				pr := rects2[panes[i].ID]
+				panes[i].Left, panes[i].Top, panes[i].Width, panes[i].Height = pr.x, pr.y, pr.w, pr.h
+				if aux[i].alt {
+					caps = append(caps, "capture-pane -e -p -N -t "+q(panes[i].ID),
+						"display-message -p "+q(frameMarker))
+				} else {
+					// Two captures per pane: the joined one knows where the
+					// wraps are, the plain one keeps the trailing cells -J
+					// strips — reconstructLogical needs both.
+					rng := fmt.Sprintf(" -S -%d -E %d -t %s",
+						min(emulatePad, aux[i].hist), aux[i].h1-1, q(panes[i].ID))
+					caps = append(caps,
+						"capture-pane -e -p -N"+rng,
+						"display-message -p "+q(frameMarker),
+						"capture-pane -e -p -N -J"+rng,
+						"display-message -p "+q(frameMarker))
+				}
+			}
+		}
+	}
 	minLeft := panes[0].Left
 	for _, p := range panes {
 		if p.Left < minLeft {
@@ -507,14 +575,55 @@ func (d *daemon) preview(ctl *control, wid string, prefetch, stream bool) error 
 	if err != nil {
 		return err
 	}
-	idx := 0
+	// Emulated primary panes ship two capture blocks (plain, then joined);
+	// everything else ships one. Walk the markers against that plan.
+	var joinedLines [][]string
+	if emulated {
+		joinedLines = make([][]string, len(panes))
+	}
+	idx, second := 0, false
 	for _, ln := range out {
 		if ln == frameMarker {
-			idx++
+			if emulated && idx < len(aux) && !aux[idx].alt && !second {
+				second = true
+			} else {
+				idx++
+				second = false
+			}
 			continue
 		}
-		if idx < len(panes) {
+		if idx >= len(panes) {
+			continue
+		}
+		if second {
+			joinedLines[idx] = append(joinedLines[idx], ln)
+		} else {
 			panes[idx].Lines = append(panes[idx].Lines, ln)
+		}
+	}
+	if emulated {
+		for i := range panes {
+			if aux[i].alt {
+				continue
+			}
+			lines := joinedLines[i]
+			spans := logicalSpans(panes[i].Lines, lines)
+			if spans == nil {
+				// Misaligned captures: recompute the wrap — a degraded span
+				// only costs cursor precision, never content.
+				spans = make([]int, len(lines))
+				for j, ln := range lines {
+					r, _ := splitAt(ln, aux[i].w1)
+					spans[j] = len(r)
+				}
+			}
+			hist := min(emulatePad, aux[i].hist)
+			cline, coff, curOK := cursorLocate(panes[i].Lines, spans, hist,
+				panes[i].CursorY, panes[i].CursorX)
+			ep := emulatePane(lines, hist, panes[i].Width, panes[i].Height,
+				cline, coff, panes[i].Cursor && curOK)
+			panes[i].Lines = ep.rows
+			panes[i].Cursor, panes[i].CursorX, panes[i].CursorY = ep.cursor, ep.cx, ep.cy
 		}
 	}
 	for i := range panes {

@@ -149,13 +149,21 @@ func layoutWidth(layout string) int {
 // identify spacers leaked by a crashed daemon exactly.
 const spacerCmd = "sleep 100000001"
 
-// carveHistoryMax caps how much scrollback a window may carry and still get
-// pre-carved during scrubbing. tmux reflows a pane's entire history
-// synchronously on width change — ~250ms at 660k lines (live-measured) —
-// and a carve + its later release would pay that stall TWICE per dock
-// session just for billboarding past the window. Above the cap the
-// billboard is a scaled approximation and the carve happens only on entry.
-const carveHistoryMax = 100_000
+// carveHistoryMax caps how much PRIMARY-SCREEN scrollback a window may carry
+// and still get pre-carved during scrubbing. tmux reflows a pane's entire
+// history synchronously on width change — ~250ms at 660k lines
+// (live-measured) — and a carve + its later release would pay that stall
+// TWICE per dock session just for billboarding past the window. Panes in the
+// alternate screen skip the resize-time reflow entirely (window.c gates it
+// on saved_grid == NULL), so their history counts against the looser
+// carveAltHistoryMax instead: their bill comes due only if the app exits the
+// alternate screen while the width is still changed. Above either cap the
+// billboard is emulated (exact rewrap for primary panes) and the carve
+// happens only on entry.
+const (
+	carveHistoryMax    = 100_000
+	carveAltHistoryMax = 500_000
+)
 
 // Releases (kill spacer + replay layout) stall the tmux server for the same
 // history-reflow reason, so they never run inline with an undock: the
@@ -164,6 +172,15 @@ const carveHistoryMax = 100_000
 const (
 	releaseSettle = 120 * time.Millisecond
 	releaseTick   = 50 * time.Millisecond
+	// A release's reflow can stall the server for hundreds of ms on a heavy
+	// window, and the drain timer has no idea whether the user is mid-
+	// keystroke — a 448ms grow-back once landed straight under live typing.
+	// So the drain yields while any client showed input within the last
+	// releaseIdleSecs, re-arming at releaseRetry. The exception is a pending
+	// window a client is LOOKING at: its spacer is a visible dead column, so
+	// it releases immediately, typing or not.
+	releaseRetry    = 750 * time.Millisecond
+	releaseIdleSecs = 2
 )
 
 // releaseItem is one spacer-held window awaiting restore after undock.
@@ -195,6 +212,37 @@ func (d *daemon) armRelease(after time.Duration) {
 	}
 	d.releaseT = time.NewTimer(after)
 	d.releaseC = d.releaseT.C
+}
+
+// releasePick decides what the drain tick may do: which pending window to
+// release (-1 for "the head, if allowed"), and whether every client has been
+// input-idle long enough for a stall to go unnoticed. A pending window some
+// client is currently on jumps the queue regardless of idleness — the user
+// is staring at its dead spacer column. Fails open: a query error reports
+// idle, so a broken list-clients can only cost a mistimed stall, never a
+// stuck drain.
+func (d *daemon) releasePick(ctl *control) (pick int, idle bool) {
+	out, err := ctl.run("list-clients -F " + f("#{client_activity}", "#{window_id}"))
+	if err != nil {
+		return -1, true
+	}
+	pick, idle = -1, true
+	now := time.Now().Unix()
+	for _, ln := range out {
+		p := strings.Split(ln, sep)
+		if len(p) != 2 {
+			continue
+		}
+		if act, err := strconv.ParseInt(p[0], 10, 64); err == nil && now-act < releaseIdleSecs {
+			idle = false
+		}
+		for i, it := range d.pendingRelease {
+			if it.wid == p[1] && pick < 0 {
+				pick = i
+			}
+		}
+	}
+	return pick, idle
 }
 
 // releaseOne puts one spacer-held window back exactly as it was: kill the

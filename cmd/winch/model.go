@@ -101,9 +101,17 @@ func fetchWorld(c *control) (world, error) {
 	if err != nil {
 		return w, err
 	}
+	shadowSid := ""
 	for _, ln := range lines {
 		p := strings.Split(ln, sep)
 		if len(p) != 3 {
+			continue
+		}
+		// The shadow oracle (shadow.go) is winch furniture, not the user's
+		// world: keep it, its window, and its dummy panes out of the model
+		// so no row, count, or diff ever shows it.
+		if p[1] == shadowSession {
+			shadowSid = p[0]
 			continue
 		}
 		created, _ := strconv.ParseInt(p[2], 10, 64)
@@ -117,6 +125,9 @@ func fetchWorld(c *control) (world, error) {
 	for _, ln := range lines {
 		p := strings.Split(ln, sep)
 		if len(p) != 6 {
+			continue
+		}
+		if p[0] == shadowSid {
 			continue
 		}
 		idx, _ := strconv.Atoi(p[2])
@@ -133,6 +144,9 @@ func fetchWorld(c *control) (world, error) {
 	for _, ln := range lines {
 		p := strings.Split(ln, sep)
 		if len(p) != 11 {
+			continue
+		}
+		if p[0] == shadowSid {
 			continue
 		}
 		idx, _ := strconv.Atoi(p[3])

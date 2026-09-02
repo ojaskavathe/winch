@@ -121,7 +121,7 @@
 
               src = self;
               subPackages = [ "cmd/winch" ];
-              vendorHash = "sha256-W78PHNVSHhTrtZ6/7HfdmD+LjniySClfNbWpLaKTDRY=";
+              vendorHash = "sha256-b5X4FbQacd29T8ziQEobAuKF7HzNJaxEqBcyp74GzjE=";
 
               ldflags = pkgs.lib.optionals withTmux [
                 "-X"
