@@ -255,3 +255,25 @@ func sansSidebar(layout, sidebarPane string) (string, error) {
 	body = lrender(root)
 	return lchecksum(body) + "," + body, nil
 }
+
+// eqLeafResizes walks leaves in geometric order and pins each internal
+// boundary with an absolute resize; leaves on the window's right/bottom edge
+// are skipped (tmux would move their opposite edge). Content-safe where
+// select-layout is not: with a joined sidebar, pane INDEX order diverges
+// from geometric order and select-layout would shuffle contents. Used by
+// equalize's docked path and by dockOpen's width assertion — it lives here,
+// outside the noequalize build tag.
+func eqLeafResizes(n *lnode, right, bottom int, add func(...string)) {
+	if n.kind == 'l' {
+		if n.x+n.w < right {
+			add("resize-pane", "-t", "%"+n.pane, "-x", strconv.Itoa(n.w))
+		}
+		if n.y+n.h < bottom {
+			add("resize-pane", "-t", "%"+n.pane, "-y", strconv.Itoa(n.h))
+		}
+		return
+	}
+	for _, kid := range n.kids {
+		eqLeafResizes(kid, right, bottom, add)
+	}
+}

@@ -619,6 +619,14 @@ func (d *daemon) dockOpen(ctl *control, client string) error {
 		fmt.Sprintf("split-window -hb -f -l %d -P -F '#{pane_id}' -t %s %s",
 			d.width(), q(wid), q(tuiCmd)),
 		"set-option -p -t "+q(wid+".{top-left}")+" @winch_sidebar 1",
+		// Tint the pane the sidebar's own ground colour for the frames
+		// between the split landing and the TUI's first paint. Presented
+		// otherwise, those frames show the strip in the terminal's default
+		// background — a dark flash on open (probe: split at +20ms, content
+		// at +40ms, worse under load). The TUI's hello lifts the tint, so a
+		// later scrub's billboards keep their default-background cells.
+		"set-option -p -t "+q(wid+".{top-left}")+" window-style "+q("bg="+seamGround.hex()),
+		"set-option -p -t "+q(wid+".{top-left}")+" window-active-style "+q("bg="+seamGround.hex()),
 		// Pin the sidebar's own edge so it holds one colour through focus
 		// changes. Per PANE, so every other border in the window still
 		// highlights normally. Pane options ride the pane through swap-pane,
@@ -631,6 +639,25 @@ func (d *daemon) dockOpen(ctl *control, client string) error {
 		"set-option -p -t "+q(wid+".{top-left}")+" pane-border-style "+q(uiSeamStyle),
 		"set-option -p -t "+q(wid+".{top-left}")+" pane-active-border-style "+q(uiSeamStyle),
 	)
+	// Pin every main pane to the width the give-back math (scaleX) computes,
+	// riding the same batch as the split so no extra frame is presented.
+	// tmux's own redistribution at split time is NOT the inverse of the
+	// give-back's rescale — a window equalized while docked came back from a
+	// close/open round trip visibly lopsided (probe: [90 90 90 90 89] gave
+	// back [96 96 95 95 94], and re-splitting that landed [90 90 89 89 91])
+	// — while scaleX down is scaleX up's exact inverse, so with these
+	// resizes the round trip reproduces the docked layout to the column.
+	// Absolute per-leaf resizes, not select-layout: with the sidebar joined,
+	// index order diverges from geometric order and select-layout would
+	// shuffle pane contents.
+	if _, body, ok := strings.Cut(snap.layout, ","); ok && p.hostW > d.width()+2 {
+		if root, perr := (&lparser{s: body}).node(); perr == nil {
+			scaleX(root, d.width()+1, p.hostW-d.width()-1)
+			eqLeafResizes(root, p.hostW, root.y+root.h, func(args ...string) {
+				seq = append(seq, strings.Join(args, " "))
+			})
+		}
+	}
 	lines, err := ctl.runSeq(seq...)
 	if err != nil {
 		return err
@@ -1128,7 +1155,12 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 	}
 	// State only: kill-pane below removes the sidebar even zoomed (killing
 	// the zoomed pane unzooms), and an explicit early unzoom would flash the
-	// origin panes before a toOrigin switch lands.
+	// origin panes before a toOrigin switch lands. scrubWin is cleared FIRST
+	// so scrubEnd skips its own status-format restore batch: releaseAll
+	// below restores row 0 with everything else, and a separate restore one
+	// round trip earlier repainted the status twice — a visible flick of the
+	// bar on every dismiss-from-scrub.
+	p.scrubWin = ""
 	d.scrubEnd(ctl, false)
 	d.dock = nil
 	d.pv.target = ""

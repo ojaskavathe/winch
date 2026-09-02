@@ -192,6 +192,10 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 		// unreachable. Visible as a flicker unique to M-a — the right row was
 		// painted from the snapshot, then this took it away.
 		if d.dock != nil {
+			// The TUI is on screen: lift the open-transition tint (dockOpen)
+			// so billboard frames render default-background cells normally.
+			_, _ = ctl.run("set-option -p -uq -t " + q(d.dock.pane) + " window-style ; " +
+				"set-option -p -uq -t " + q(d.dock.pane) + " window-active-style")
 			selWin, selPane, selQuiet := d.h.getSelect()
 			if selWin == "" {
 				selWin = d.dock.win

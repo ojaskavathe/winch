@@ -9,7 +9,6 @@ import (
 	"math"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 )
 
@@ -395,22 +394,4 @@ func eqDocked(t eqTmux, root *lnode, fixed, window string, counts map[string]map
 	}
 	eqLeafResizes(pseudo, root.x+root.w, root.y+root.h, add)
 	return t.ok(args...)
-}
-
-// eqLeafResizes walks leaves in geometric order and pins each internal
-// boundary with an absolute resize; leaves on the window's right/bottom edge
-// are skipped (tmux would move their opposite edge).
-func eqLeafResizes(n *lnode, right, bottom int, add func(...string)) {
-	if n.kind == 'l' {
-		if n.x+n.w < right {
-			add("resize-pane", "-t", "%"+n.pane, "-x", strconv.Itoa(n.w))
-		}
-		if n.y+n.h < bottom {
-			add("resize-pane", "-t", "%"+n.pane, "-y", strconv.Itoa(n.h))
-		}
-		return
-	}
-	for _, kid := range n.kids {
-		eqLeafResizes(kid, right, bottom, add)
-	}
 }
