@@ -202,7 +202,16 @@ func (d *daemon) armRelease(after time.Duration) {
 // coalesce; letting tmux expand into the hole would drift borders ±1).
 func (d *daemon) releaseOne(ctl *control, it releaseItem) {
 	lay, dirty := d.leaveInfo(ctl, it.wid)
-	seq := []string{"kill-pane -t " + q(it.t.spacer)}
+	// FIRST, before anything that can fail: a window winch normalized is
+	// pinned to window-size manual until something unsets it, and the unset
+	// in the carve batch is skipped whenever that batch dies partway. The
+	// logged "release: have 2 panes but need 1" failures are exactly that.
+	// A pinned window is silently unresizable forever, so the heal leads
+	// the batch rather than riding behind a select-layout that may error.
+	seq := []string{
+		"set-option -w -uq -t " + q(it.wid) + " window-size",
+		"kill-pane -t " + q(it.t.spacer),
+	}
 	if rl := d.leaveLayout(it.wid, it.t.orig, lay, dirty, it.t.spacer); rl != "" {
 		seq = append(seq, "select-layout -t "+q(it.wid)+" "+q(rl))
 	}
@@ -841,7 +850,15 @@ func (d *daemon) dockMove(ctl *control, wid string, focusMain bool, focusPane st
 		// After select-window the client is on the window: latest resolves
 		// to the size just set — no second resize, sizing follows the
 		// client again from here.
-		critical = append(critical, "set-option -w -t "+q(wid)+" window-size latest")
+		//
+		// UNSET rather than set "latest": resize-window pins the window to
+		// window-size manual, and a window left pinned can never resize
+		// again — invisible until the client's size changes, then every
+		// pinned window renders at the old geometry (a monitor unplugged on
+		// 2026-09-01 left three windows stuck at 480x95 on a 230x68
+		// client). Unsetting restores inheritance, so it also cannot
+		// override a global window-size the user chose deliberately.
+		critical = append(critical, "set-option -w -uq -t "+q(wid)+" window-size")
 	}
 	if sidN != p.sess {
 		// Last, so everything the arriving session needs is already set when

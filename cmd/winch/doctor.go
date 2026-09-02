@@ -352,6 +352,40 @@ func (d *daemon) doctor(ctl *control) []string {
 	lost := lostSpacers(p, live)
 	r.check(len(lost) == 0, "every carve still has its spacer", lost...)
 
+	// A window winch normalized is pinned to `window-size manual` by
+	// resize-window until something unsets it, and a pinned window can NEVER
+	// resize again. Nothing surfaces that: it looks perfect until the
+	// CLIENT's size changes, and then every pinned window renders at the
+	// geometry of a monitor that is no longer attached. Unplugging one on
+	// 2026-09-01 left three windows at 480x95 on a 230x68 client with every
+	// other check green — which is the whole argument for this check: the
+	// failure is invisible on the machine that has it until the one moment
+	// you cannot debug comfortably.
+	//
+	// Only a fault when the GLOBAL is not manual. Someone who set that
+	// deliberately wants exactly this, and inheriting their choice is not
+	// something to report.
+	var pinned []string
+	gv, gerr := ctl.run("show -gv window-size")
+	if gerr == nil && (len(gv) == 0 || strings.TrimSpace(gv[0]) != "manual") {
+		if got, err := ctl.run("list-windows -a -F " + f(
+			"#{window_id}", "#{session_name}:#{window_index}",
+			"#{window-size}", "#{window_width}x#{window_height}")); err == nil {
+			for _, ln := range got {
+				c := strings.Split(ln, sep)
+				if len(c) == 4 && c[2] == "manual" {
+					pinned = append(pinned, fmt.Sprintf(
+						"%s (%s) is pinned at %s and can no longer resize", c[1], c[0], c[3]))
+				}
+			}
+		}
+	}
+	if len(pinned) > 0 {
+		pinned = append(pinned,
+			"fix: tmux -S "+d.tmuxSock+" set -w -t <window> -u window-size")
+	}
+	r.check(len(pinned) == 0, "no window is pinned to a manual size", pinned...)
+
 	// ---- recent errors on the paths that give things back ---------------
 	if fails := recentRestoreFailures(d.tmuxSock, 6); len(fails) > 0 {
 		r.head("recent tmux errors on leave / undock (from the log)")

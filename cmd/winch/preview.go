@@ -408,7 +408,7 @@ func (d *daemon) preview(ctl *control, wid string, prefetch, stream bool) error 
 				fmt.Sprintf("split-window -d -hb -f -l %d -P -F '#{pane_id}' -t %s %s",
 					d.width(), q(wid), q(spacerCmd)))
 			if sizeStale {
-				seq = append(seq, "set-option -w -t "+q(wid)+" window-size latest")
+				seq = append(seq, "set-option -w -uq -t "+q(wid)+" window-size")
 			}
 			out, err := ctl.runSeq(seq...)
 			if err == nil {
@@ -447,7 +447,7 @@ func (d *daemon) preview(ctl *control, wid string, prefetch, stream bool) error 
 			sizeStale && tgtW == dockW && !d.otherClientOn(wid) {
 			if _, err := ctl.runSeq(
 				fmt.Sprintf("resize-window -y %d -t %s", dockH, q(wid)),
-				"set-option -w -t "+q(wid)+" window-size latest"); err == nil {
+				"set-option -w -uq -t "+q(wid)+" window-size"); err == nil {
 				continue // recapture at the corrected height
 			}
 		}
