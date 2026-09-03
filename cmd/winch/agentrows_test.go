@@ -149,3 +149,42 @@ func TestStateColoursMatchHerdr(t *testing.T) {
 		t.Error("unknown state got a colour")
 	}
 }
+
+// A title that itself contains " · " must render whole. Claude's --resume
+// picker sets the terminal title to literally "claude · resume"; the identity
+// row used to join its tokens with " · ", fit, then split back on " · ",
+// which sliced that title in two and dropped the tail — the card showed a
+// bare "claude" and the unpainted remainder bled stale cells. Regression:
+// the rendered identity row must be the full title, at any width that fits.
+func TestIdentityRowKeepsTitleContainingSeparator(t *testing.T) {
+	st := rowStore()
+	p := agentPane("idle", "")
+	p.Title = agentTaskTitle("claude · resume")
+
+	d := defaultAgentRows()
+	// row 1 of the default layout is the identity (title) row.
+	vals := d.values(d.rows[1], st, p)
+	label, _ := fitAgentRow(vals, 60, false, pal.subtext)
+	got := strings.TrimSpace(label)
+	if got != "claude · resume" {
+		t.Fatalf("identity row sliced a title on its own separator: got %q, want %q", got, "claude · resume")
+	}
+}
+
+// The same round-trip must not corrupt a MULTI-token identity row whose title
+// component contains " · ". With tokens [tab, title] and title "claude ·
+// resume", the old split produced [tabval, claude, resume] and the clamp
+// dropped "resume"; both the tab and the whole title must survive.
+func TestMultiTokenIdentityRowWithSeparatorTitle(t *testing.T) {
+	st := rowStore()
+	p := agentPane("idle", "")
+	p.Title = agentTaskTitle("claude · resume")
+
+	r := agentRows{rows: [][]string{{tokAgent, tokTitle}}, explicit: true}
+	vals := r.values(r.rows[0], st, p)
+	label, _ := fitAgentRow(vals, 60, false, pal.subtext)
+	got := strings.TrimSpace(label)
+	if !strings.Contains(got, "claude · resume") {
+		t.Fatalf("multi-token identity row lost a separator-bearing title: got %q", got)
+	}
+}

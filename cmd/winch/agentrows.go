@@ -159,6 +159,17 @@ func fitAgentRow(vals []rowVal, avail int, head bool, ambient string) (string, s
 		}
 		return n
 	}
+	// rowWidth is the rendered width of a token list joined by " · ".
+	rowWidth := func(toks []string) int {
+		n := 0
+		for i, t := range toks {
+			if i > 0 {
+				n += 3 // " · "
+			}
+			n += len([]rune(t))
+		}
+		return n
+	}
 	if head {
 		for len(vals) > 1 && width(vals) > avail {
 			vals = vals[:len(vals)-1]
@@ -168,16 +179,27 @@ func fitAgentRow(vals []rowVal, avail int, head bool, ambient string) (string, s
 	for _, v := range vals {
 		plain = append(plain, v.text)
 	}
-	text := strings.Join(plain, " · ")
 	if !head {
-		text = fitTokens(text, avail)
-		// Re-derive the pieces so styling survives the truncation: a token
-		// the fit dropped must not still be painted.
-		plain = strings.Split(text, " · ")
-		if len(plain) > len(vals) {
-			plain = plain[:len(vals)]
+		// The identity row degrades by dropping whole trailing tokens, then
+		// word-truncates whichever token is left last. It must NOT round-trip
+		// through a strings.Split(text, " · "): a single token can itself
+		// contain " · " — claude's resume-picker sets its terminal title to
+		// literally "claude · resume" — and splitting on the separator sliced
+		// that title in two, then the len(vals) clamp dropped the tail,
+		// leaving a bare "claude" with the rest of the row unpainted (stale
+		// cells bled through). Fit on the token slice directly instead.
+		for len(plain) > 1 && rowWidth(plain) > avail {
+			plain = plain[:len(plain)-1]
+		}
+		if last := len(plain) - 1; last >= 0 {
+			used := rowWidth(plain[:last])
+			if last > 0 {
+				used += 3 // the separator before the last token
+			}
+			plain[last] = fitTokens(plain[last], avail-used)
 		}
 	}
+	text := strings.Join(plain, " · ")
 	for i, s := range plain {
 		st := pal.subtext
 		if i < len(vals) {

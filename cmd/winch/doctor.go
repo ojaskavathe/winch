@@ -194,6 +194,59 @@ func (d *daemon) doctor(ctl *control) []string {
 		}
 	}
 
+	// ---- agents ---------------------------------------------------------
+	// What the sidebar ACTUALLY renders for every detected agent, beside the
+	// raw material it renders from. The card is built in the TUI, so a bug
+	// between the pane's title/state and the row you see (a title sliced at
+	// its own " · ", a stale reason, a mis-styled token) is otherwise
+	// invisible from here — you would need a screenshot to catch it. This
+	// runs the real render (uiAgentRows + fitAgentRow) against the daemon's
+	// world so `winch doctor` shows the row exactly as painted.
+	r.head("agents")
+	{
+		w := d.h.getWorld()
+		st := &store{
+			sessions: map[string]session{},
+			windows:  map[string]window{},
+			panes:    map[string]pane{},
+		}
+		for _, s := range w.Sessions {
+			st.sessions[s.ID] = s
+		}
+		for _, wd := range w.Windows {
+			st.windows[wd.ID] = wd
+		}
+		for _, p := range w.Panes {
+			st.panes[p.ID] = p
+		}
+		// A generous width so legitimate truncation does not hide a render
+		// bug: at this width the row should be the raw title verbatim, so any
+		// divergence is the render's own doing.
+		const availDoc = 60
+		n := 0
+		for _, p := range w.Panes {
+			if p.Agent == "" {
+				continue
+			}
+			n++
+			r.add("  %s %-7s state=%-10s title=%q", p.ID, p.Agent, orDash(p.AgentState), p.Title)
+			if p.AgentReason != "" {
+				r.add("      reason %q", p.AgentReason)
+			}
+			for ri, spec := range uiAgentRows.rows {
+				vals := uiAgentRows.values(spec, st, p)
+				if len(vals) == 0 {
+					continue
+				}
+				label, _ := fitAgentRow(vals, availDoc, ri == 0, pal.subtext)
+				r.add("      card  %q", strings.TrimSpace(label))
+			}
+		}
+		if n == 0 {
+			r.add("  no agent panes detected")
+		}
+	}
+
 	// ---- the bar, per session -------------------------------------------
 	r.head("status line")
 	type sessRow struct {
