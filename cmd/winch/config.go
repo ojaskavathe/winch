@@ -28,11 +28,12 @@ import (
 // outlive a server restart belongs in tmux.conf, which these options read
 // from for free.
 const (
-	optTheme = "@winch-theme"
-	optWidth = "@winch-width"
-	optSplit = "@winch-agents-split"
-	optSeam  = "@winch-seam-style"
-	optNav   = "@winch-nav-keys"
+	optTheme      = "@winch-theme"
+	optWidth      = "@winch-width"
+	optSplit      = "@winch-agents-split"
+	optSeam       = "@winch-seam-style"
+	optNav        = "@winch-nav-keys"
+	optAgentDelay = "@winch-agent-delay"
 )
 
 // navKeys are the four keys the sidebar treats as pane navigation, named the
@@ -240,6 +241,22 @@ func (d *daemon) loadConfig(ctl *control) {
 	uiBorderLines = borderLines(ctl)
 	loadSeamStyle(ctl)
 	loadNavKeys(ctl)
+
+	// @winch-agent-delay off: drop the focus/resize separation delays on
+	// dock transitions around agent panes. Only sensible on a tmux whose
+	// presentation layer holds the client sync open across a pane's own
+	// ?2026 region (patched); on stock tmux the delays are what keep a
+	// Claude Code pane from presenting its repaint one glyph at a time.
+	if s := strings.ToLower(strings.TrimSpace(optStr(ctl, optAgentDelay))); s != "" {
+		switch s {
+		case "off", "0", "false", "no":
+			d.agentDelayOff = true
+		case "on", "1", "true", "yes":
+			d.agentDelayOff = false
+		default:
+			log.Printf("config: %s=%q is not on/off, ignoring", optAgentDelay, s)
+		}
+	}
 
 	if s := optStr(ctl, optWidth); s != "" {
 		if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {

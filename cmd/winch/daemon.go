@@ -70,6 +70,15 @@ type daemon struct {
 	closeC       <-chan time.Time
 	pendingClose *pendingClose
 
+	// agentDelayOff (@winch-agent-delay off) drops the focus/resize
+	// separation delays entirely. For servers where the underlying tmux
+	// presentation bug is fixed (a sync-hold patch: tmux keeps the client's
+	// ?2026 wrapper open while a pane is inside its own sync region), the
+	// delays protect against nothing and every dock transition can run
+	// single-batch. Unset, the delays stay on — stock tmux still storms
+	// without them.
+	agentDelayOff bool
+
 	// opts owns every option winch takes from the user (owned.go): what each
 	// one held before it was claimed, what winch last wrote over it, and the
 	// commands to put it back. Nothing else in the daemon writes an option

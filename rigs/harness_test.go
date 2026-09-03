@@ -243,7 +243,17 @@ func (r *Rig) T(args ...string) string {
 
 // TQ is T but quiet: returns the error instead of failing the test.
 func (r *Rig) TQ(args ...string) (string, error) {
-	cmd := exec.Command("tmux", append([]string{"-L", r.L}, args...)...)
+	pre := []string{"-L", r.L}
+	// RIGVV=<dir>: run tmux with -vv so the server writes its debug log
+	// (tmux-server-*.log) into <dir>. The server inherits log level and cwd
+	// from the first client, so this must be on from the rig's first
+	// command. Used by the ccanatomy probes to read tmux's own account of a
+	// render storm.
+	if vv := os.Getenv("RIGVV"); vv != "" {
+		pre = append(pre, "-vv")
+	}
+	cmd := exec.Command("tmux", append(pre, args...)...)
+	cmd.Dir = os.Getenv("RIGVV") // "" means inherit
 	cmd.Env = envSansTmux()
 	b, err := cmd.CombinedOutput()
 	return strings.TrimRight(string(b), "\n"), err

@@ -1294,8 +1294,10 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 		return nil
 	}
 	// Staying put and landing in a plain pane (nvim, a shell): one batch,
-	// zero delay — those take focus-in and resize together cleanly.
-	if !d.agentPane(focus) {
+	// zero delay — those take focus-in and resize together cleanly. With
+	// @winch-agent-delay off (sync-hold-patched tmux) agent panes take the
+	// same instant path.
+	if d.agentDelayOff || !d.agentPane(focus) {
 		seq = append(seq, "select-pane -t "+q(focus))
 		if _, err := ctl.runSeq(seq...); err != nil {
 			log.Printf("undock: %v", err)
