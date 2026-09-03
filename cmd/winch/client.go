@@ -183,6 +183,15 @@ func cmdNav(tmuxSock, winchSock, dir, client string) {
 	sendCmd(tmuxSock, winchSock, cmdMsg{Cmd: "nav", Dir: dir, Client: client})
 }
 
+// cmdEqualizeDock is the routed prefix-e / M-e while docked: the daemon
+// equalizes the SELECTION (the scrubbed window, or the docked main region),
+// never the sidebar pane the keystroke resolves to. Non-docked clients never
+// reach here — the bind gates on @winch_docked and runs the standalone
+// equalize instead.
+func cmdEqualizeDock(tmuxSock, winchSock, client string) {
+	sendCmd(tmuxSock, winchSock, cmdMsg{Cmd: "equalize", Client: client})
+}
+
 // cmdBrowse docks the sidebar and zooms straight into billboard scrubbing.
 func cmdBrowse(tmuxSock, winchSock, client string) {
 	sendCmd(tmuxSock, winchSock, cmdMsg{Cmd: "browse", Client: client})

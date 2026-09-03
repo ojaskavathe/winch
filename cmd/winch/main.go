@@ -47,6 +47,8 @@ commands:
   agents <client>        agent switcher: browse pinned on the top-attention agent;
                          repeat invocations cycle through agents
   equalize [pane]        equalize panes, nvim splits weighted (no daemon needed)
+  equalize-dock <client> routed equalize while docked: acts on the SELECTION
+                         (the scrubbed window), not the sidebar pane
   tui                    the sidebar TUI (spawned by the daemon)
   doctor                 report what winch has done to this tmux, and check it
   notify-test [777|9|99|system]
@@ -106,6 +108,12 @@ func main() {
 			pane = args[1]
 		}
 		cmdEqualize(tmuxSock, pane)
+	case "equalize-dock":
+		client := ""
+		if len(args) > 1 {
+			client = args[1]
+		}
+		cmdEqualizeDock(tmuxSock, winchSock, client)
 	case "tui":
 		cmdTui(tmuxSock, winchSock)
 	case "doctor":

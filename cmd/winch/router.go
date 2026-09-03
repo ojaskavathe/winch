@@ -73,6 +73,8 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 		err = d.agentsOpen(ctl, env.msg.Client)
 	case "nav":
 		err = d.dockNav(ctl, env.msg.Dir)
+	case "equalize":
+		err = d.dockEqualize(ctl)
 	case "preview":
 		// Selection leaving the real window starts billboard scrubbing
 		// (zoom + captures); while scrubbing, previews and prefetches are

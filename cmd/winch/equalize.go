@@ -69,7 +69,26 @@ func equalizeRun(t eqTmux, pane string) error {
 	if err != nil {
 		return err
 	}
-	layout, err := t.out("display-message", "-pt", currentWindow, "#{window_layout}")
+	// Standalone equalize runs on the window you are looking at, and
+	// select-layout can move the active pane, so restore focus to it.
+	return equalizeWindow(t, currentWindow, currentPane)
+}
+
+// equalizeWindow equalizes one window's panes (nvim splits weighted) and runs
+// `wincmd =` in every nvim it holds. focusPane, when non-empty, is selected
+// last: select-layout can move the active pane, so a focus-preserving caller
+// passes the pane to land back on. The daemon-routed docked caller passes ""
+// — the sidebar owns focus, and equalizing a window you may only be PREVIEWING
+// must not yank the keyboard into it.
+func equalizeWindow(t eqTmux, window, focusPane string) error {
+	if window == "" {
+		w, err := t.out("display-message", "-p", "#{window_id}")
+		if err != nil {
+			return err
+		}
+		window = w
+	}
+	layout, err := t.out("display-message", "-pt", window, "#{window_layout}")
 	if err != nil {
 		return err
 	}
@@ -79,11 +98,11 @@ func equalizeRun(t eqTmux, pane string) error {
 	}
 	root, err := (&lparser{s: body}).node()
 	if err != nil {
-		t.ok("select-layout", "-t", currentWindow, "-E")
+		t.ok("select-layout", "-t", window, "-E")
 		return err
 	}
 
-	panes := eqCurrentPanes(t, currentWindow)
+	panes := eqCurrentPanes(t, window)
 	fixed := ""
 	for id, p := range panes {
 		if p.fixed {
@@ -98,14 +117,14 @@ func equalizeRun(t eqTmux, pane string) error {
 	}()
 
 	if fixed != "" {
-		if !eqDocked(t, root, fixed, currentWindow, counts) {
+		if !eqDocked(t, root, fixed, window, counts) {
 			return nil
 		}
 	} else {
 		eqAssign(root, root.x, root.y, root.w, root.h, counts)
 		body = lrender(root)
-		if !t.ok("select-layout", "-t", currentWindow, lchecksum(body)+","+body) {
-			t.ok("select-layout", "-t", currentWindow, "-E")
+		if !t.ok("select-layout", "-t", window, lchecksum(body)+","+body) {
+			t.ok("select-layout", "-t", window, "-E")
 		}
 	}
 
@@ -114,7 +133,49 @@ func equalizeRun(t eqTmux, pane string) error {
 			t.ok("set-option", "-pt", "%"+paneID, "-u", "@nvim_server")
 		}
 	}
-	t.ok("select-pane", "-t", currentPane)
+	if focusPane != "" {
+		t.ok("select-pane", "-t", focusPane)
+	}
+	return nil
+}
+
+// dockEqualize is the daemon side of `winch equalize-dock`: equalize honoring
+// the rule that a non-sidebar-native command acts on the SELECTION, not the
+// sidebar pane the keystroke lands on.
+//
+//   - Scrubbing: equalize the previewed window (the selection), then force a
+//     fresh billboard capture so the balanced layout is what you see and what
+//     Enter commits. Without this the standalone tool resolved the window to
+//     the docked ORIGIN (the sidebar is zoomed over it) and its trailing
+//     select-pane snapped focus home — the reported bug.
+//   - Docked idle: equalize the docked window's main region (eqDocked skips
+//     the fixed sidebar pane).
+//
+// Focus is never pulled out of the sidebar.
+func (d *daemon) dockEqualize(ctl *control) error {
+	p := d.dock
+	if p == nil {
+		return nil // undocked between the if-shell test and the command
+	}
+	win := p.win
+	if p.scrubbing {
+		switch {
+		case p.scrubWin != "":
+			win = p.scrubWin
+		case d.pv.target != "":
+			win = d.pv.target
+		}
+	}
+	if win == "" {
+		return nil
+	}
+	if err := equalizeWindow(eqTmux{sock: d.tmuxSock}, win, ""); err != nil {
+		return err
+	}
+	if p.scrubbing {
+		d.pv.reset()
+		return d.preview(ctl, win, false, false)
+	}
 	return nil
 }
 
