@@ -210,16 +210,24 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 			// at all; a dock that moves or scrubs before the timer fires is
 			// skipped at fire time (daemon.go).
 			if age := time.Since(d.dock.openedAt); age < 2*time.Second {
-				wait := dockFocusDelay - age
-				if wait < time.Millisecond {
-					wait = time.Millisecond
+				if !d.agentPane(d.dock.snap.activePane) &&
+					d.dock.win == d.dock.originWin && !d.dock.scrubbing {
+					// The pane losing focus is a plain one (nvim, shell):
+					// no collision to avoid, take focus right away. Same
+					// moved/scrubbing guards the timer applies at fire.
+					_, _ = ctl.run("select-pane -t " + q(d.dock.pane))
+				} else {
+					wait := dockFocusDelay - age
+					if wait < time.Millisecond {
+						wait = time.Millisecond
+					}
+					d.focusPane = d.dock.pane
+					if d.focusT != nil {
+						d.focusT.Stop()
+					}
+					d.focusT = time.NewTimer(wait)
+					d.focusC = d.focusT.C
 				}
-				d.focusPane = d.dock.pane
-				if d.focusT != nil {
-					d.focusT.Stop()
-				}
-				d.focusT = time.NewTimer(wait)
-				d.focusC = d.focusT.C
 			}
 			selWin, selPane, selQuiet := d.h.getSelect()
 			if selWin == "" {

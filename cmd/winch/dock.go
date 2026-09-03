@@ -576,6 +576,22 @@ func (d *daemon) applyDockPlan(ctl *control, p *dockState) {
 }
 
 // paneInWindow reports whether the world knows pid as a pane of wid.
+// agentPane reports whether a pane runs a detected agent (a Claude Code
+// class TUI). Only these need the focus/resize separation delays: agent
+// panes mis-render when a focus event and a SIGWINCH share an instant
+// (storm on focus-out, dropped repaint on focus-in), while nvim and shells
+// take both together cleanly — so the dock's transitions stay undelayed
+// everywhere else. A just-spawned agent the detector hasn't classified yet
+// slips through as a plain pane; detection settles within a beat.
+func (d *daemon) agentPane(pid string) bool {
+	for _, pn := range d.h.getWorld().Panes {
+		if pn.ID == pid {
+			return pn.Agent != ""
+		}
+	}
+	return false
+}
+
 func (d *daemon) paneInWindow(pid, wid string) bool {
 	for _, pn := range d.h.getWorld().Panes {
 		if pn.ID == pid {
@@ -1277,15 +1293,25 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 		d.deferReleases(p)
 		return nil
 	}
-	// Staying put, the close is TWO-PHASE: focus lands in the target pane
-	// now, and the kill + widen follow dockFocusDelay later as a lone
-	// resize. Landed with focus-in in the same batch, live Claude Code
-	// panes DROPPED their resize repaint: a captured close painted the
-	// widened pane with its bottom blank (the grow-reflow pulls content
-	// up) and CC's correction only arrived seconds later, poked by
-	// something else — the blank flash this whole hunt was for. A solo
-	// resize is handled cleanly (probed, and the user's own one-shot
-	// resize never flickered). The sidebar visibly lingers those ~120ms.
+	// Staying put and landing in a plain pane (nvim, a shell): one batch,
+	// zero delay — those take focus-in and resize together cleanly.
+	if !d.agentPane(focus) {
+		seq = append(seq, "select-pane -t "+q(focus))
+		if _, err := ctl.runSeq(seq...); err != nil {
+			log.Printf("undock: %v", err)
+		}
+		d.deferReleases(p)
+		return nil
+	}
+	// Landing in an AGENT pane, the close is TWO-PHASE: focus lands now,
+	// and the kill + widen follow dockCloseDelay later as a lone resize.
+	// Landed with focus-in in the same batch, live Claude Code panes
+	// DROPPED their resize repaint: a captured close painted the widened
+	// pane with its bottom blank (the grow-reflow pulls content up) and
+	// CC's correction only arrived seconds later, poked by something else
+	// — the blank flash this whole hunt was for. A solo resize is handled
+	// cleanly (probed, and the user's own one-shot resize never
+	// flickered). The sidebar visibly lingers those ~75ms.
 	if _, err := ctl.run("select-pane -t " + q(focus)); err != nil {
 		log.Printf("undock focus: %v", err)
 	}
