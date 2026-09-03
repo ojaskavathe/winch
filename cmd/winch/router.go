@@ -178,6 +178,15 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 		if d.dockW != 0 {
 			d.h.send(env.sub, marshalLine(widthMsg{Type: "width", Width: d.dockW}))
 		}
+		// If this TUI connected mid-scrub (browse pre-zooms into a billboard
+		// before the TUI subscribes, so it missed scrubStart's one-shot
+		// surface push), tell it the zoomed surface width now — otherwise it
+		// would paint the billboard at its pty width, which on next-3.8 is
+		// still the docked width because tmux never resized a zoomed pane's
+		// pty with other clients attached.
+		if d.dock != nil && d.dock.scrubbing {
+			d.h.send(env.sub, marshalLine(surfaceMsg{Type: "surface", Cols: d.dock.hostW}))
+		}
 		// dockOpen just spawned it; replay the selection it missed (and the
 		// current frame, when browse pre-zoomed into a scrub).
 		//

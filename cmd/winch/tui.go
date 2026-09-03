@@ -1229,6 +1229,15 @@ func cmdTui(tmuxSock, winchSock string) {
 					listW = m.Width
 					paintAll()
 				}
+			case "surface":
+				// Authoritative pane width from the daemon around a scrub
+				// zoom (Cols>0) or its end (Cols==0). Repaint at the new
+				// surface so the billboard widens even when tmux never
+				// resized our pty (and so a stale-pty unzoom narrows back).
+				if surfaceCols != m.Cols {
+					surfaceCols = m.Cols
+					paintAll()
+				}
 			case "select":
 				found := applySelect(m.Window, m.Pane)
 				selPending = false
@@ -1899,10 +1908,20 @@ func framesEqual(a, b []framePane) bool {
 	return true
 }
 
+// surfaceCols, when > 0, overrides the width read from the pty. The daemon
+// sets it (surfaceMsg) around a scrub zoom because tmux does not reliably
+// resize a zoomed pane's pty when other clients are attached — the ioctl
+// would keep reporting the docked width and the billboard would never
+// widen. Read and written only from the single TUI event-loop goroutine.
+var surfaceCols int
+
 func surfaceSize() (int, int) {
 	cols, height, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || cols <= 0 {
 		cols, height = 120, 40
+	}
+	if surfaceCols > 0 {
+		cols = surfaceCols
 	}
 	return cols, height
 }

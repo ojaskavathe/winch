@@ -808,6 +808,12 @@ func (d *daemon) scrubStart(ctl *control, wid string) error {
 		"select-pane -t "+q(p.pane)); err != nil {
 		return err
 	}
+	// Tell the TUI its zoomed width directly: tmux does not reliably resize
+	// a zoomed pane's pty when other clients are attached (next-3.8 keeps
+	// the docked width and fires no SIGWINCH), so the TUI cannot learn the
+	// billboard width from its own ioctl. p.hostW is the host window width
+	// the zoom expands the pane to.
+	d.h.sendRole("list", marshalLine(surfaceMsg{Type: "surface", Cols: p.hostW}))
 	p.scrubbing = true
 	d.startStream()
 	d.scrubStatusSet(ctl, wid)
@@ -825,6 +831,13 @@ func (d *daemon) scrubEnd(ctl *control, unzoom bool) {
 		return
 	}
 	p.scrubbing = false
+	// Revert the TUI's surface width to its pty size: the pane is about to
+	// unzoom back to the docked width. Paired with the scrub-start push
+	// (the pty may never have changed on next-3.8, so this is what actually
+	// narrows the surface back). The respawn-unzoom path gets a fresh TUI
+	// that starts at 0 anyway; this covers the clip-unzoom and swap paths
+	// that keep the same process.
+	d.h.sendRole("list", marshalLine(surfaceMsg{Type: "surface", Cols: 0}))
 	d.stopStream()
 	fmtRestore := d.scrubStatusCmds(ctl, p)
 	if unzoom && altScreen {

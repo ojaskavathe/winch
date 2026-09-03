@@ -106,6 +106,21 @@ type widthMsg struct {
 	Width int    `json:"width"`
 }
 
+// surfaceMsg tells the list TUI the width of its own pane (daemon ->
+// list). The TUI otherwise reads this from the pty (TIOCGWINSZ) via a
+// SIGWINCH after the daemon zooms it for a scrub billboard — but tmux does
+// not reliably resize a zoomed pane's pty when other clients are attached
+// (observed on next-3.8: the pty keeps the docked width, no SIGWINCH
+// fires, and the billboard never widens). The daemon always knows the true
+// surface width (the host window's width, p.hostW), so it pushes it: Cols
+// > 0 on scrub start (the zoomed width), Cols == 0 on scrub end (revert to
+// the pty size). Harmless on a tmux that does resize the pty — it just
+// confirms what SIGWINCH already delivered.
+type surfaceMsg struct {
+	Type string `json:"type"`
+	Cols int    `json:"cols"`
+}
+
 // frameMsg carries a captured window for the preview region (daemon ->
 // list TUI). Pane lines are raw capture-pane -e output (SGR included).
 // Full frames carry every pane's whole grid plus a generation; stream
@@ -161,6 +176,7 @@ type wireMsg struct {
 	Select     string      `json:"select"`
 	SelectPane string      `json:"selectpane"`
 	Width      int         `json:"width"`
+	Cols       int         `json:"cols"`
 	Split      float64     `json:"split"`
 	Frame      []framePane `json:"frame"`
 	Gen        int         `json:"gen"`

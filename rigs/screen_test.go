@@ -238,6 +238,16 @@ func (s *screen) write(chunk []byte) {
 			s.row++
 			i++
 			continue
+		case b == '\b':
+			// Backspace is cursor-left-one. tmux next-3.8 renders with
+			// relative moves (overshoot with CUF, then \b to step back)
+			// where older tmux used absolute positioning — ignoring \b
+			// left the cursor one column too far right on that path.
+			if s.col > 1 {
+				s.col--
+			}
+			i++
+			continue
 		case b < 0x20:
 			i++
 			continue
