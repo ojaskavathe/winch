@@ -164,8 +164,8 @@ func TestIdentityRowKeepsTitleContainingSeparator(t *testing.T) {
 	d := defaultAgentRows()
 	// row 1 of the default layout is the identity (title) row.
 	vals := d.values(d.rows[1], st, p)
-	label, _ := fitAgentRow(vals, 60, false, pal.subtext)
-	got := strings.TrimSpace(label)
+	_, styled := fitAgentRow(vals, 60, false, pal.subtext)
+	got := strings.TrimSpace(stripSGR(styled))
 	if got != "claude · resume" {
 		t.Fatalf("identity row sliced a title on its own separator: got %q, want %q", got, "claude · resume")
 	}
@@ -182,8 +182,8 @@ func TestMultiTokenIdentityRowWithSeparatorTitle(t *testing.T) {
 
 	r := agentRows{rows: [][]string{{tokAgent, tokTitle}}, explicit: true}
 	vals := r.values(r.rows[0], st, p)
-	label, _ := fitAgentRow(vals, 60, false, pal.subtext)
-	got := strings.TrimSpace(label)
+	_, styled := fitAgentRow(vals, 60, false, pal.subtext)
+	got := strings.TrimSpace(stripSGR(styled))
 	if !strings.Contains(got, "claude · resume") {
 		t.Fatalf("multi-token identity row lost a separator-bearing title: got %q", got)
 	}

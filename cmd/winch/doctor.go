@@ -10,6 +10,27 @@ import (
 	"time"
 )
 
+// stripSGR removes CSI SGR colour sequences (\x1b[ … m) so a styled row can
+// be shown or compared as the plain text it paints.
+func stripSGR(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
+			j := i + 2
+			for j < len(s) && (s[j] == ';' || (s[j] >= '0' && s[j] <= '9')) {
+				j++
+			}
+			if j < len(s) && s[j] == 'm' {
+				i = j + 1
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
 // `winch doctor` — one command that answers "what is winch doing to my tmux
 // right now, and does any of it disagree with itself".
 //
@@ -238,8 +259,13 @@ func (d *daemon) doctor(ctl *control) []string {
 				if len(vals) == 0 {
 					continue
 				}
-				label, _ := fitAgentRow(vals, availDoc, ri == 0, pal.subtext)
-				r.add("      card  %q", strings.TrimSpace(label))
+				// The SGR-styled second return is what paintList writes to
+				// the screen; the first (plain) return is a measurement copy
+				// and does not always share the styled string's text (a bug
+				// can corrupt one and not the other). Show what is actually
+				// painted, with the colour codes stripped.
+				_, styled := fitAgentRow(vals, availDoc, ri == 0, pal.subtext)
+				r.add("      card  %q", strings.TrimSpace(stripSGR(styled)))
 			}
 		}
 		if n == 0 {
