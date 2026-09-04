@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"strconv"
@@ -34,6 +35,10 @@ const (
 	optSeam       = "@winch-seam-style"
 	optNav        = "@winch-nav-keys"
 	optAgentDelay = "@winch-agent-delay"
+	// optSessionOrder holds the user's session order as a JSON array of
+	// names — JSON so a name with any character round-trips, and by name (not
+	// id) because names survive a server restart / resurrect and ids do not.
+	optSessionOrder = "@winch-session-order"
 )
 
 // navKeys are the four keys the sidebar treats as pane navigation, named the
@@ -245,6 +250,7 @@ func (d *daemon) loadConfig(ctl *control) {
 	if why != "" {
 		log.Printf("config: %s: %s, using the default layout", optAgentRows, why)
 	}
+	loadSessionOrder(ctl, d)
 	uiBorderLines = borderLines(ctl)
 	loadSeamStyle(ctl)
 	loadNavKeys(ctl)
@@ -432,4 +438,29 @@ func optStr(ctl *control, name string) string {
 // worth failing the interaction that produced it.
 func saveOpt(ctl *control, name, val string) {
 	_, _ = ctl.run(fmt.Sprintf("set-option -g %s %s", name, q(val)))
+}
+
+// loadSessionOrder reads the persisted session order into the hub, so a fresh
+// TUI is born with it. A malformed value (hand-edited) is ignored, not fatal.
+func loadSessionOrder(ctl *control, d *daemon) {
+	s := strings.TrimSpace(optStr(ctl, optSessionOrder))
+	if s == "" {
+		d.h.setOrder(nil)
+		return
+	}
+	var order []string
+	if err := json.Unmarshal([]byte(s), &order); err != nil {
+		log.Printf("config: %s: %v, ignoring", optSessionOrder, err)
+		return
+	}
+	d.h.setOrder(order)
+}
+
+// saveSessionOrder persists the session order as JSON.
+func saveSessionOrder(ctl *control, order []string) {
+	b, err := json.Marshal(order)
+	if err != nil {
+		return
+	}
+	saveOpt(ctl, optSessionOrder, string(b))
 }

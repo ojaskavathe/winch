@@ -177,6 +177,11 @@ var pal = themes["catppuccin"]
 // first and reports back on release.
 var listW = listWidth
 
+// uiSessionOrder is the user's session order, by name (@winch-session-order).
+// Sessions named here list first, in this order; the rest follow in creation
+// order. Set from the snapshot and edited in place by J/K, which persists it.
+var uiSessionOrder []string
+
 // curSess is the session the client is REALLY on (tracked from daemon
 // selects: dock, commit, nav all send one). Its card carries the active
 // fill — herdr's active_row_bg, distinct from the selection cursor.
@@ -328,6 +333,47 @@ func (st *store) winsOf(sid string) []window {
 	return wins
 }
 
+// sortSessions orders sessions the way the sidebar lists them: names present
+// in uiSessionOrder first, in that order; the rest after, by creation time —
+// stable and non-alphabetical, so new sessions land at the bottom and nothing
+// reshuffles on its own.
+func sortSessions(ss []session) {
+	idx := make(map[string]int, len(uiSessionOrder))
+	for i, name := range uiSessionOrder {
+		idx[name] = i
+	}
+	sort.Slice(ss, func(i, j int) bool {
+		oi, iok := idx[ss[i].Name]
+		oj, jok := idx[ss[j].Name]
+		if iok && jok {
+			return oi < oj
+		}
+		if iok != jok {
+			return iok // an ordered session sits ahead of an unordered one
+		}
+		if ss[i].Created != ss[j].Created {
+			return ss[i].Created < ss[j].Created
+		}
+		return ss[i].ID < ss[j].ID
+	})
+}
+
+// sessionOrderNames materializes the sidebar's current session order as a name
+// list — what J/K edit, so the first move pins today's order and the swap
+// lands relative to it.
+func sessionOrderNames(st *store) []string {
+	ss := make([]session, 0, len(st.sessions))
+	for _, s := range st.sessions {
+		ss = append(ss, s)
+	}
+	sortSessions(ss)
+	names := make([]string, len(ss))
+	for i, s := range ss {
+		names[i] = s.Name
+	}
+	return names
+}
+
 // rows builds the list: sessions as herdr-style space cards (windows are
 // NOT listed — they're auto-named command noise; h/l pages the selected
 // session's windows through the billboard instead, winPick remembering the
@@ -345,7 +391,7 @@ func (st *store) rows(winPick map[string]string) []row {
 	for _, s := range st.sessions {
 		sessions = append(sessions, s)
 	}
-	sort.Slice(sessions, func(i, j int) bool { return sessions[i].Name < sessions[j].Name })
+	sortSessions(sessions)
 
 	// Worst agent state per session: blocked > done > background > working
 	// > idle. background outranks working because it wants you (the turn is
@@ -1172,6 +1218,9 @@ func cmdTui(tmuxSock, winchSock string) {
 					if m.Split > 0 {
 						listSplit = m.Split
 					}
+					// Session order, first-paint reasoning like the split. nil
+					// means no custom order — the list falls to creation order.
+					uiSessionOrder = m.Order
 				}
 				// Selection is sticky to the ROW IDENTITY, not the index:
 				// world churn (a window or session appearing/dying — agents
@@ -1562,6 +1611,33 @@ func cmdTui(tmuxSock, winchSock string) {
 						renBuf = baseName(st.sessPath(renSess))
 						rebuild() // the field is a row that did not exist
 						relayout = true
+					}
+				case b == 'J', b == 'K':
+					// Reorder the selected SESSION down (J) / up (K), and
+					// persist. Sessions only — agents keep their attention-sort.
+					// The first nudge pins the whole current order (creation
+					// order becomes explicit) and the swap lands within it.
+					if sel >= 0 && sel < len(rows) && rows[sel].session && rows[sel].sess != "" {
+						name := st.sessions[rows[sel].sess].Name
+						order := sessionOrderNames(st)
+						from := -1
+						for k, n := range order {
+							if n == name {
+								from = k
+								break
+							}
+						}
+						to := from + 1
+						if b == 'K' {
+							to = from - 1
+						}
+						if from >= 0 && to >= 0 && to < len(order) {
+							order[from], order[to] = order[to], order[from]
+							uiSessionOrder = order
+							send(cmdMsg{Cmd: "order", Order: order})
+							rebuild()
+							relayout = true
+						}
 					}
 				case b == 'x':
 					// Arm the kill confirm on the selected row. Nothing is

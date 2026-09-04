@@ -108,7 +108,7 @@ func (d *daemon) doctor(ctl *control) []string {
 
 	r.head("config")
 	for _, o := range []string{optTheme, optWidth, optSplit, optSeam, optNav,
-		optNotify, optNotifyOSC, optNotifyVia, optNotifyDelay} {
+		optNotify, optNotifyOSC, optNotifyVia, optNotifyDelay, optSessionOrder} {
 		v := optStr(ctl, o)
 		if v == "" {
 			v = "(unset)"

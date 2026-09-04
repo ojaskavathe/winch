@@ -23,6 +23,7 @@ type hub struct {
 	selQuiet bool
 	width    int
 	split    float64
+	order    []string // session order by name (@winch-session-order)
 }
 
 type subscriber struct {
@@ -119,6 +120,13 @@ func (h *hub) setSplit(f float64) {
 	h.mu.Unlock()
 }
 
+// setOrder records the session order, same reason again.
+func (h *hub) setOrder(o []string) {
+	h.mu.Lock()
+	h.order = o
+	h.mu.Unlock()
+}
+
 // setWorld replaces the world and broadcasts: a diff when ops are known, or a
 // fresh snapshot after a reconnect (resync=true) since diffs across a gap lie.
 func (h *hub) setWorld(w world, ops []op, resync bool, tmuxSock string) {
@@ -127,7 +135,7 @@ func (h *hub) setWorld(w world, ops []op, resync bool, tmuxSock string) {
 	h.world = w
 	var payload []byte
 	if resync {
-		payload = marshalLine(snapshotMsg{V: 1, Type: "snapshot", Tmux: tmuxSock, Theme: uiTheme, Rows: uiAgentRowsRaw, Nav: navPtr(), world: w})
+		payload = marshalLine(snapshotMsg{V: 1, Type: "snapshot", Tmux: tmuxSock, Theme: uiTheme, Rows: uiAgentRowsRaw, Nav: navPtr(), Order: h.order, world: w})
 	} else {
 		if len(ops) == 0 {
 			return
@@ -150,7 +158,7 @@ func (h *hub) add(conn net.Conn, tmuxSock string) *subscriber {
 	s := &subscriber{conn: conn, ch: make(chan []byte, 256)}
 	h.mu.Lock()
 	s.ch <- marshalLine(snapshotMsg{V: 1, Type: "snapshot", Tmux: tmuxSock, Theme: uiTheme, Rows: uiAgentRowsRaw, Nav: navPtr(),
-		Select: h.selWin, SelectPane: h.selPane, Width: h.width, Split: h.split, world: h.world})
+		Select: h.selWin, SelectPane: h.selPane, Width: h.width, Split: h.split, Order: h.order, world: h.world})
 	h.subs[s] = struct{}{}
 	h.mu.Unlock()
 	return s

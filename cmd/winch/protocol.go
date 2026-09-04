@@ -21,18 +21,19 @@ import (
 
 // cmdMsg is a client -> daemon request.
 type cmdMsg struct {
-	Type     string  `json:"type"`
-	Cmd      string  `json:"cmd"`
-	Client   string  `json:"client,omitempty"`
-	Window   string  `json:"window,omitempty"`
-	Role     string  `json:"role,omitempty"`
-	Dir      string  `json:"dir,omitempty"`   // nav: "next" | "prev"
-	Width    int     `json:"width,omitempty"` // winch: the TUI's new cols
-	Split    float64 `json:"split,omitempty"` // split: the dragged agents-divider ratio
-	Pane     string  `json:"pane,omitempty"`  // commit: focus this pane (billboard click)
-	Sess     string  `json:"sess,omitempty"`  // rename: target session
-	Name     string  `json:"name,omitempty"`  // rename: new session name
-	Prefetch bool    `json:"prefetch,omitempty"`
+	Type     string   `json:"type"`
+	Cmd      string   `json:"cmd"`
+	Client   string   `json:"client,omitempty"`
+	Window   string   `json:"window,omitempty"`
+	Role     string   `json:"role,omitempty"`
+	Dir      string   `json:"dir,omitempty"`   // nav: "next" | "prev"
+	Width    int      `json:"width,omitempty"` // winch: the TUI's new cols
+	Split    float64  `json:"split,omitempty"` // split: the dragged agents-divider ratio
+	Pane     string   `json:"pane,omitempty"`  // commit: focus this pane (billboard click)
+	Sess     string   `json:"sess,omitempty"`  // rename: target session
+	Name     string   `json:"name,omitempty"`  // rename: new session name
+	Prefetch bool     `json:"prefetch,omitempty"`
+	Order    []string `json:"order,omitempty"` // order: the sidebar's session order, by name
 }
 
 // replyMsg answers one cmdMsg on the same connection. Text carries a report
@@ -73,6 +74,10 @@ type snapshotMsg struct {
 	// The agents-divider ratio (@winch-agents-split), same first-paint
 	// reasoning. 0 means unset — the TUI keeps its default.
 	Split float64 `json:"split,omitempty"`
+	// The user's session order (@winch-session-order), by name. The sidebar
+	// lists sessions in this order first, creation order after. First-paint
+	// again: a fresh TUI must not flash the creation order and then reshuffle.
+	Order []string `json:"order,omitempty"`
 	world
 }
 
@@ -178,6 +183,7 @@ type wireMsg struct {
 	Width      int         `json:"width"`
 	Cols       int         `json:"cols"`
 	Split      float64     `json:"split"`
+	Order      []string    `json:"order"`
 	Frame      []framePane `json:"frame"`
 	Gen        int         `json:"gen"`
 	Delta      bool        `json:"delta"`

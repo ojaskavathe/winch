@@ -13,7 +13,7 @@ func TestRenameSession(t *testing.T) {
 	r.D("toggle", r.CL) // dock on beta (work row selected)
 	sleep(800)
 	sp := r.Side().Pane
-	r.SendKeys(sp, "k") // up to the play row
+	selectSessionRow(r, sp, "play") // order-independent: the sidebar is no longer alphabetical
 	sleep(700)
 
 	r.SendKeys(sp, "r")

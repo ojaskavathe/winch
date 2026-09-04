@@ -125,6 +125,12 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 			d.h.setSplit(f)
 			saveOpt(ctl, optSplit, strconv.FormatFloat(f, 'f', 3, 64))
 		}
+	case "order":
+		// Session reorder (J/K in the sidebar). The TUI has already repainted
+		// in the new order and owns it; the daemon persists it and stamps it
+		// into future snapshots, so a fresh TUI is born in the same order.
+		d.h.setOrder(env.msg.Order)
+		saveSessionOrder(ctl, env.msg.Order)
 	case "create":
 		// `n` from the sidebar: a new session, starting in the working
 		// directory of the row it was pressed on.

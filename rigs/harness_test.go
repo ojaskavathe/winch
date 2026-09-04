@@ -331,6 +331,11 @@ func (r *Rig) setup() {
 	r.T("select-window", "-t", r.W2)
 	r.await(3000, "w2 sized", func() bool { return r.winH(r.W2) == statusH })
 	r.LW2 = r.T("display-message", "-p", "-t", r.W2, "#{window_layout}")
+	// Pin the sidebar's session order to the historical arrangement (play,
+	// work) so tests that navigate the list by position stay stable now that
+	// the default is creation order, not alphabetical. The creation-order
+	// default is covered by the unit tests, reordering by TestReorderSessions.
+	r.T("set-option", "-g", "@winch-session-order", `["play","work"]`)
 	// ls starts the daemon and round-trips one world snapshot — its success
 	// is the ready signal.
 	r.D("ls")
