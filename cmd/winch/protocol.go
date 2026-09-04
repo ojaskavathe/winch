@@ -111,6 +111,15 @@ type widthMsg struct {
 	Width int    `json:"width"`
 }
 
+// orderMsg pushes an updated session order to the list TUI (daemon -> list).
+// Sent when a rename remaps @winch-session-order: the order is stored by name,
+// so without this the renamed session would fall out of it and drop to the
+// bottom. Pushed just before the rename's diff so the re-sort uses it.
+type orderMsg struct {
+	Type  string   `json:"type"`
+	Order []string `json:"order"`
+}
+
 // surfaceMsg tells the list TUI the width of its own pane (daemon ->
 // list). The TUI otherwise reads this from the pty (TIOCGWINSZ) via a
 // SIGWINCH after the daemon zooms it for a scrub billboard — but tmux does

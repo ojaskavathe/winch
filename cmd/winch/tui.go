@@ -1287,6 +1287,26 @@ func cmdTui(tmuxSock, winchSock string) {
 					surfaceCols = m.Cols
 					paintAll()
 				}
+			case "order":
+				// A rename remapped the order daemon-side; re-sort and keep
+				// the highlight on the same session by identity. (The rename's
+				// own diff follows and repaints too, but a bare order push
+				// must stand on its own.)
+				uiSessionOrder = m.Order
+				var prevOrd row
+				if sel >= 0 && sel < len(rows) {
+					prevOrd = rows[sel]
+				}
+				rows = st.rows(winPick)
+				for i, rw := range rows {
+					if (prevOrd.session && rw.session && rw.sess == prevOrd.sess) ||
+						(prevOrd.arow && rw.arow && !rw.cont && prevOrd.pane != "" && rw.pane == prevOrd.pane) {
+						sel = i
+						break
+					}
+				}
+				clampSel()
+				paintList(rows, sel)
 			case "select":
 				found := applySelect(m.Window, m.Pane)
 				selPending = false

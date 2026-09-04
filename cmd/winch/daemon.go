@@ -317,6 +317,7 @@ func consume(d *daemon, ctl *control, w world, sig chan os.Signal) bool {
 			d.injectAgents(&next)
 			d.injectGit(&next)
 			ops := diffWorlds(w, next)
+			d.syncOrderRenames(ctl, w, next)
 			w = next
 			d.h.setWorld(w, ops, false, d.tmuxSock)
 			d.armDetect(w)

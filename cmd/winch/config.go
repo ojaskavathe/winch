@@ -464,3 +464,43 @@ func saveSessionOrder(ctl *control, order []string) {
 	}
 	saveOpt(ctl, optSessionOrder, string(b))
 }
+
+// syncOrderRenames keeps @winch-session-order pointing at the same sessions
+// across a rename. The order is stored by name, so a renamed session would
+// otherwise stop matching its entry and fall to the creation-order tail — a
+// rename must not reorder. When a session keeps its id but changes name, swap
+// the old name for the new one, persist, and push the result to the TUI (just
+// before the rename's own diff, so the re-sort already has it).
+func (d *daemon) syncOrderRenames(ctl *control, old, cur world) {
+	order := d.h.getOrder()
+	if len(order) == 0 {
+		return
+	}
+	oldName := make(map[string]string, len(old.Sessions))
+	for _, s := range old.Sessions {
+		oldName[s.ID] = s.Name
+	}
+	renamed := map[string]string{}
+	for _, s := range cur.Sessions {
+		if prev, ok := oldName[s.ID]; ok && prev != "" && prev != s.Name {
+			renamed[prev] = s.Name
+		}
+	}
+	if len(renamed) == 0 {
+		return
+	}
+	next := append([]string(nil), order...)
+	changed := false
+	for i, name := range next {
+		if nn, ok := renamed[name]; ok {
+			next[i] = nn
+			changed = true
+		}
+	}
+	if !changed {
+		return
+	}
+	d.h.setOrder(next)
+	saveSessionOrder(ctl, next)
+	d.h.sendRole("list", marshalLine(orderMsg{Type: "order", Order: next}))
+}

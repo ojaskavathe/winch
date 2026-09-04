@@ -127,6 +127,13 @@ func (h *hub) setOrder(o []string) {
 	h.mu.Unlock()
 }
 
+// getOrder reads the session order under the lock (hub.add reads it too).
+func (h *hub) getOrder() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.order
+}
+
 // setWorld replaces the world and broadcasts: a diff when ops are known, or a
 // fresh snapshot after a reconnect (resync=true) since diffs across a gap lie.
 func (h *hub) setWorld(w world, ops []op, resync bool, tmuxSock string) {
