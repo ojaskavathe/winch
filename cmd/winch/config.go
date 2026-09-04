@@ -235,7 +235,14 @@ const (
 func (d *daemon) loadConfig(ctl *control) {
 	uiTheme = strings.TrimSpace(optStr(ctl, optTheme))
 	uiAgentRowsRaw = strings.TrimSpace(optStr(ctl, optAgentRows))
-	if _, why := parseAgentRows(uiAgentRowsRaw); why != "" {
+	// Assign the parsed layout too, not just the raw string: the TUI parses
+	// uiAgentRowsRaw from the snapshot, but the daemon's own render path (the
+	// doctor lens) reads uiAgentRows, which otherwise stays the default and
+	// diverges from what the sidebar actually paints. parseAgentRows returns
+	// the default on error, so this is always the right value.
+	rows, why := parseAgentRows(uiAgentRowsRaw)
+	uiAgentRows = rows
+	if why != "" {
 		log.Printf("config: %s: %s, using the default layout", optAgentRows, why)
 	}
 	uiBorderLines = borderLines(ctl)
