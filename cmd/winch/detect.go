@@ -662,8 +662,9 @@ func (d *daemon) notifyFire(ctl *control, w *world, id string, a *agentInfo) {
 }
 
 // pushStatusOpt maintains @winch_agents, a global option the status line
-// can reference for free: "!2 ✓1 ✻3" (blocked / done / working counts;
-// empty when quiet). Zero-cost render — no #() and no process spawns.
+// can reference for free: "!2 ✓1 ⚙2 ✻3" (blocked / done / background /
+// working counts; empty when quiet). Zero-cost render — no #() and no
+// process spawns.
 func (d *daemon) pushStatusOpt(ctl *control, w *world) {
 	nb, nd, ng, nw := 0, 0, 0, 0
 	for _, a := range d.det.agents {
@@ -869,8 +870,6 @@ func orDash(s string) string {
 	}
 	return s
 }
-
-// --- region helpers shared with manifest.go ---
 
 func lastNonEmpty(lines []string, n int) []string {
 	out := make([]string, 0, n)

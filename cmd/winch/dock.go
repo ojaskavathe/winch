@@ -390,9 +390,6 @@ func (d *daemon) sweepSpacers(ctl *control) {
 	}
 }
 
-// The status pad (statusPadCmds) shifts the status line's content past
-// the sidebar column: width cols of pane + 1 col of pane border.
-
 func snapQuery(wid string) string {
 	return "display-message -p -t " + q(wid) + " -F " +
 		f("#{window_layout}", "#{pane_id}", "#{window_name}")
@@ -575,7 +572,6 @@ func (d *daemon) applyDockPlan(ctl *control, p *dockState) {
 	commit()
 }
 
-// paneInWindow reports whether the world knows pid as a pane of wid.
 // agentPane reports whether a pane runs a detected agent (a Claude Code
 // class TUI). Only these need the focus/resize separation delays: agent
 // panes mis-render when a focus event and a SIGWINCH share an instant
@@ -592,6 +588,7 @@ func (d *daemon) agentPane(pid string) bool {
 	return false
 }
 
+// paneInWindow reports whether the world knows pid as a pane of wid.
 func (d *daemon) paneInWindow(pid, wid string) bool {
 	for _, pn := range d.h.getWorld().Panes {
 		if pn.ID == pid {
@@ -1393,7 +1390,7 @@ const padFlush = "#{||:#{==:#{status-position},bottom}," +
 	"#{||:#{==:#{status},on},#{==:#{status},1}}}"
 
 // padBordered is whether that column holds a border at all. A scrub zooms the
-// sidebar over the whole window and nothing re-runs dockSessionCmds for it, so
+// sidebar over the whole window and nothing re-applies the pad for it, so
 // the pad keeps its width while the border it was continuing is gone; the same
 // goes for a content pane the user zooms with prefix-z, and for a window that
 // is briefly down to one pane. Blank columns hid all of that. A glyph does not.

@@ -382,22 +382,6 @@ func (d *daemon) createSession(ctl *control, from, name string) error {
 	return err
 }
 
-// killTarget closes a session (x on a session row) or one agent (x on an agent
-// row), having first carried anything that lives there somewhere safe.
-//
-// An agent is a PANE, not a window. Agents share a window often enough —
-// several claudes split across one workspace — and killing the window took
-// every agent in it, which is not what a row that names one agent can mean.
-// Killing just the pane leaves the neighbours running; when the pane was the
-// only real thing in there, the window closes on its own anyway, because a
-// window whose last non-spacer pane goes is reaped exactly as tmux would.
-//
-// The evacuation is the rest of the job. tmux's default detach-on-destroy
-// throws a client out to a bare shell when its session is destroyed, and the
-// sidebar pane would go down with a window it is docked in — so pressing x on
-// the session you are sitting in could cost you both your sidebar and your
-// terminal. winch is the one pulling the trigger, so it does not get to leave
-// that to the user's tmux settings: move first, then kill.
 // gotoPane takes every attached client to a pane: its session, its window,
 // the pane itself. This is what clicking a desktop notification runs.
 //
@@ -444,6 +428,22 @@ func (d *daemon) gotoPane(ctl *control, pane string) error {
 	return err
 }
 
+// killTarget closes a session (x on a session row) or one agent (x on an agent
+// row), having first carried anything that lives there somewhere safe.
+//
+// An agent is a PANE, not a window. Agents share a window often enough —
+// several claudes split across one workspace — and killing the window took
+// every agent in it, which is not what a row that names one agent can mean.
+// Killing just the pane leaves the neighbours running; when the pane was the
+// only real thing in there, the window closes on its own anyway, because a
+// window whose last non-spacer pane goes is reaped exactly as tmux would.
+//
+// The evacuation is the rest of the job. tmux's default detach-on-destroy
+// throws a client out to a bare shell when its session is destroyed, and the
+// sidebar pane would go down with a window it is docked in — so pressing x on
+// the session you are sitting in could cost you both your sidebar and your
+// terminal. winch is the one pulling the trigger, so it does not get to leave
+// that to the user's tmux settings: move first, then kill.
 func (d *daemon) killTarget(ctl *control, sess, pane string) error {
 	switch {
 	case sess == "" && pane == "":

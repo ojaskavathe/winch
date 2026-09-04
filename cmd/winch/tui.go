@@ -406,7 +406,7 @@ func (st *store) rows(winPick map[string]string) []row {
 		}
 	}
 	// The agents section: one CARD per agent pane, attention-sorted
-	// (blocked > done > working > idle), enter jumps to the pane. These
+	// (blocked > done > background > working > idle), enter jumps to the pane. These
 	// rows render in a PINNED bottom region under a labeled rule
 	// (paintList), so a long session tree never scrolls the agents out of
 	// sight.
@@ -2394,8 +2394,8 @@ func paintBorders(b *strings.Builder, frame []framePane, cols, height, offX int)
 			}
 		}
 	}
-	// Border cells adjacent to the active pane render green, like tmux's
-	// pane-active-border-style.
+	// Border cells adjacent to the active pane render in the active colour
+	// (activeBorderStyle), like tmux's pane-active-border-style.
 	activeAt := func(x, y int) bool {
 		for _, p := range frame {
 			if !p.Active {

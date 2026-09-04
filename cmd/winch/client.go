@@ -70,10 +70,6 @@ func cmdLs(tmuxSock, winchSock string) {
 	fmt.Print(snap.world.String())
 }
 
-// staleBindWarning detects the M-s bind running a different nix build than
-// the installed one: binds bake the store path in, and a tmux server that
-// hasn't re-sourced its config keeps executing the old binary forever —
-// while every fix ships into the new one. run-shell displays this output.
 // installedStorePath is the nix store path of the winch on the user's PATH,
 // or "" if this is not a nix install.
 func installedStorePath() string {
@@ -117,6 +113,10 @@ func storePrefix(p string) string {
 	return pre + rest
 }
 
+// staleBindWarning detects the M-s bind running a different nix build than
+// the installed one: binds bake the store path in, and a tmux server that
+// hasn't re-sourced its config keeps executing the old binary forever —
+// while every fix ships into the new one. run-shell displays this output.
 func staleBindWarning() string {
 	exe, err := os.Executable()
 	if err != nil {

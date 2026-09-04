@@ -202,7 +202,7 @@ func parseNotifyMode(s string) (blocked, done bool) {
 // the body is where the session and the reason go — a title-only
 // notification saying "claude needs you" with four claudes running is a
 // notification you have to go and investigate anyway.
-// parseNotifyOSC reads the option. Unset means AUTO — the dialect is then
+// Unset means AUTO — the dialect is then
 // chosen per client from its TERM (oscForTerm), because two clients can be
 // different terminals and a global setting cannot be right for both. Any
 // explicit value pins it and turns detection off.
@@ -279,8 +279,8 @@ func parseNotifyDelay(s string) time.Duration {
 	return time.Duration(ms) * time.Millisecond
 }
 
-// loadNotifyCfg reads all three options in ONE round trip. optStr would cost
-// three, and each of them takes the error path when its option is unset —
+// loadNotifyCfg reads all four options in ONE round trip. optStr would cost
+// four, and each of them takes the error path when its option is unset —
 // which is the normal case. A format reference answers "" for an unset user
 // option instead of failing, so this is both cheaper and quieter.
 func loadNotifyCfg(ctl *control) notifyCfg {

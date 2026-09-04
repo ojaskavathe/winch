@@ -393,9 +393,7 @@ var ownedOptions = []optKey{
 	{scope: scopeWindow, name: "pane-border-indicators"},
 }
 
-// ------------------------------------------------------------------
 // What winch wants to own
-// ------------------------------------------------------------------
 
 // optIntent is everything the owned set is a function of. Pure data, so
 // desiredOpts is a pure function and the whole policy is table-testable without
@@ -414,7 +412,7 @@ type optIntent struct {
 	rows []string
 
 	// scrubbing is winch holding the sidebar ZOOMED for billboards. It changes
-	// what draws the sidebar.s edge, and so what the pad.s last column has to
+	// what draws the sidebar's edge, and so what the pad's last column has to
 	// match — see padCell.
 	scrubbing bool
 
@@ -480,9 +478,7 @@ func desiredOpts(in optIntent) []optWant {
 	return want
 }
 
-// ------------------------------------------------------------------
 // Recovery
-// ------------------------------------------------------------------
 
 // sweepOwned puts back everything a previous daemon claimed and never gave up,
 // having died or been killed while docked. Its memory of the original values
@@ -552,9 +548,7 @@ func (d *daemon) sweepScope(ctl *control, sc optScope, list, idVar string) {
 	}
 }
 
-// ------------------------------------------------------------------
 // Reading
-// ------------------------------------------------------------------
 
 // readOpts is the production optReader. runPipelined rather than runSeq: an
 // array option answers with several lines, and runSeq flattens every command's

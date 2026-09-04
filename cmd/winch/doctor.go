@@ -97,7 +97,6 @@ func (d *daemon) doctor(ctl *control) []string {
 	r := &report{}
 	r.add("winch doctor")
 
-	// ---- build ----------------------------------------------------------
 	r.head("build")
 	exe, _ := os.Executable()
 	r.add("  daemon    %s", exe)
@@ -107,7 +106,6 @@ func (d *daemon) doctor(ctl *control) []string {
 	r.add("  socket    %s", d.tmuxSock)
 	r.add("  log       %s.log", winchSocketPath(d.tmuxSock))
 
-	// ---- config ---------------------------------------------------------
 	r.head("config")
 	for _, o := range []string{optTheme, optWidth, optSplit, optSeam, optNav,
 		optNotify, optNotifyOSC, optNotifyVia, optNotifyDelay} {
@@ -171,7 +169,6 @@ func (d *daemon) doctor(ctl *control) []string {
 		}
 	}
 
-	// ---- dock -----------------------------------------------------------
 	r.head("dock")
 	p := d.dock
 	if p == nil {
@@ -215,7 +212,6 @@ func (d *daemon) doctor(ctl *control) []string {
 		}
 	}
 
-	// ---- agents ---------------------------------------------------------
 	// What the sidebar ACTUALLY renders for every detected agent, beside the
 	// raw material it renders from. The card is built in the TUI, so a bug
 	// between the pane's title/state and the row you see (a title sliced at
@@ -273,7 +269,6 @@ func (d *daemon) doctor(ctl *control) []string {
 		}
 	}
 
-	// ---- the bar, per session -------------------------------------------
 	r.head("status line")
 	type sessRow struct {
 		id, name, docked, win string
@@ -314,7 +309,6 @@ func (d *daemon) doctor(ctl *control) []string {
 		}
 	}
 
-	// ---- checks ---------------------------------------------------------
 	r.head("checks")
 	// Read the BIND, not this process. staleBindWarning compares
 	// os.Executable() to the profile, which is exactly right when a bind
@@ -465,7 +459,6 @@ func (d *daemon) doctor(ctl *control) []string {
 	}
 	r.check(len(pinned) == 0, "no window is pinned to a manual size", pinned...)
 
-	// ---- recent errors on the paths that give things back ---------------
 	if fails := recentRestoreFailures(d.tmuxSock, 6); len(fails) > 0 {
 		r.head("recent tmux errors on leave / undock (from the log)")
 		for _, ln := range fails {
