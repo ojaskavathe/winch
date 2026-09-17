@@ -282,7 +282,9 @@ func checkRegion(name string) error {
 	switch base {
 	case "whole_recent", "osc_title", "after_last_horizontal_rule",
 		"prompt_box_body", "above_prompt_box", "last_non_empty_above_prompt_box",
-		"bottom_lines(n)", "bottom_non_empty_lines(n)", "top_non_empty_lines(n)":
+		"bottom_lines(n)", "bottom_non_empty_lines(n)", "top_non_empty_lines(n)",
+		"after_last_prompt_marker", "before_current_prompt_marker",
+		"whole_recent_without_current_prompt_marker":
 		return nil
 	}
 	return fmt.Errorf("unknown region %q", name)
@@ -334,6 +336,29 @@ func (s *snapshot) region(name string) []string {
 		out = abovePromptBox(s.screen)
 	case "last_non_empty_above_promptbox", "last_non_empty_above_prompt_box":
 		out = lastNonEmpty(abovePromptBox(s.screen), 1)
+	case "after_last_prompt_marker":
+		// codex's live approval prompts appear AFTER its last input prompt
+		// (the `›` line). Scoping a blocker rule here — rather than to the
+		// bottom N lines — keeps a stale "allow command?" left in scrollback
+		// above a fresh prompt from reading as a live blocker. herdr's exact
+		// region (manifest.rs codex_prompt_line); whole screen when there is
+		// no prompt line to anchor on.
+		if i := codexPromptIndex(s.screen, false); i >= 0 {
+			out = s.screen[i+1:]
+		} else {
+			out = s.screen
+		}
+	case "before_current_prompt_marker", "whole_recent_without_current_prompt_marker":
+		// The content ABOVE the CURRENT input prompt — the prompt is "current"
+		// only when it is the live bottom element (no response block `•■✗✓`
+		// below it). codex's working line sits above the prompt; a stale prompt
+		// with a response under it is not the live one, so both regions fall
+		// back to the whole screen there.
+		if i := codexPromptIndex(s.screen, true); i >= 0 {
+			out = s.screen[:i]
+		} else {
+			out = s.screen
+		}
 	}
 	s.regions[name] = out
 	return out
@@ -452,4 +477,48 @@ func abovePromptBox(lines []string) []string {
 		return nil
 	}
 	return lines[:second]
+}
+
+// codexPromptLine reports whether a line is codex's input prompt — a bare `›`
+// or a `› `-prefixed line (the placeholder, or the sparkle-decorated live
+// prompt). herdr's codex_prompt_line, verbatim; trailing spaces on an empty
+// prompt are tolerated so a captured "›   " still counts.
+func codexPromptLine(l string) bool {
+	return strings.TrimRight(l, " ") == "›" || strings.HasPrefix(l, "› ")
+}
+
+// codexBlockMarker reports whether a line begins a codex response block
+// (bullet, interrupted, error, ok) — herdr's codex_block_marker_line. A block
+// marker below the last prompt means that prompt is stale scrollback, not the
+// live input line.
+func codexBlockMarker(l string) bool {
+	switch {
+	case strings.HasPrefix(l, "•"), strings.HasPrefix(l, "■"),
+		strings.HasPrefix(l, "✗"), strings.HasPrefix(l, "✓"):
+		return true
+	}
+	return false
+}
+
+// codexPromptIndex finds the last input-prompt line. With requireCurrent it
+// returns -1 unless that prompt is the live bottom element — no response block
+// appears below it — so "current" means the prompt the user would type into.
+func codexPromptIndex(screen []string, requireCurrent bool) int {
+	last := -1
+	for i, l := range screen {
+		if codexPromptLine(l) {
+			last = i
+		}
+	}
+	if last < 0 {
+		return -1
+	}
+	if requireCurrent {
+		for _, l := range screen[last+1:] {
+			if codexBlockMarker(l) {
+				return -1
+			}
+		}
+	}
+	return last
 }

@@ -365,6 +365,90 @@ func TestMotionDoesNotBypassTheHold(t *testing.T) {
 	}
 }
 
+// A RELIABLE positive-idle verdict — an idle-only title, marked visible_idle —
+// publishes at once, even over a screen that never holds still. codex's idle
+// prompt animates an ambient braille sparkle forever, so the still-frame hold
+// pins it "working" for good (logged live: stuck 24 min through a commit).
+// Only INFERRED idle (the ambiguous prompt box, on screen mid-stream too) takes
+// the motion hold. Reverting the short-circuit makes this fail: moved=true holds.
+func TestVisibleIdlePublishesImmediately(t *testing.T) {
+	d := &daemon{}
+	novis := map[string]bool{}
+	a := &agentInfo{kind: "codex", state: "working", win: "@2"}
+	// The sparkle: every sample moved. A plain idle would be held forever here.
+	if !d.applyAgentState("%1", a, "idle", true, novis, true) {
+		t.Fatal("visible idle over a moving screen must publish immediately")
+	}
+	if a.state != "done" {
+		t.Fatalf("want done (completion in an unwatched window), got %s", a.state)
+	}
+}
+
+// Codex blockers are scoped to codex's live `›` input prompt, not a bottom-N
+// window: a stale approval left in scrollback above a fresh prompt must not read
+// as a live blocker (the old bottom_non_empty_lines(15) would have matched it).
+func TestCodexBlockerScopedToLivePrompt(t *testing.T) {
+	m := loadManifests()["codex"]
+
+	// Stale "allow command?" sits ABOVE the current input prompt.
+	stale := []string{
+		"• Ran git status",
+		"  allow command?",
+		"• Done",
+		"────────────────────",
+		"› Ask Codex to do anything",
+		"  gpt-6-astra · ~/dev/x",
+	}
+	if v, ok := m.eval(newSnapshot(stale, "myproj"), false); ok && v.state == "blocked" {
+		t.Fatalf("stale approval above the live prompt must not read blocked, got %+v", v)
+	}
+
+	// A live approval — the approval UI has replaced the input prompt, so there
+	// is no `›` line — still reads blocked (whole screen, no prompt to anchor).
+	live := []string{
+		"• Codex wants to run: rm -rf build",
+		"  press enter to confirm or esc to cancel",
+	}
+	if v, ok := m.eval(newSnapshot(live, "myproj"), false); !ok || v.state != "blocked" {
+		t.Fatalf("live approval must read blocked, got ok=%v %+v", ok, v)
+	}
+}
+
+// visible_idle means RELIABLE positive idle, and the whole short-circuit rests
+// on the split: an idle-only TITLE earns it (a working turn sets a spinner title
+// at higher priority, so a plain title wins only when the turn is truly over);
+// the PROMPT BOX does not (it is on screen mid-stream too). Mislabel the prompt
+// box and the short-circuit completes a streaming turn — a false "done" ping.
+func TestIdleTitleIsPositiveEvidence(t *testing.T) {
+	ms := loadManifests()
+
+	// Title-only idle rules: positive evidence.
+	for _, c := range []struct{ agent, title string }{
+		{"codex", "some-project"},
+		{"claude", "✳ Wrapped up the refactor"},
+		{"grok", "Build Codebase Command - grok"},
+	} {
+		v, ok := ms[c.agent].eval(newSnapshot(nil, c.title), true)
+		if !ok || v.state != "idle" {
+			t.Fatalf("%s title %q: want idle verdict, got ok=%v %+v", c.agent, c.title, ok, v)
+		}
+		if !v.visible {
+			t.Errorf("%s idle title %q must be visible_idle (reliable positive idle)", c.agent, c.title)
+		}
+	}
+
+	// The prompt box is INFERRED idle — present mid-stream — so it must NOT be
+	// visible, or the short-circuit fires while claude streams. screenStreaming
+	// is exactly that ambiguous frame (a ❯ prompt box under live output).
+	v, ok := ms["claude"].eval(newSnapshot(screenStreaming, "✳ streaming"), false)
+	if !ok || v.state != "idle" {
+		t.Fatalf("claude streaming: want idle verdict (the ambiguous frame), got ok=%v %+v", ok, v)
+	}
+	if v.visible {
+		t.Error("claude prompt-box idle must NOT be visible_idle — it shows mid-stream")
+	}
+}
+
 // A turn that ends with a background shell running is a turn that ended:
 // it publishes immediately (positive evidence, unlike inferred idle), and
 // the side work finishing afterwards must NOT look like a second
@@ -500,27 +584,39 @@ func TestMovingScreenNeverCompletes(t *testing.T) {
 	}
 }
 
-// The anti-flap hold: working -> idle needs idleConfirms consecutive
-// samples — visible evidence included (alternating screens flap through
-// any bypass). Blocked publishes instantly. Completions in an unwatched
-// window become "done" and stick.
+// The anti-flap hold: INFERRED working -> idle (visible=false, idle read from
+// the absence of a working signal) needs idleConfirms consecutive samples.
+// RELIABLE positive idle (visible=true — an idle-only title) publishes at once;
+// the flap protection there is that visible_idle is reserved for signals that
+// don't alternate, not a blanket hold. Blocked publishes instantly. Completions
+// in an unwatched window become "done" and stick.
 func TestIdleHoldAndDone(t *testing.T) {
 	d := &daemon{}
 	novis := map[string]bool{}
 	vis := map[string]bool{"@1": true}
 
+	// Reliable positive idle publishes immediately, and lands idle (not done)
+	// in a watched window — the user is looking.
 	a := &agentInfo{kind: "claude", state: "working", win: "@1"}
-	if d.applyAgentState("%1", a, "idle", true, vis, false) {
-		t.Fatal("first idle sample published")
-	}
-	if d.applyAgentState("%1", a, "idle", true, vis, false) {
-		t.Fatal("second idle sample published")
-	}
 	if !d.applyAgentState("%1", a, "idle", true, vis, false) {
-		t.Fatal("third idle sample held")
+		t.Fatal("visible idle in a watched window must publish immediately")
 	}
 	if a.state != "idle" {
 		t.Fatalf("visible-window completion should be idle, got %s", a.state)
+	}
+
+	// Inferred idle (visible=false) still takes the full still-frame hold.
+	a = &agentInfo{kind: "claude", state: "working", win: "@1"}
+	for i := 0; i < idleConfirms-1; i++ {
+		if d.applyAgentState("%1", a, "idle", false, vis, false) {
+			t.Fatalf("inferred idle sample %d published before the hold completed", i)
+		}
+	}
+	if !d.applyAgentState("%1", a, "idle", false, vis, false) {
+		t.Fatal("inferred idle should complete after the full hold")
+	}
+	if a.state != "idle" {
+		t.Fatalf("inferred completion in watched window should be idle, got %s", a.state)
 	}
 
 	// completion in an unwatched window -> done, and later idle samples

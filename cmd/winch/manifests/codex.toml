@@ -1,7 +1,8 @@
-# codex CLI detection rules, ported from herdr's manifest with one
-# simplification: herdr bounds blockers with codex prompt-marker regions
-# (after_last_prompt_marker etc.); winch uses bottom-line windows instead,
-# which the visible viewport tail approximates well enough.
+# codex CLI detection rules, ported from herdr's manifest. Blockers and the
+# working line are scoped to codex's prompt-marker regions (after / before the
+# live `›` input line, manifest.go codexPromptIndex), matching herdr exactly —
+# a stale approval prompt left in scrollback above a fresh prompt no longer
+# reads as a live blocker.
 id = "codex"
 version = "2026.08.21.1"
 
@@ -49,7 +50,7 @@ id = "strong_blockers"
 label = "approval prompt"
 state = "blocked"
 priority = 900
-region = "bottom_non_empty_lines(15)"
+region = "after_last_prompt_marker"
 visible_blocker = true
 any = [
   { contains = ["press enter to confirm or esc to cancel"] },
@@ -61,7 +62,7 @@ any = [
 id = "screen_working"
 state = "working"
 priority = 800
-region = "bottom_non_empty_lines(15)"
+region = "before_current_prompt_marker"
 visible_working = true
 line_regex = ['^[•◦]\s+Working \([^)]*esc to interrupt\)( · .*)?$']
 not = [
@@ -73,7 +74,7 @@ id = "weak_blockers"
 label = "approval prompt"
 state = "blocked"
 priority = 600
-region = "bottom_non_empty_lines(10)"
+region = "whole_recent_without_current_prompt_marker"
 any = [
   { contains = ["[y/n]"] },
   { contains = ["yes (y)"] },
@@ -86,4 +87,10 @@ id = "osc_title_idle_catchall"
 state = "idle"
 priority = 100
 region = "osc_title"
+# Reliable positive idle: a working turn puts a spinner frame in the title
+# (osc_title_working, prio 1050), so a plain title wins only when the turn is
+# truly over. visible_idle lets the state machine publish it at once instead of
+# holding for still frames — codex's idle prompt animates an ambient sparkle
+# forever, which a still-frame hold reads as "never settled" and pins working.
+visible_idle = true
 regex = ['\S']

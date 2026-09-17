@@ -220,7 +220,12 @@ id = "live_prompt_box"
 state = "idle"
 priority = 950
 region = "prompt_box_body"
-visible_idle = true
+# NOT visible_idle: the ❯ prompt box is on screen mid-stream too (while a long
+# message renders above it, nothing matches live_turn_working and this wins as
+# idle). So it is INFERRED idle, not positive evidence — it must take the
+# motion-gated hold, or the state machine's positive-idle short-circuit would
+# publish a false completion every time claude streams. The idle TITLE
+# (osc_title_idle, ✳) is the reliable positive signal instead.
 line_regex = ['^\s*❯']
 not = [
   { contains = ["enter to select"] },

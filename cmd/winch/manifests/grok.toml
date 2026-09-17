@@ -54,6 +54,10 @@ id = "osc_title_idle"
 state = "idle"
 priority = 250
 region = "osc_title"
+# Reliable positive idle: the working title carries a spinner at higher
+# priority, so a plain "… - grok" title wins only when truly idle. Publishes
+# immediately (visible_idle) rather than waiting out the still-frame hold.
+visible_idle = true
 regex = ['(^| - )grok$']
 
 [[rules]]

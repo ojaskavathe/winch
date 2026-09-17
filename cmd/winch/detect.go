@@ -789,6 +789,19 @@ func (d *daemon) applyAgentState(id string, a *agentInfo, want string, visible b
 		return false // done IS idle, flagged unseen; keep the flag
 	}
 	hold, needStill := holdRule(a.state, want)
+	// Positive idle evidence publishes immediately, no hold. "I can see the
+	// agent is at its prompt" (an idle-only title — working sets a spinner one
+	// at higher priority, so a plain title wins only when the turn is truly
+	// over) is stronger than "I confirmed the absence of a working signal N
+	// still frames running", and unlike the latter it cannot be defeated by an
+	// animated idle screen. codex's idle prompt animates an ambient sparkle
+	// forever; the still-frame hold reads that as "never settled" and pinned it
+	// working for good. Only INFERRED idle — the ambiguous prompt box, on
+	// screen mid-stream too — still takes the motion-gated hold below, which is
+	// what keeps a streaming turn from completing early.
+	if want == "idle" && visible {
+		hold = false
+	}
 	// The count is per TARGET. A screen alternating background/working
 	// would otherwise accrue three samples between two different verdicts
 	// and publish whichever landed third, which is the flap wearing the
