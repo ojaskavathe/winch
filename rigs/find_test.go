@@ -11,8 +11,19 @@ import (
 // session drops out. Exercises the pendingFilter -> hello-list replay path (the
 // TUI is not subscribed when findOpen runs, so the enter-filter push waits for
 // its first paint).
+//
+// It also guards the "opening the finder must not yank me to another session"
+// bug: an empty query holds the session you are IN, so the view does not scrub
+// onto the top-ranked match before you have typed. The rig pins order
+// [play, work], so with the client on "work" the top row is a DIFFERENT session
+// — the pre-fix code snapped to it and zoomed its billboard.
 func TestFindEntersFilter(t *testing.T) {
 	r := New(t)
+
+	// Put the client on "work" — NOT the top-ordered session (play), so a stray
+	// snap-to-top on entry would visibly jump/zoom onto play.
+	r.T("switch-client", "-c", r.CL, "-t", "work")
+	sleep(300)
 
 	// The launcher, from a cold start (no dock yet).
 	r.D("find", r.CL)
@@ -21,10 +32,15 @@ func TestFindEntersFilter(t *testing.T) {
 
 	r.Chk("find docked straight into filter mode", r.WaitUntil(3000, func() bool {
 		c := r.Capture(sp)
-		// The filter view: its " find" heading and the "/" query field, with
-		// both sessions still listed under an empty query.
 		return strings.Contains(c, "find") && strings.Contains(c, "/") &&
 			strings.Contains(c, "play") && strings.Contains(c, "work")
+	}))
+
+	// The fix: an empty query holds the current session, so nothing scrubs —
+	// the sidebar pane is NOT zoomed. Pre-fix it snapped to play and zoomed.
+	r.Chk("empty query does not scrub-jump to another session", r.WaitUntil(2000, func() bool {
+		z := strings.TrimSpace(r.T("display-message", "-p", "-t", sp, "#{window_zoomed_flag}"))
+		return z == "0"
 	}))
 
 	// Type a query that only "play" matches — "work" has no p/l/a/y subsequence,

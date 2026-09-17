@@ -1120,14 +1120,26 @@ func cmdTui(tmuxSock, winchSock string) {
 		}
 		clampSel()
 	}
-	// refilter rebuilds the flat filter list for the current query and snaps
-	// the highlight to the top match — the fzf gesture: every keystroke
-	// re-ranks and the cursor rides the best hit, not wherever it last sat.
+	// refilter rebuilds the flat filter list for the current query. While
+	// narrowing, the highlight rides the top match — the fzf gesture. But an
+	// EMPTY query (opening the finder, or clearing it) holds the session you
+	// are IN: snapping to the top-ranked row there would yank the billboard
+	// onto a different session before you have typed a thing, which reads as an
+	// unasked-for switch. You only leave the current session once a keystroke
+	// says to.
 	refilter := func() {
 		rows = st.rows(winPick)
 		armSpin(rows)
 		sel = 0
-		clampSel() // past the heading + query field to the first match
+		if filterBuf == "" {
+			for i, r := range rows {
+				if r.session && r.sess != "" && r.sess == curSess {
+					sel = i
+					break
+				}
+			}
+		}
+		clampSel() // past the heading + query field to the first selectable row
 	}
 	// exitFilter leaves the filter and restores the tree, re-finding the
 	// selection by identity so backing out lands you where the list was.
