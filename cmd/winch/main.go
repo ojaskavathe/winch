@@ -44,6 +44,8 @@ commands:
   toggle <client>        dock / undock the sidebar for a tmux client
   nav <next|prev> <cl>   window nav with the sidebar riding along (routed M-h/M-l)
   browse <client>        dock the sidebar and zoom straight into scrubbing
+  find <client>          dock if needed and enter the fuzzy finder (routed M-/):
+                         type a session or agent name to jump to it
   agents <client>        agent switcher: browse pinned on the top-attention agent;
                          repeat invocations cycle through agents
   equalize [pane]        equalize panes, nvim splits weighted (no daemon needed)
@@ -114,6 +116,12 @@ func main() {
 			client = args[1]
 		}
 		cmdEqualizeDock(tmuxSock, winchSock, client)
+	case "find":
+		client := ""
+		if len(args) > 1 {
+			client = args[1]
+		}
+		cmdFind(tmuxSock, winchSock, client)
 	case "tui":
 		cmdTui(tmuxSock, winchSock)
 	case "doctor":

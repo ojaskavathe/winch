@@ -197,6 +197,12 @@ func cmdBrowse(tmuxSock, winchSock, client string) {
 	sendCmd(tmuxSock, winchSock, cmdMsg{Cmd: "browse", Client: client})
 }
 
+// cmdFind is the M-/ launcher: dock if needed and enter the fuzzy finder, so
+// typing a session or agent name jumps straight to it from any pane.
+func cmdFind(tmuxSock, winchSock, client string) {
+	sendCmd(tmuxSock, winchSock, cmdMsg{Cmd: "find", Client: client})
+}
+
 // cmdAgents is the M-a entrypoint: the agent switcher.
 func cmdAgents(tmuxSock, winchSock, client string) {
 	sendCmd(tmuxSock, winchSock, cmdMsg{Cmd: "agents", Client: client})

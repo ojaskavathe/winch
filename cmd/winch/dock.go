@@ -73,6 +73,12 @@ type dockState struct {
 	openedAt   time.Time // dockOpen time; hello-list logs TUI spawn latency
 	openedBy   string    // "agents" when the agent switcher opened the dock
 
+	// pendingFilter: `winch find` opened this dock and the TUI must enter the
+	// fuzzy finder the moment it connects. A fresh TUI is not subscribed yet
+	// when findOpen runs, so the request waits and is replayed on hello-list —
+	// the same one-shot pattern scrubStart's surface push uses.
+	pendingFilter bool
+
 	// scrubbing: the sidebar pane is ZOOMED and the main area shows live
 	// billboards of the selection instead of real windows. Zoom leaves the
 	// hidden panes untouched (rig-verified: sizes byte-exact, zero app

@@ -69,6 +69,8 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 		err = d.toggle(ctl, env.msg.Client)
 	case "browse":
 		err = d.browseOpen(ctl, env.msg.Client)
+	case "find":
+		err = d.findOpen(ctl, env.msg.Client)
 	case "agents":
 		err = d.agentsOpen(ctl, env.msg.Client)
 	case "nav":
@@ -257,6 +259,12 @@ func (d *daemon) runCmd(ctl *control, env cmdEnvelope) {
 			}
 			log.Printf("hello-list: replay docked select=%s pane=%q quiet=%v spawn_ms=%d",
 				selWin, selPane, selQuiet, time.Since(d.dock.openedAt).Milliseconds())
+			// `winch find` opened this dock: enter the fuzzy finder now that the
+			// TUI is on screen (it missed the push at findOpen time).
+			if d.dock.pendingFilter {
+				d.dock.pendingFilter = false
+				d.pushFilter()
+			}
 		}
 	case "doctor":
 		// Read-only by contract: a tool reached for when something looks wrong
@@ -352,6 +360,37 @@ func (d *daemon) browseOpen(ctl *control, client string) error {
 		return nil
 	}
 	return d.scrubStart(ctl, d.dock.win)
+}
+
+// findOpen is the M-/ launcher: dock if needed, then drop the list TUI into the
+// fuzzy finder. A just-opened dock has no subscribed TUI yet, so the request is
+// stashed on the dock and replayed on hello-list (the scrubStart one-shot
+// pattern). An existing dock takes the push now — but first the sidebar has to
+// hold the keyboard, or the query would type into whatever pane M-/ resolved to.
+func (d *daemon) findOpen(ctl *control, client string) error {
+	if client == "" {
+		return errors.New("find needs a client name")
+	}
+	if d.dock == nil {
+		if err := d.dockOpen(ctl, client); err != nil {
+			return err
+		}
+		d.dock.pendingFilter = true
+		return nil
+	}
+	if _, err := ctl.run("select-pane -t " + q(d.dock.pane)); err != nil {
+		return err
+	}
+	d.pushFilter()
+	return nil
+}
+
+// pushFilter tells the list TUI to enter the fuzzy finder. Zero receivers means
+// no TUI is subscribed yet — findOpen's pendingFilter flag replays it then.
+func (d *daemon) pushFilter() {
+	if n := d.h.sendRole("list", marshalLine(filterMsg{Type: "filter"})); n == 0 {
+		log.Printf("find: no list TUI to enter the filter")
+	}
 }
 
 // createSession makes a session and switches to it. from is the session the

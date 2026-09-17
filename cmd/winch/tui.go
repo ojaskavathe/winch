@@ -116,6 +116,7 @@ type row struct {
 	head    bool   // section heading (" sessions"); never selectable
 	cont    bool   // continuation line of a multi-row entry (herdr's model)
 	create  bool   // the `n` field: a session that does not exist yet
+	field   bool   // the `/` filter field: the query line, owns the keyboard
 	agent   string // worst agent state (window rows) / the state (agent rows)
 	styled  string // optional pre-styled label (only fg/dim codes, self-closing);
 	// used when it fits — truncation falls back to the plain label
@@ -125,7 +126,7 @@ type row struct {
 // (a continuation highlights with its owner instead). The create field is
 // inert too — it owns the keyboard while it exists, so a selection on it
 // would mean nothing and a selection moving THROUGH it would be worse.
-func (r row) inert() bool { return r.gap || r.head || r.cont || r.create }
+func (r row) inert() bool { return r.gap || r.head || r.cont || r.create || r.field }
 
 // palette: the sidebar's theme as raw SGR fragments. The look lives on a
 // brightness ladder (text > subtext > muted, plus bold/dim) — that ladder
@@ -272,6 +273,17 @@ var (
 	editReplace bool
 )
 
+// The fuzzy filter (`/`). While active the row list is replaced by a flat,
+// score-ranked view of every session AND agent (fuzzy.go), the query line owns
+// the keyboard, and the highlight rides the top match with its billboard live —
+// scrub, but you type instead of j/k. filterCount is the match tally the field
+// row shows.
+var (
+	filtering   bool
+	filterBuf   string
+	filterCount int
+)
+
 // The x confirmation. Closing a session or a window destroys work that is not
 // coming back, so x arms and y fires — and the prompt takes over the row it
 // was pressed on rather than opening anywhere else, so what is about to die is
@@ -379,6 +391,9 @@ func sessionOrderNames(st *store) []string {
 // session's windows through the billboard instead, winPick remembering the
 // choice), then the pinned agents section. winPick may be nil.
 func (st *store) rows(winPick map[string]string) []row {
+	if filtering {
+		return st.filterRows()
+	}
 	out := []row{{label: " sessions", head: true}}
 	// A session being named does not exist yet, so it gets a line of its
 	// own directly under the heading. Anywhere else would move as you type
@@ -533,6 +548,127 @@ func (st *store) rows(winPick map[string]string) []row {
 			}
 
 		}
+	}
+	return out
+}
+
+// filterRows builds the `/` fuzzy-find view: a flat, score-ranked list of
+// every session AND agent, headed by the query field. Sessions match on their
+// name; agents on "session workspace title kind", so typing a conversation
+// title jumps straight to that agent even when its session name shares nothing
+// with the query. The rows are deliberately NOT arow — the finder is one
+// scrolling region, not the tree's pinned-agents split (layoutList counts
+// trailing arow rows, which a score-ordered list would scatter).
+func (st *store) filterRows() []row {
+	rank := map[string]int{"blocked": 5, "done": 4, "background": 3, "working": 2, "idle": 1}
+
+	// Worst agent state per session, for the session row's own dot.
+	agg := map[string]string{}
+	for _, p := range st.panes {
+		if p.AgentState != "" && rank[p.AgentState] > rank[agg[p.SessionID]] {
+			agg[p.SessionID] = p.AgentState
+		}
+	}
+
+	type cand struct {
+		r     row
+		key   string  // the text the query scores against
+		group int     // 0 session, 1 agent — the empty-query grouping
+		att   int     // attention rank, for empty-query and score-tie order
+		seq   int64   // last state change, most-recent-first tie-break
+		score float64 // fuzzy score (query non-empty)
+	}
+	var cands []cand
+
+	sessions := make([]session, 0, len(st.sessions))
+	for _, s := range st.sessions {
+		sessions = append(sessions, s)
+	}
+	sortSessions(sessions) // appended in order; a stable sort keeps it for q==""
+	for _, s := range sessions {
+		target := ""
+		for _, w := range st.winsOf(s.ID) {
+			if w.Active {
+				target = w.ID
+			}
+		}
+		cands = append(cands, cand{
+			r: row{
+				label: "   " + s.Name, window: target, sess: s.ID,
+				session: true, att: s.Attached, agent: agg[s.ID],
+			},
+			key: s.Name, group: 0, att: rank[agg[s.ID]],
+		})
+	}
+
+	for _, p := range st.panes {
+		if p.Agent == "" {
+			continue
+		}
+		sessName := st.sessions[p.SessionID].Name
+		ws := baseName(p.Path)
+		detail := p.Title
+		if detail == "" {
+			detail = ws
+		}
+		if detail == "" {
+			detail = p.Agent
+		}
+		// The name carries the weight, the tail is chrome — herdr's ladder,
+		// the arow WHERE-row styling ported to a single flat line.
+		styled := "   " + pal.subtext + "\033[1m" + sessName + "\033[22m" +
+			pal.muted + " · " + detail + "\033[39m"
+		cands = append(cands, cand{
+			r: row{
+				label:  "   " + sessName + " · " + detail,
+				styled: styled,
+				window: p.WindowID, pane: p.ID, agent: p.AgentState,
+			},
+			key:   strings.Join([]string{sessName, ws, p.Title, p.Agent}, " "),
+			group: 1, att: rank[p.AgentState], seq: p.AgentSeq,
+		})
+	}
+
+	q := filterBuf
+	kept := cands[:0] // in-place filter: append index never outruns the read
+	for _, c := range cands {
+		if q != "" {
+			s, ok := fuzzyScore(q, c.key)
+			if !ok {
+				continue
+			}
+			c.score = s
+		}
+		kept = append(kept, c)
+	}
+	sort.SliceStable(kept, func(i, j int) bool {
+		if q == "" {
+			if kept[i].group != kept[j].group {
+				return kept[i].group < kept[j].group // sessions, then agents
+			}
+			if kept[i].group == 0 {
+				return false // hold the session sort order
+			}
+			if kept[i].att != kept[j].att {
+				return kept[i].att > kept[j].att
+			}
+			return kept[i].seq > kept[j].seq
+		}
+		if kept[i].score != kept[j].score {
+			return kept[i].score > kept[j].score
+		}
+		if kept[i].att != kept[j].att {
+			return kept[i].att > kept[j].att
+		}
+		return kept[i].key < kept[j].key
+	})
+
+	filterCount = len(kept)
+	out := make([]row, 0, len(kept)+2)
+	out = append(out, row{label: " find", head: true})
+	out = append(out, row{field: true})
+	for _, c := range kept {
+		out = append(out, c.r)
 	}
 	return out
 }
@@ -984,6 +1120,24 @@ func cmdTui(tmuxSock, winchSock string) {
 		}
 		clampSel()
 	}
+	// refilter rebuilds the flat filter list for the current query and snaps
+	// the highlight to the top match — the fzf gesture: every keystroke
+	// re-ranks and the cursor rides the best hit, not wherever it last sat.
+	refilter := func() {
+		rows = st.rows(winPick)
+		armSpin(rows)
+		sel = 0
+		clampSel() // past the heading + query field to the first match
+	}
+	// exitFilter leaves the filter and restores the tree, re-finding the
+	// selection by identity so backing out lands you where the list was.
+	exitFilter := func() {
+		if !filtering {
+			return
+		}
+		filtering, filterBuf, filterCount = false, "", 0
+		rebuild()
+	}
 
 	// shrinkExpected: a commit/close was sent from wide mode, so the pane is
 	// about to shrink to 40 cols. tmux REWRAPS the grid on width change —
@@ -1307,6 +1461,17 @@ func cmdTui(tmuxSock, winchSock string) {
 				}
 				clampSel()
 				paintList(rows, sel)
+			case "filter":
+				// `winch find` (M-/): enter the fuzzy finder as if `/` was
+				// pressed. From docked-idle requestFrames zooms to scrub, so the
+				// billboard is live the moment the query narrows.
+				if editWhat == editNone && !confirming() && !filtering {
+					filtering, filterBuf, filterCount = true, "", 0
+					refilter()
+					paintList(rows, sel)
+					paintFrameFor(target())
+					requestFrames()
+				}
 			case "select":
 				found := applySelect(m.Window, m.Pane)
 				selPending = false
@@ -1586,6 +1751,40 @@ func cmdTui(tmuxSock, winchSock string) {
 						renBuf += string([]byte{b}) // raw byte: utf-8 rides through
 					}
 					relayout = true
+				case filtering:
+					// The query line owns the keyboard. Printable bytes narrow;
+					// arrows, ctrl-n/ctrl-p and the wheel ride the matches (j/k
+					// are literal query text here, so navigation moves to the
+					// modifier keys). enter jumps into the highlighted match; a
+					// lone esc backs out (handled after the drain, so an arrow's
+					// esc is not mistaken for it).
+					switch {
+					case b == '\r':
+						shrinkExpected = !narrowMode()
+						send(cmdMsg{Cmd: "commit", Window: target(), Pane: targetPane()})
+						exitFilter()
+					case b == 0x7f, b == 0x08: // backspace
+						if r := []rune(filterBuf); len(r) > 0 {
+							filterBuf = string(r[:len(r)-1])
+							refilter()
+							moved = true
+						} else {
+							exitFilter() // backspace past empty leaves the filter
+						}
+						relayout = true
+					case b == 0x15: // ctrl-u: clear the query
+						filterBuf = ""
+						refilter()
+						moved, relayout = true, true
+					case b == 0x0e: // ctrl-n -> down
+						moved = moveSel(1) || moved
+					case b == 0x10: // ctrl-p -> up
+						moved = moveSel(-1) || moved
+					case b >= 0x20 && b != 0x7f:
+						filterBuf += string([]byte{b}) // raw byte: utf-8 rides through
+						refilter()
+						moved, relayout = true, true
+					}
 				// vim-tmux-navigator hands its keys to this pane (the
 				// @vim_navigator_pattern includes winch), so the sidebar
 				// behaves like a vim split: C-l goes INTO what you're looking
@@ -1674,6 +1873,17 @@ func cmdTui(tmuxSock, winchSock string) {
 							relayout = true
 						}
 					}
+				case b == '/':
+					// Enter the fuzzy finder. From docked-idle this also zooms
+					// to scrub — requestFrames' preview below is what the daemon
+					// reads as scrub-start — so the billboard is live the moment
+					// you type. (While filtering, `/` is a query char, caught by
+					// the filtering case above.)
+					if editWhat == editNone && !confirming() {
+						filtering, filterBuf, filterCount = true, "", 0
+						refilter()
+						moved, relayout = true, true
+					}
 				case b == '\r': // enter
 					shrinkExpected = !narrowMode()
 					send(cmdMsg{Cmd: "commit", Window: target(), Pane: targetPane()})
@@ -1711,6 +1921,14 @@ func cmdTui(tmuxSock, winchSock string) {
 				if !more {
 					break
 				}
+			}
+			if filtering && esc == 1 {
+				// A lone ESC — no CSI followed within the drained batch —
+				// backs out of the filter. An arrow's ESC has already advanced
+				// esc past 1 by here, so this cannot swallow a navigation key.
+				exitFilter()
+				esc = 0
+				relayout, moved = true, true
 			}
 			if resized {
 				// Width changed: everything relayouts — rows refit their
@@ -2199,6 +2417,23 @@ func paintList(rows []row, sel int) {
 					apad = strings.Repeat(" ", n)
 				}
 				b.WriteString(pal.fill + pal.red + "\033[1m" + ask + apad + "\033[22;49;39m")
+			case rows[i].field:
+				// The `/` filter query line: slash prompt, buffer, accent
+				// cursor, and the match count tucked muted at the right edge.
+				q := []rune("  /" + filterBuf)
+				if len(q) > lw-1 {
+					q = q[len(q)-(lw-1):]
+				}
+				tail := ""
+				if filterBuf != "" {
+					tail = strconv.Itoa(filterCount)
+				}
+				epad := ""
+				if n := lw - len(q) - 1 - len(tail); n > 0 {
+					epad = strings.Repeat(" ", n)
+				}
+				b.WriteString(pal.fill + pal.text + "\033[1m" + string(q) +
+					pal.accent + "█\033[22m" + pal.muted + epad + tail + "\033[49;39m")
 			case rows[i].create,
 				editWhat == editRename && rows[i].session && rows[i].sess != "" && rows[i].sess == renSess:
 				// The row IS the input field.

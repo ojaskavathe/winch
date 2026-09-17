@@ -120,6 +120,14 @@ type orderMsg struct {
 	Order []string `json:"order"`
 }
 
+// filterMsg tells the list TUI to enter the fuzzy finder (daemon -> list). Sent
+// by `winch find` (M-/), the launcher that docks if needed and drops straight
+// into the filter, so the query is one keystroke from any pane. The TUI acts on
+// it exactly as if `/` had been pressed in the sidebar.
+type filterMsg struct {
+	Type string `json:"type"`
+}
+
 // surfaceMsg tells the list TUI the width of its own pane (daemon ->
 // list). The TUI otherwise reads this from the pty (TIOCGWINSZ) via a
 // SIGWINCH after the daemon zooms it for a scrub billboard — but tmux does
