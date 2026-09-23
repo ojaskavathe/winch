@@ -43,6 +43,8 @@ commands:
   events                 stream snapshot + diffs as NDJSON (starts the daemon if needed)
   toggle <client>        dock / undock the sidebar for a tmux client
   nav <next|prev> <cl>   window nav with the sidebar riding along (routed M-h/M-l)
+  jump <back|fwd> <cl>   walk the window jumplist, vim CTRL-O / CTRL-I
+                         (needs set -g @winch-jumplist on)
   browse <client>        dock the sidebar and zoom straight into scrubbing
   find <client>          dock if needed and enter the fuzzy finder (routed M-/):
                          type a session or agent name to jump to it
@@ -92,6 +94,11 @@ func main() {
 			usage()
 		}
 		cmdNav(tmuxSock, winchSock, args[1], args[2])
+	case "jump":
+		if len(args) < 3 || (args[1] != "back" && args[1] != "fwd") {
+			usage()
+		}
+		cmdJump(tmuxSock, winchSock, args[1], args[2])
 	case "browse":
 		client := ""
 		if len(args) > 1 {

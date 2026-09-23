@@ -94,6 +94,9 @@ type daemon struct {
 	// dockW: user-tuned sidebar width (0 = listWidth default). Survives
 	// undocks; runtime-only for now.
 	dockW int
+
+	// jumps: per-client window history for `winch jump` (jumplist.go).
+	jumps jumpState
 }
 
 // clientView: the client's current session, window, and size, from
@@ -242,6 +245,7 @@ func runDaemon(tmuxSock, winchSock string) {
 		d.injectGit(&w)
 		h.setWorld(w, nil, true, tmuxSock)
 		d.armDetect(w)
+		d.recordJumps(w)
 		// Order matters: sweepOwned puts back everything a dead daemon's marks
 		// describe, and it has to run before anything READS a status format —
 		// statusRows assumes nobody has wrapped the session it is reading.
@@ -323,6 +327,7 @@ func consume(d *daemon, ctl *control, w world, sig chan os.Signal) bool {
 			d.armDetect(w)
 			d.pushStatusOpt(ctl, &w)
 			d.checkDock(ctl, w)
+			d.recordJumps(w)
 			if dur := time.Since(start); dur > 25*time.Millisecond {
 				log.Printf("relist took %s ops=%d", dur, len(ops))
 			} else if bench {

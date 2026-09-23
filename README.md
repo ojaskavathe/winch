@@ -64,6 +64,21 @@ working, which means the agent never reaches a completion and the turn's
 notification never fires at all while the shell lives. Here it is a
 completion: it notifies once, then falls to `idle` when the side work ends.
 
+## jumplist
+
+vim's CTRL-O / CTRL-I across tmux windows and sessions. tmux only remembers
+one step back (`last-window`, `switch-client -l`); winch keeps the history.
+Off by default:
+
+    tmux set -g @winch-jumplist on
+    bind -n M-o run-shell -b 'winch jump back "#{client_name}"'
+    bind -n M-i run-shell -b 'winch jump fwd "#{client_name}"'
+
+A jump is a window change. Moving between splits only updates which pane the
+entry returns to. Semantics are vim's default: going back and then jumping
+keeps the later entries, and back from there returns to where you just were.
+Read at daemon attach, like every option.
+
 ## desktop notifications
 
 A blocked agent notifies your terminal, not just tmux — winch writes the

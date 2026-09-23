@@ -254,6 +254,7 @@ func (d *daemon) loadConfig(ctl *control) {
 	uiBorderLines = borderLines(ctl)
 	loadSeamStyle(ctl)
 	loadNavKeys(ctl)
+	d.loadJumplist(ctl)
 
 	// @winch-agent-delay off: drop the focus/resize separation delays on
 	// dock transitions around agent panes. Only sensible on a tmux whose

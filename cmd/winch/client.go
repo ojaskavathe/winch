@@ -183,6 +183,11 @@ func cmdNav(tmuxSock, winchSock, dir, client string) {
 	sendCmd(tmuxSock, winchSock, cmdMsg{Cmd: "nav", Dir: dir, Client: client})
 }
 
+// cmdJump walks the client's jumplist: back (vim CTRL-O) or fwd (CTRL-I).
+func cmdJump(tmuxSock, winchSock, dir, client string) {
+	sendCmd(tmuxSock, winchSock, cmdMsg{Cmd: "jump", Dir: dir, Client: client})
+}
+
 // cmdEqualizeDock is the routed prefix-e / M-e while docked: the daemon
 // equalizes the SELECTION (the scrubbed window, or the docked main region),
 // never the sidebar pane the keystroke resolves to. Non-docked clients never
