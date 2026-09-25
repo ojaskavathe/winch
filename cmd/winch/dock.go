@@ -271,7 +271,7 @@ func (d *daemon) releasePick(ctl *control) (pick int, idle bool) {
 // spacer and replay the original layout in one batch (the two reflows
 // coalesce; letting tmux expand into the hole would drift borders ±1).
 func (d *daemon) releaseOne(ctl *control, it releaseItem) {
-	lay, dirty := d.leaveInfo(ctl, it.wid)
+	lay, dirty, ww, wh := d.leaveInfo(ctl, it.wid)
 	// FIRST, before anything that can fail: a window winch normalized is
 	// pinned to window-size manual until something unsets it, and the unset
 	// in the carve batch is skipped whenever that batch dies partway. The
@@ -282,7 +282,7 @@ func (d *daemon) releaseOne(ctl *control, it releaseItem) {
 		"set-option -w -uq -t " + q(it.wid) + " window-size",
 		"kill-pane -t " + q(it.t.spacer),
 	}
-	if rl := d.leaveLayout(it.wid, it.t.orig, lay, dirty, it.t.spacer); rl != "" {
+	if rl := d.leaveLayout(it.wid, it.t.orig, lay, dirty, it.t.spacer, ww, wh); rl != "" {
 		seq = append(seq, "select-layout -t "+q(it.wid)+" "+q(rl))
 	}
 	seq = append(seq, "set-option -w -uq -t "+q(it.wid)+" @winch_layout_dirty")
@@ -442,17 +442,19 @@ func (d *daemon) winSnapshot(ctl *control, wid string) (winSnap, error) {
 
 // leaveInfo queries what restoring the window being left needs: its CURRENT
 // docked layout (for proportional give-back) and the dirty marker.
-func (d *daemon) leaveInfo(ctl *control, wid string) (layout string, dirty bool) {
+func (d *daemon) leaveInfo(ctl *control, wid string) (layout string, dirty bool, w, h int) {
 	lines, err := ctl.run("display-message -p -t " + q(wid) + " -F " +
-		f("#{window_layout}", "#{@winch_layout_dirty}"))
+		f("#{window_layout}", "#{@winch_layout_dirty}", "#{window_width}", "#{window_height}"))
 	if err != nil || len(lines) == 0 {
-		return "", false
+		return "", false, 0, 0
 	}
 	p := strings.Split(lines[0], sep)
-	if len(p) != 2 {
-		return "", false
+	if len(p) != 4 {
+		return "", false, 0, 0
 	}
-	return p[0], p[1] == "1"
+	w, _ = strconv.Atoi(p[2])
+	h, _ = strconv.Atoi(p[3])
+	return p[0], p[1] == "1", w, h
 }
 
 // otherClientOn reports whether any client besides the docked one is
@@ -1226,14 +1228,16 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 	d.pv.target = ""
 	d.pv.reset()
 	log.Printf("undock client=%s win=%s to_origin=%v", p.client, p.win, toOrigin)
-	oldLayout, oldDirty, curActive := "", false, ""
+	oldLayout, oldDirty, curActive, winW, winH := "", false, "", 0, 0
 	if lines, err := ctl.run("display-message -p -t " + q(p.win) + " -F " +
-		f("#{window_layout}", "#{@winch_layout_dirty}", "#{pane_id}")); err == nil && len(lines) > 0 {
-		if lp := strings.Split(lines[0], sep); len(lp) == 3 {
+		f("#{window_layout}", "#{@winch_layout_dirty}", "#{pane_id}", "#{window_width}", "#{window_height}")); err == nil && len(lines) > 0 {
+		if lp := strings.Split(lines[0], sep); len(lp) == 5 {
 			oldLayout, oldDirty, curActive = lp[0], lp[1] == "1", lp[2]
+			winW, _ = strconv.Atoi(lp[3])
+			winH, _ = strconv.Atoi(lp[4])
 		}
 	}
-	restore := d.leaveLayout(p.win, p.snap.layout, oldLayout, oldDirty, p.pane)
+	restore := d.leaveLayout(p.win, p.snap.layout, oldLayout, oldDirty, p.pane, winW, winH)
 	// Focus after undock: whatever main pane the user is IN right now.
 	//
 	// With the sidebar itself focused, ask tmux which pane focus came FROM.
@@ -1265,9 +1269,9 @@ func (d *daemon) dockClose(ctl *control, toOrigin bool) error {
 			// Landing on a spacer-held window: drop the spacer and replay the
 			// original layout in the batch with the switch — one coalesced
 			// reflow, and the window arrives already full width.
-			oLay, oDirty := d.leaveInfo(ctl, p.originWin)
+			oLay, oDirty, oW, oH := d.leaveInfo(ctl, p.originWin)
 			seq = append(seq, "kill-pane -t "+q(t.spacer))
-			if rl := d.leaveLayout(p.originWin, t.orig, oLay, oDirty, t.spacer); rl != "" {
+			if rl := d.leaveLayout(p.originWin, t.orig, oLay, oDirty, t.spacer, oW, oH); rl != "" {
 				seq = append(seq, "select-layout -t "+q(p.originWin)+" "+q(rl))
 			}
 			seq = append(seq, "set-option -w -uq -t "+q(p.originWin)+" @winch_layout_dirty")
@@ -1371,16 +1375,35 @@ func (d *daemon) flushPendingClose(ctl *control) {
 // pre-carve layout normally, or a proportional rescale of the CURRENT docked
 // layout minus the given pane when it was deliberately reshaped while docked
 // (@winch_layout_dirty). Empty means no restore (let tmux expand naturally).
-func (d *daemon) leaveLayout(wid string, exact string, dockedLayout string, dirty bool, drop string) string {
-	if !dirty {
-		return exact
+//
+// Either way the result is fitted to the window's size NOW (w x h). Both
+// sources can be stale: the exact layout was saved at dock or carve time, and
+// the client may have changed size since (a monitor switch while docked);
+// the docked layout of a window that nobody is looking at keeps the size it
+// was last drawn at. Replayed unfitted, tmux lays the panes out for the old
+// size inside the new window and leaves them there.
+func (d *daemon) leaveLayout(wid string, exact string, dockedLayout string, dirty bool, drop string, w, h int) string {
+	s := exact
+	if dirty {
+		var err error
+		if s, err = sansSidebar(dockedLayout, drop); err != nil {
+			log.Printf("give-back %s: %v", wid, err)
+			return ""
+		}
 	}
-	s, err := sansSidebar(dockedLayout, drop)
-	if err != nil {
-		log.Printf("give-back %s: %v", wid, err)
+	if s == "" {
 		return ""
 	}
-	return s
+	fit, err := fitLayout(s, w, h)
+	if err != nil {
+		log.Printf("fit %s: %v", wid, err)
+		return s
+	}
+	if fit != s {
+		lw, lh := layoutDims(s)
+		log.Printf("fit %s: layout %dx%d -> window %dx%d", wid, lw, lh, w, h)
+	}
+	return fit
 }
 
 // padFlush is true exactly when the padded status row is the one ADJACENT to

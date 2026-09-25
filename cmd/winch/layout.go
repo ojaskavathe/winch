@@ -160,56 +160,117 @@ func scaleX(n *lnode, x, w int) {
 			scaleX(kid, x, w)
 		}
 	case '{':
-		seps := len(n.kids) - 1
-		avail := w - seps
-		old := 0
-		for _, kid := range n.kids {
-			old += kid.w
-		}
-		if old <= 0 || avail < len(n.kids) {
-			avail = max(avail, len(n.kids))
-			old = len(n.kids)
-		}
-		// largest-remainder proportional allocation
-		widths := make([]int, len(n.kids))
-		rem := make([]float64, len(n.kids))
-		total := 0
+		old := make([]int, len(n.kids))
 		for i, kid := range n.kids {
-			exact := float64(avail) * float64(kid.w) / float64(old)
-			widths[i] = max(1, int(exact))
-			rem[i] = exact - float64(int(exact))
-			total += widths[i]
-		}
-		for total < avail {
-			best := 0
-			for i := range rem {
-				if rem[i] > rem[best] {
-					best = i
-				}
-			}
-			widths[best]++
-			rem[best] = -1
-			total++
-		}
-		for total > avail {
-			big := 0
-			for i := range widths {
-				if widths[i] > widths[big] {
-					big = i
-				}
-			}
-			if widths[big] <= 1 {
-				break
-			}
-			widths[big]--
-			total--
+			old[i] = kid.w
 		}
 		cx := x
-		for i, kid := range n.kids {
-			scaleX(kid, cx, widths[i])
-			cx += widths[i] + 1
+		for i, sz := range apportion(old, w-(len(n.kids)-1)) {
+			scaleX(n.kids[i], cx, sz)
+			cx += sz + 1
 		}
 	}
+}
+
+// scaleY is scaleX turned on its side: a new y/height, proportionally,
+// leaving horizontal geometry alone.
+func scaleY(n *lnode, y, h int) {
+	n.y, n.h = y, h
+	switch n.kind {
+	case '{':
+		for _, kid := range n.kids {
+			scaleY(kid, y, h)
+		}
+	case '[':
+		old := make([]int, len(n.kids))
+		for i, kid := range n.kids {
+			old[i] = kid.h
+		}
+		cy := y
+		for i, sz := range apportion(old, h-(len(n.kids)-1)) {
+			scaleY(n.kids[i], cy, sz)
+			cy += sz + 1
+		}
+	}
+}
+
+// apportion splits avail cells across siblings in proportion to their old
+// sizes (largest remainder), every sibling keeping at least one cell.
+func apportion(old []int, avail int) []int {
+	total := 0
+	for _, o := range old {
+		total += o
+	}
+	if total <= 0 || avail < len(old) {
+		avail = max(avail, len(old))
+		total = 0
+		for i := range old {
+			old[i] = 1
+			total++
+		}
+	}
+	sizes := make([]int, len(old))
+	rem := make([]float64, len(old))
+	sum := 0
+	for i, o := range old {
+		exact := float64(avail) * float64(o) / float64(total)
+		sizes[i] = max(1, int(exact))
+		rem[i] = exact - float64(int(exact))
+		sum += sizes[i]
+	}
+	for sum < avail {
+		best := 0
+		for i := range rem {
+			if rem[i] > rem[best] {
+				best = i
+			}
+		}
+		sizes[best]++
+		rem[best] = -1
+		sum++
+	}
+	for sum > avail {
+		big := 0
+		for i := range sizes {
+			if sizes[i] > sizes[big] {
+				big = i
+			}
+		}
+		if sizes[big] <= 1 {
+			break
+		}
+		sizes[big]--
+		sum--
+	}
+	return sizes
+}
+
+// fitLayout rescales a whole layout to a w x h window. A layout string records
+// the window size it was taken at, and tmux's select-layout applies it as
+// written: replay a layout saved before the client grew (a monitor switch while
+// docked) and the panes stay laid out for the old size inside the bigger
+// window — the dead margin, and every pane "resized" wrong. Anything winch
+// replays goes through here first. A layout that already fits is returned
+// untouched, byte for byte, so the exact restore stays exact.
+func fitLayout(layout string, w, h int) (string, error) {
+	if w <= 0 || h <= 0 {
+		return layout, nil
+	}
+	if lw, lh := layoutDims(layout); lw == w && lh == h {
+		return layout, nil
+	}
+	_, body, ok := strings.Cut(layout, ",")
+	if !ok {
+		return "", fmt.Errorf("layout: no checksum in %q", layout)
+	}
+	root, err := (&lparser{s: body}).node()
+	if err != nil {
+		return "", err
+	}
+	scaleX(root, 0, w)
+	scaleY(root, 0, h)
+	body = lrender(root)
+	return lchecksum(body) + "," + body, nil
 }
 
 // sansSidebar takes a docked window's layout (checksum,body) and the sidebar
