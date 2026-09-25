@@ -396,6 +396,47 @@ func (d *daemon) sweepSpacers(ctl *control) {
 	}
 }
 
+// healLayouts fits every window whose layout disagrees with its own size.
+//
+// tmux keeps the two in step on its own — a resize rescales the layout with
+// the window — so a mismatch only ever comes from a layout string replayed at
+// a size the window no longer has. Builds before fitLayout did exactly that
+// after a client resize, and the damage outlives the daemon: the spacer sweep
+// removes the furniture but the panes stay laid out for the old size, and
+// visiting the window does not fix it. Runs at attach, after the sweep, so a
+// deploy repairs what an older build broke.
+//
+// Zoomed windows are skipped: select-layout would unzoom them, and their
+// layout is the saved one, not what is on screen.
+func (d *daemon) healLayouts(ctl *control) {
+	lines, err := ctl.run("list-windows -a -F " + f("#{window_id}", "#{window_width}", "#{window_height}", "#{window_zoomed_flag}", "#{window_layout}"))
+	if err != nil {
+		return
+	}
+	for _, ln := range lines {
+		p := strings.Split(ln, sep)
+		if len(p) != 5 || p[3] == "1" {
+			continue
+		}
+		w, _ := strconv.Atoi(p[1])
+		h, _ := strconv.Atoi(p[2])
+		if lw, lh := layoutDims(p[4]); lw == w && lh == h {
+			continue
+		}
+		fit, err := fitLayout(p[4], w, h)
+		if err != nil {
+			log.Printf("heal %s: %v", p[0], err)
+			continue
+		}
+		if _, err := ctl.run("select-layout -t " + q(p[0]) + " " + q(fit)); err != nil {
+			log.Printf("heal %s: %v", p[0], err)
+			continue
+		}
+		lw, lh := layoutDims(p[4])
+		log.Printf("healed %s: layout %dx%d -> window %dx%d", p[0], lw, lh, w, h)
+	}
+}
+
 func snapQuery(wid string) string {
 	return "display-message -p -t " + q(wid) + " -F " +
 		f("#{window_layout}", "#{pane_id}", "#{window_name}")

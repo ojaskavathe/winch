@@ -119,3 +119,29 @@ func TestGrowReleasesHeldWindow(t *testing.T) {
 	bad = layoutMismatches(r)
 	r.Chk("and still fit once visited: "+strings.Join(bad, "; "), len(bad) == 0)
 }
+
+// TestHealAtAttach: a window an older build already left laid out at the
+// wrong size is repaired when the daemon (re)attaches — a deploy fixes the
+// damage without the user having to find and reshape each window.
+func TestHealAtAttach(t *testing.T) {
+	r := New(t)
+	// Make the damage exactly the way the bug did: replay a ONE-pane layout
+	// recorded at the old size into a window the client has since grown. For
+	// a single leaf tmux 3.7 sizes the pane to the string and leaves the
+	// window alone (a multi-pane string resizes the window too, and the
+	// client's resize pass then fixes both) — which is why undocking a window
+	// with one real pane in it is what broke.
+	lay := r.T("display-message", "-p", "-t", r.W2, "#{window_layout}")
+	r.ResizeClient(60, 250)
+	r.T("select-window", "-t", r.W2)
+	sleep(1000)
+	r.T("select-layout", "-t", r.W2, lay)
+	sleep(300)
+	r.Chk("damage in place", len(layoutMismatches(r)) > 0)
+
+	r.KillDaemon()
+	r.D("ls")
+	sleep(500)
+	bad := layoutMismatches(r)
+	r.Chk("attach healed every window: "+strings.Join(bad, "; "), len(bad) == 0)
+}

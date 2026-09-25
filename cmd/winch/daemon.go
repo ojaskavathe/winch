@@ -250,6 +250,7 @@ func runDaemon(tmuxSock, winchSock string) {
 		// describe, and it has to run before anything READS a status format —
 		// statusRows assumes nobody has wrapped the session it is reading.
 		d.sweepSpacers(ctl)
+		d.healLayouts(ctl)
 		d.sweepOwned(ctl)
 		d.sweepLegacyState(ctl)
 		d.sweepLegacyPad(ctl)
